@@ -1,0 +1,34 @@
+# Compiled class files
+target/
+*.class
+
+# Node
+node_modules/
+
+# Log files
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Maven
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# Environment and secrets
+.env
+*.env
+application-local.properties
+application-local.yml
+
+# Firebase credentials - NEVER commit
+src/main/resources/firebase/service-account.json
+**/firebase-adminsdk*.json
+**/service-account*.json

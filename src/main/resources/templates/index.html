@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f0f0f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="description" content="Real-time Global Humanitarian Crisis Dashboard - Monitor food security, climate, migration and economic indicators worldwide">
+
+    <title>Crisis Monitor</title>
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json">
+
+    <!-- Apple Touch Icons -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-192.png">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" th:href="@{/css/style.css(v=64)}"/>
+
+    <!-- Preconnect for performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://api.hungermapdata.org">
+    <link rel="preconnect" href="https://api.worldbank.org">
+
+    <!-- Geist Font (Vercel) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- Top Navigation Bar -->
+<nav class="navbar">
+    <div class="navbar-content">
+        <a href="/" class="navbar-brand">
+            <span class="status-indicator"></span>
+            <span>Crisis Monitor</span>
+        </a>
+        <!-- Stat Chips: Severity Snapshot -->
+        <div class="navbar-stats" th:if="${stats != null}">
+            <span class="stat-chip critical pulse-glow">
+                <span class="chip-value" th:text="${stats.criticalCountries ?: 0}">0</span>
+                <span class="chip-label">Critical</span>
+            </span>
+            <span class="stat-chip high">
+                <span class="chip-value" th:text="${stats.highRiskCountries ?: 0}">0</span>
+                <span class="chip-label">High</span>
+            </span>
+            <span class="stat-chip" id="navbar-new-alerts">
+                <span class="chip-value" th:text="${stats.totalAlerts ?: 0}">0</span>
+                <span class="chip-label">Alerts</span>
+            </span>
+        </div>
+        <div class="navbar-actions">
+            <span id="last-updated" class="last-updated">Live</span>
+            <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6.34 17.66l-1.41 1.41"/><path d="M19.07 4.93l-1.41 1.41"/>
+                </svg>
+            </button>
+            <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle menu">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 12h18"/><path d="M3 6h18"/><path d="M3 18h18"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+</nav>
+
+<!-- App Layout: Sidebar + Main Content -->
+<div class="app-layout">
+
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="sidebar">
+        <nav class="sidebar-nav">
+            <button class="sidebar-item active" data-section="overview">
+                <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L12 4l9 5.5"/><path d="M19 13v6a1 1 0 01-1 1H6a1 1 0 01-1-1v-6"/></svg></span>
+                <span class="sidebar-label">Overview</span>
+            </button>
+            <button class="sidebar-item" data-section="countries">
+                <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a15 15 0 014 9 15 15 0 01-4 9 15 15 0 01-4-9 15 15 0 014-9z"/><path d="M3 12h18"/></svg></span>
+                <span class="sidebar-label">Countries</span>
+            </button>
+            <button class="sidebar-item" data-section="early-warning">
+                <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><circle cx="12" cy="16" r="1" fill="currentColor"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg></span>
+                <span class="sidebar-label">Early Warning</span>
+            </button>
+            <button class="sidebar-item" data-section="news-feed">
+                <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 019 9"/><path d="M4 4a16 16 0 0116 16"/><circle cx="5" cy="19" r="1"/></svg></span>
+                <span class="sidebar-label">News Feed</span>
+            </button>
+            <button class="sidebar-item" data-section="drivers">
+                <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>
+                <span class="sidebar-label">Drivers</span>
+            </button>
+            <button class="sidebar-item" data-section="situational">
+                <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
+                <span class="sidebar-label">Situations</span>
+            </button>
+            <button class="sidebar-item" data-section="intelligence">
+                <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg></span>
+                <span class="sidebar-label">Intelligence</span>
+            </button>
+            </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-brand">
+                <span class="sidebar-version">v2.0</span>
+                <span class="sidebar-tagline">Early Warning Platform</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content" id="main-content">
+
+        <!-- ==================== SECTION: OVERVIEW ==================== -->
+        <section class="content-section active" data-section="overview">
+
+            <!-- BLOCK 1: LIVE NEWS (GDELT + RSS) -->
+            <div class="overview-brief">
+                <div class="brief-header">
+                    <h2>What's Happening Now</h2>
+                    <div class="brief-header-right">
+                        <button id="overview-refresh-btn" class="refresh-btn" title="Refresh data">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                            </svg>
+                        </button>
+                        <a href="#" class="block-link" data-nav="news-feed">View all</a>
+                    </div>
+                </div>
+
+                <!-- Live news headlines grid -->
+                <div class="live-news-grid" id="live-news-grid">
+                    <div class="loading-placeholder">Loading live news...</div>
+                </div>
+            </div>
+
+            <!-- BLOCK 2: REGIONAL PULSE -->
+            <div class="overview-block regional-pulse-block">
+                <div class="block-header">
+                    <h3>Regional Pulse</h3>
+                    <span class="block-subtext">Top risks by region</span>
+                </div>
+                <div class="regional-pulse-grid" id="regional-pulse-grid">
+                    <div class="loading-placeholder">Loading regional data...</div>
+                </div>
+            </div>
+
+            <!-- BLOCK 3: CONTEXT HEADLINES -->
+            <div class="overview-block">
+                <div class="block-header">
+                    <h3>Context</h3>
+                    <a href="#" class="block-link" data-nav="news-feed">View all sources</a>
+                </div>
+                <div class="context-headlines-list" id="context-headlines">
+                    <div class="loading-placeholder">Loading headlines...</div>
+                </div>
+            </div>
+
+            <!-- BLOCK 4: ACTIVE SITUATIONS (with honest empty state) -->
+            <div class="overview-block">
+                <div class="block-header">
+                    <h3>Active Situations</h3>
+                    <a href="#" class="block-link" data-nav="situational">View all</a>
+                </div>
+                <div class="top-situations-list" id="overview-top-situations">
+                    <div class="loading-placeholder">Detecting situations...</div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ==================== SECTION: COUNTRIES ==================== -->
+        <section class="content-section" data-section="countries">
+
+            <div class="section-header-bar">
+                <h2>Country Analysis</h2>
+                <div class="section-header-actions">
+                    <div class="export-buttons">
+                        <a href="/api/export/csv" class="export-btn" title="Export CSV">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                            </svg>
+                            CSV
+                        </a>
+                        <a href="/api/export/pdf" class="export-btn" title="Export PDF">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                            </svg>
+                            PDF
+                        </a>
+                    </div>
+                    <button id="where-to-look-btn" class="badge badge-interactive" title="AI will analyze current data and suggest priority countries">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
+                            <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/>
+                        </svg>
+                        Where should I look?
+                    </button>
+                </div>
+            </div>
+
+            <!-- Map + Risk Cards Layout -->
+            <div class="countries-decision-layout">
+                <!-- Map (60%) -->
+                <div class="countries-map-panel">
+                    <div id="map"></div>
+                </div>
+
+                <!-- Risk Cards (40%) -->
+                <div class="countries-cards-panel">
+                    <div class="cards-panel-header">
+                        <h3>Top Countries</h3>
+                        <span class="badge critical">IPC 3+</span>
+                    </div>
+                    <div class="risk-cards-list" id="risk-cards-list">
+                        <div th:each="country, iter : ${rankedCountries}" th:if="${iter.index < 10}"
+                             class="risk-card"
+                             th:data-iso3="${country.iso3}"
+                             th:data-country="${country.name}"
+                             th:classappend="${country.alertLevel == 'CRITICAL' ? 'critical' : (country.alertLevel == 'HIGH' ? 'high' : 'medium')}"
+                             style="cursor: pointer;"
+                             title="Click for details">
+                            <div class="risk-card-rank" th:text="${iter.index + 1}">1</div>
+                            <div class="risk-card-content">
+                                <div class="risk-card-header">
+                                    <span class="risk-card-country" th:text="${country.name}">Country</span>
+                                    <span class="risk-card-level"
+                                          th:classappend="${country.alertLevel == 'CRITICAL' ? 'critical' : (country.alertLevel == 'HIGH' ? 'high' : 'medium')}"
+                                          th:text="${country.alertLevel}">CRITICAL</span>
+                                </div>
+                                <div class="risk-card-metric">
+                                    <span class="risk-card-value" th:text="${#numbers.formatDecimal(country.peoplePhase3to5 / 1000000.0, 1, 1)}">0</span>
+                                    <span class="risk-card-unit">M people</span>
+                                </div>
+                                <div class="risk-card-tag">
+                                    <span th:text="${country.percentPhase3to5 != null ? #numbers.formatDecimal(country.percentPhase3to5, 0, 0) + '% in crisis' : 'Food insecurity'}">Food</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Collapsible Data Table -->
+            <details class="data-details">
+                <summary class="data-details-toggle">
+                    <span>View detailed data table</span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </summary>
+                <div class="data-details-content">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Country</th>
+                                <th>% Crisis</th>
+                                <th>People</th>
+                                <th>FCS Poor</th>
+                                <th>rCSI Crisis</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="fs : ${foodSecurity}"
+                                th:class="${fs.fcsPrevalence != null && fs.fcsPrevalence * 100 >= 30 ? 'critical-row' : (fs.fcsPrevalence != null && fs.fcsPrevalence * 100 >= 15 ? 'high-row' : '')}">
+                                <td th:text="${fs.name}">Country</td>
+                                <td class="value-cell" th:classappend="${fs.fcsPrevalence != null && fs.fcsPrevalence * 100 >= 30 ? 'text-critical' : ''}"
+                                    th:text="${fs.fcsPrevalence != null ? #numbers.formatDecimal(fs.fcsPrevalence * 100, 1, 1) + '%' : '-'}">-</td>
+                                <td class="value-cell" th:text="${fs.fcsPeople != null ? #numbers.formatInteger(fs.fcsPeople / 1000, 1, 'COMMA') + 'K' : '-'}">-</td>
+                                <td class="value-cell" th:text="${fs.fcsPeople != null ? #numbers.formatInteger(fs.fcsPeople / 1000, 1, 'COMMA') + 'K' : '-'}">-</td>
+                                <td class="value-cell" th:text="${fs.rcsiPeople != null ? #numbers.formatInteger(fs.rcsiPeople / 1000, 1, 'COMMA') + 'K' : '-'}">-</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+
+            <!-- Active Hazards -->
+            <div th:if="${#lists.size(hazards) > 0}" style="margin-top: var(--space-lg);">
+                <div class="section-header-bar">
+                    <h2>Active Natural Hazards</h2>
+                    <span class="badge high" th:text="${#lists.size(hazards)} + ' Active'">0</span>
+                </div>
+                <div class="hazard-grid">
+                    <div th:each="hazard : ${hazards}"
+                         class="hazard-card"
+                         th:classappend="${hazard.severity == 'WARNING' ? 'warning' : (hazard.severity == 'WATCH' ? 'watch' : 'advisory')}">
+                        <div class="hazard-icon"
+                             th:text="${hazard.type == 'FLOOD' ? '🌊' :
+                                      (hazard.type == 'EARTHQUAKE' ? '🌍' :
+                                      (hazard.type == 'CYCLONE' ? '🌀' :
+                                      (hazard.type == 'VOLCANO' ? '🌋' :
+                                      (hazard.type == 'WILDFIRE' ? '🔥' : '⚠️'))))}">⚠️</div>
+                        <div class="hazard-name" th:text="${hazard.name}">Hazard Name</div>
+                        <div class="hazard-meta">
+                            <span class="badge" th:text="${hazard.type}">TYPE</span>
+                            <span class="badge"
+                                  th:classappend="${hazard.severity == 'WARNING' ? 'critical' : (hazard.severity == 'WATCH' ? 'high' : 'medium')}"
+                                  th:text="${hazard.severity}">Severity</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ==================== SECTION: EARLY WARNING ==================== -->
+        <section class="content-section" data-section="early-warning">
+
+            <!-- Prediction Summary Hero -->
+            <div class="ew-hero">
+                <div class="ew-hero-title">
+                    <h2>Predictive Early Warning</h2>
+                    <span class="badge critical">30-day horizon</span>
+                </div>
+                <div class="ew-hero-stats" id="ew-hero-stats">
+                    <div class="ew-stat">
+                        <span class="ew-stat-value" id="ew-critical-count">2</span>
+                        <span class="ew-stat-label">CRITICAL</span>
+                    </div>
+                    <div class="ew-stat">
+                        <span class="ew-stat-value" id="ew-alert-count">3</span>
+                        <span class="ew-stat-label">ALERT</span>
+                    </div>
+                    <div class="ew-stat">
+                        <span class="ew-stat-value" id="ew-warning-count">8</span>
+                        <span class="ew-stat-label">WARNING</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CURRENT FOCUS: Top Risk + Deep Analysis (moved from Overview) -->
+            <div class="ew-focus-section">
+                <div class="ew-section-header">
+                    <h3>Current Focus</h3>
+                    <span class="badge high">Priority Watch</span>
+                </div>
+                <div class="brief-grid">
+                    <!-- Left: Top Deterioration -->
+                    <div class="focus-now-card" id="focus-now-card">
+                        <div class="focus-loading">Loading top risk...</div>
+                    </div>
+
+                    <!-- Right: Deep Analysis -->
+                    <div class="deep-analysis-card">
+                        <div class="deep-analysis-trigger">
+                            <button id="deep-analysis-btn" class="deep-analysis-btn">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
+                                    <circle cx="7.5" cy="14.5" r="1.5"/>
+                                    <circle cx="16.5" cy="14.5" r="1.5"/>
+                                </svg>
+                                <span>Deep Analysis</span>
+                            </button>
+                            <span class="deep-analysis-hint">Claude contextual scoring</span>
+                        </div>
+                        <!-- Results appear here when loaded -->
+                        <div id="deep-analysis-results" class="deep-analysis-results hidden"></div>
+                    </div>
+                </div>
+                <!-- What Changed (dynamic bullets) -->
+                <div class="brief-bullets" id="brief-bullets">
+                    <div class="brief-bullet">Analyzing changes...</div>
+                </div>
+            </div>
+
+            <!-- FORECAST CARDS: Next Deterioration -->
+            <div class="ew-forecast-section">
+                <div class="ew-forecast-header">
+                    <h3>Next Deterioration</h3>
+                    <span class="text-muted">30–90 day forecast</span>
+                </div>
+                <div id="ew-forecast-cards" class="ew-forecast-cards">
+                    <div class="loading-placeholder">Analyzing trajectories...</div>
+                </div>
+            </div>
+
+            <!-- Inline Legend Strip -->
+            <div class="ew-legend-strip">
+                <span class="ew-legend-item"><span class="badge critical">86-100</span> Critical</span>
+                <span class="ew-legend-item"><span class="badge high">71-85</span> Alert</span>
+                <span class="ew-legend-item"><span class="badge medium">51-70</span> Warning</span>
+                <span class="ew-legend-item"><span class="badge">31-50</span> Watch</span>
+                <span class="ew-legend-item"><span class="badge stable">0-30</span> Stable</span>
+                <span class="ew-legend-info">2-of-3 Rule: triggers when 2+ drivers elevated</span>
+            </div>
+
+            <!-- Risk Scores Table (Full Width) -->
+            <div class="ew-scores-panel">
+                <div class="ew-scores-header">
+                    <h3>All Risk Scores</h3>
+                    <span class="text-muted">Weights: Food 30% | Climate 25% | Conflict 25% | Economic 20%</span>
+                </div>
+                <div id="risk-scores-container" class="ew-scores-table">
+                    <div class="loading-placeholder">Calculating risk scores...</div>
+                </div>
+            </div>
+
+            <!-- Regional Convergence (Compact) -->
+            <div class="ew-section">
+                <div class="ew-section-header">
+                    <h3>Cluster Risk</h3>
+                    <span class="badge medium">Synchronized Deterioration</span>
+                </div>
+                <div id="cluster-alerts-full" class="ew-clusters"></div>
+            </div>
+
+            <!-- Current Extreme Conditions (was IPC Alerts) -->
+            <div class="ew-section">
+                <div class="ew-section-header">
+                    <h3>Current Extreme Conditions</h3>
+                    <div class="ew-ipc-legend">
+                        <span class="badge famine">P5 Famine</span>
+                        <span class="badge critical">P4 Emergency</span>
+                        <span class="badge high">P3 Crisis</span>
+                    </div>
+                </div>
+                <div id="ipc-alerts-container" class="ew-ipc-table">
+                    <div class="loading-placeholder">Loading food security data...</div>
+                </div>
+            </div>
+
+            <!-- Top Risk Spotlight -->
+            <div class="ew-section">
+                <div class="ew-section-header">
+                    <h3>Top Risk Spotlight</h3>
+                    <span class="badge">Auto-updated</span>
+                </div>
+                <div id="intelligence-signal-content" class="ew-spotlight-content">
+                    <div class="loading-placeholder">Loading intelligence data...</div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ==================== SECTION: NEWS FEED ==================== -->
+        <section class="content-section" data-section="news-feed">
+
+            <div class="section-header-bar">
+                <h2>News Feed</h2>
+                <span class="badge">Live</span>
+            </div>
+
+            <p class="section-description">Humanitarian reports and media coverage. Filter by region or topic.</p>
+
+            <!-- Filters -->
+            <div class="news-filters" style="display: flex; gap: var(--space-md); margin-bottom: var(--space-lg); flex-wrap: wrap; align-items: center;">
+                <select id="news-region-filter" class="form-select" style="min-width: 150px;">
+                    <option value="">All Regions</option>
+                    <option value="africa">Africa</option>
+                    <option value="lac">Latin America</option>
+                    <option value="mena">Middle East</option>
+                    <option value="asia">Asia Pacific</option>
+                    <option value="europe">Europe</option>
+                    <option value="north america">North America</option>
+                </select>
+                <select id="news-topic-filter" class="form-select" style="min-width: 150px;">
+                    <option value="">All Topics</option>
+                    <option value="conflict">Conflict & Violence</option>
+                    <option value="migration">Migration & Displacement</option>
+                    <option value="food">Food Security</option>
+                    <option value="climate">Climate & Disasters</option>
+                    <option value="health">Health & Outbreaks</option>
+                    <option value="humanitarian">Humanitarian Response</option>
+                </select>
+                <button id="news-refresh-btn" class="btn btn-secondary" style="padding: 8px 16px;">
+                    Refresh
+                </button>
+            </div>
+
+            <!-- Two-Column News Feed Grid -->
+            <div class="news-feed-two-col">
+                <!-- Column 1: ReliefWeb -->
+                <div class="news-col">
+                    <div class="news-col-header">
+                        <h3>ReliefWeb</h3>
+                        <span class="news-col-badge reliefweb">Humanitarian</span>
+                    </div>
+                    <div class="news-items-list" id="news-col-reliefweb">
+                        <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
+                            Loading...
+                        </div>
+                    </div>
+                </div>
+                <!-- Column 2: GDELT + RSS -->
+                <div class="news-col">
+                    <div class="news-col-header">
+                        <h3>Media & RSS</h3>
+                        <span class="news-col-badge media">GDELT + News</span>
+                    </div>
+                    <div class="news-items-list" id="news-col-media">
+                        <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
+                            Loading...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ==================== SECTION: DRIVERS ==================== -->
+        <section class="content-section" data-section="drivers">
+
+            <div class="section-header-bar">
+                <h2>Crisis Drivers</h2>
+                <span class="badge">Multi-Source</span>
+            </div>
+
+            <!-- Tab Navigation -->
+            <div class="tab-nav">
+                <button class="tab-btn active" data-tab="driver-climate">Climate</button>
+                <button class="tab-btn" data-tab="driver-conflict">Conflict</button>
+                <button class="tab-btn" data-tab="driver-economy">Economy</button>
+                <button class="tab-btn" data-tab="driver-displacement">Displacement</button>
+            </div>
+
+            <!-- Tab Content -->
+            <div class="tab-content">
+
+                <!-- Climate Tab -->
+                <div id="tab-driver-climate" class="tab-pane active">
+                    <div class="grid grid-cols-2" style="gap: var(--space-lg);">
+                        <div class="glass-card">
+                            <div class="card-header">
+                                <h3>Precipitation Anomalies</h3>
+                                <span class="badge high">30-day vs 5yr avg</span>
+                            </div>
+                            <div class="card-body no-padding">
+                                <div id="climate-container" class="data-table-container" style="max-height: 380px;">
+                                    <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
+                                        Loading climate data...
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="glass-card">
+                            <div class="card-header">
+                                <h3>NDVI Climate Stress</h3>
+                                <span class="badge">Vegetation Index</span>
+                            </div>
+                            <div class="card-body no-padding">
+                                <div class="data-table-container" style="max-height: 380px;">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Country</th>
+                                                <th>Alert</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr th:each="climate : ${climateStress}"
+                                                th:class="${climate.alertLevel == 'SEVERE' ? 'critical-row' : 'high-row'}">
+                                                <td th:text="${climate.name}">Country</td>
+                                                <td>
+                                                    <span class="badge"
+                                                          th:classappend="${climate.alertLevel == 'SEVERE' ? 'severe' : 'moderate'}"
+                                                          th:text="${climate.alertLevel}">ALERT</span>
+                                                </td>
+                                            </tr>
+                                            <tr th:if="${#lists.isEmpty(climateStress)}">
+                                                <td colspan="2" class="text-muted text-center">No data</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Conflict Tab -->
+                <div id="tab-driver-conflict" class="tab-pane">
+                    <div class="grid grid-cols-2" style="gap: var(--space-lg);">
+                        <div class="glass-card">
+                            <div class="card-header">
+                                <h3>Media Spike Alerts</h3>
+                                <span class="badge high">Z-Score &gt; 1.0</span>
+                            </div>
+                            <div class="card-body no-padding">
+                                <div id="conflict-spikes-container" class="data-table-container" style="max-height: 380px;">
+                                    <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
+                                        Loading conflict data...
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="glass-card">
+                            <div class="card-header">
+                                <h3>How Spikes Work</h3>
+                                <span class="badge">GDELT Real-time</span>
+                            </div>
+                            <div class="card-body" style="font-size: 0.8rem; line-height: 1.6;">
+                                <div class="spike-legend">
+                                    <div class="flex items-center gap-sm" style="margin-bottom: 0.5rem;">
+                                        <span class="badge critical">CRITICAL</span>
+                                        <span class="text-secondary">Z &gt; 3.0 - Extreme spike</span>
+                                    </div>
+                                    <div class="flex items-center gap-sm" style="margin-bottom: 0.5rem;">
+                                        <span class="badge high">HIGH</span>
+                                        <span class="text-secondary">Z &gt; 2.0 - Significant</span>
+                                    </div>
+                                    <div class="flex items-center gap-sm" style="margin-bottom: 0.5rem;">
+                                        <span class="badge medium">ELEVATED</span>
+                                        <span class="text-secondary">Z &gt; 1.0 - Above normal</span>
+                                    </div>
+                                    <div class="flex items-center gap-sm">
+                                        <span class="badge">NORMAL</span>
+                                        <span class="text-secondary">Z &lt; 0.5 - Baseline</span>
+                                    </div>
+                                </div>
+                                <p style="margin-top: var(--space-md); color: var(--text-tertiary); font-size: 0.7rem;">
+                                    Z-Score = (7d avg - 30d avg) / baseline std.
+                                    Spikes often precede crises by 24-72 hours.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Economy Tab -->
+                <div id="tab-driver-economy" class="tab-pane">
+                    <div class="grid grid-cols-2" style="gap: var(--space-lg);">
+                        <div class="glass-card">
+                            <div class="card-header">
+                                <h3>High Inflation</h3>
+                                <span class="badge critical">&gt;15%</span>
+                            </div>
+                            <div class="card-body no-padding">
+                                <div class="data-table-container" style="max-height: 300px;">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Country</th>
+                                                <th>Rate</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr th:each="indicator : ${highInflation}"
+                                                th:class="${indicator.value >= 100 ? 'critical-row' : (indicator.value >= 25 ? 'high-row' : '')}">
+                                                <td th:text="${indicator.countryName}">Country</td>
+                                                <td class="value-cell text-critical" th:text="${#numbers.formatDecimal(indicator.value, 1, 1)} + '%'">0%</td>
+                                            </tr>
+                                            <tr th:if="${#lists.isEmpty(highInflation)}">
+                                                <td colspan="2" class="text-muted text-center">No data</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="glass-card">
+                            <div class="card-header">
+                                <h3>Currency Devaluation</h3>
+                                <span class="badge critical">vs USD</span>
+                            </div>
+                            <div class="card-body no-padding">
+                                <div id="currency-container" class="data-table-container" style="max-height: 300px;">
+                                    <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
+                                        Loading currency data...
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Displacement Tab -->
+                <div id="tab-driver-displacement" class="tab-pane">
+                    <div class="grid grid-cols-2" style="gap: var(--space-lg);">
+                        <div class="glass-card">
+                            <div class="card-header">
+                                <h3>IDPs by Country</h3>
+                                <span class="badge high">IOM DTM</span>
+                            </div>
+                            <div class="card-body no-padding">
+                                <div class="data-table-container" style="max-height: 300px;">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Country</th>
+                                                <th>IDPs</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr th:each="dtm, iter : ${dtmData}" th:if="${iter.index < 15}"
+                                                th:class="${dtm.idps != null && dtm.idps >= 5000000 ? 'critical-row' : (dtm.idps != null && dtm.idps >= 1000000 ? 'high-row' : '')}">
+                                                <td th:text="${dtm.countryName}">Country</td>
+                                                <td class="value-cell" th:text="${dtm.idps != null ? #numbers.formatDecimal(dtm.idps / 1000000.0, 1, 1) + 'M' : '-'}">-</td>
+                                            </tr>
+                                            <tr th:if="${#lists.isEmpty(dtmData)}">
+                                                <td colspan="2" class="text-muted text-center">No data</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="glass-card">
+                            <div class="card-header">
+                                <h3>Darien Migration</h3>
+                                <span class="badge medium">12 mo</span>
+                            </div>
+                            <div class="card-body no-padding">
+                                <div class="data-table-container" style="max-height: 300px;">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Nationality</th>
+                                                <th>Crossings</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr th:each="entry : ${migrationByCountry}">
+                                                <td th:text="${entry.key}">Country</td>
+                                                <td class="value-cell" th:text="${#numbers.formatInteger(entry.value, 1, 'COMMA')}">0</td>
+                                            </tr>
+                                            <tr th:if="${migrationByCountry == null || #maps.isEmpty(migrationByCountry)}">
+                                                <td colspan="2" class="text-muted text-center">No data</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Migration Trend -->
+                    <div th:if="${migrationMonthly != null && !#maps.isEmpty(migrationMonthly)}" class="glass-card" style="margin-top: var(--space-lg);">
+                        <div class="card-header">
+                            <h3>Monthly Migration Trend</h3>
+                            <span class="badge">Last 6 Months</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="migration-chart" class="trend-bars">
+                                <div th:each="entry : ${migrationMonthly}" class="trend-bar-item">
+                                    <div class="trend-value" th:text="${#numbers.formatInteger(entry.value, 1, 'COMMA')}">0</div>
+                                    <div class="trend-bar" th:style="'height:' + (entry.value / 100) + '%'"></div>
+                                    <div class="trend-label" th:text="${#strings.substring(entry.key, 5)}">Mo</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+        </section>
+
+        <!-- ==================== SECTION: SITUATIONAL INTELLIGENCE ==================== -->
+        <section class="content-section" data-section="situational">
+
+            <div class="section-header-bar">
+                <h2>Situational Intelligence</h2>
+                <span class="badge critical">Operations Mode</span>
+            </div>
+
+            <p class="section-description">Auto-generated situations where risk indicators, media spikes and operational reports converge.</p>
+
+            <!-- Claude-Native Detect Situations Button -->
+            <div class="detect-situations-trigger">
+                <button id="detect-situations-btn" class="detect-situations-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
+                        <circle cx="7.5" cy="14.5" r="1.5"/>
+                        <circle cx="16.5" cy="14.5" r="1.5"/>
+                    </svg>
+                    <span>Detect Situations (Claude)</span>
+                </button>
+                <span class="detect-situations-hint">Semantic analysis of triggered countries (1 API call)</span>
+            </div>
+
+            <!-- Claude Detection Results (not used - results show in main list) -->
+            <div id="detect-situations-results" style="display:none"></div>
+
+            <!-- Filter Chips (clickable, act as filters) -->
+            <div class="situation-filter-strip" id="situation-filter-strip">
+                <button class="situation-filter-chip" data-filter="all">
+                    <span class="filter-label">All</span>
+                    <span class="filter-count" id="count-all">-</span>
+                </button>
+                <button class="situation-filter-chip active" data-filter="critical,high">
+                    <span class="filter-label">Critical + High</span>
+                    <span class="filter-count" id="count-critical-high">-</span>
+                </button>
+                <button class="situation-filter-chip severity-critical" data-filter="critical">
+                    <span class="filter-label">Critical</span>
+                    <span class="filter-count" id="count-critical">-</span>
+                </button>
+                <button class="situation-filter-chip severity-high" data-filter="high">
+                    <span class="filter-label">High</span>
+                    <span class="filter-count" id="count-high">-</span>
+                </button>
+                <button class="situation-filter-chip severity-elevated" data-filter="elevated">
+                    <span class="filter-label">Elevated</span>
+                    <span class="filter-count" id="count-elevated">-</span>
+                </button>
+                <button class="situation-filter-chip severity-watch" data-filter="watch">
+                    <span class="filter-label">Watch</span>
+                    <span class="filter-count" id="count-watch">-</span>
+                </button>
+            </div>
+
+            <!-- TODAY'S INTELLIGENCE - Active Situations -->
+            <div class="situations-panel glass-card">
+                <div class="situations-header">
+                    <h3>ACTIVE SITUATIONS</h3>
+                    <span class="badge" id="situations-count">Loading...</span>
+                </div>
+                <div class="situations-list" id="situations-list">
+                    <div class="loading-placeholder">Detecting active situations...</div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ==================== SECTION: INTELLIGENCE ==================== -->
+        <section class="content-section" data-section="intelligence">
+
+            <div class="section-header-bar">
+                <h2>Intelligence</h2>
+                <span class="badge">Analysis Mode</span>
+            </div>
+
+            <p class="section-description">Generate topic-based intelligence reports from GDELT media monitoring and ReliefWeb operational reports.</p>
+
+            <!-- Topic Report Generator -->
+            <div class="topic-report-generator glass-card">
+                <div class="card-header">
+                    <h3>Topic Report Generator</h3>
+                    <span class="badge" id="report-status">Ready</span>
+                </div>
+                <div class="card-body">
+                    <!-- Topic Selection -->
+                    <div class="report-controls">
+                        <div class="control-group">
+                            <label class="control-label">Topic</label>
+                            <div class="topic-chips" id="report-topic-chips">
+                                <button class="topic-chip active" data-topic="migration">Migration</button>
+                                <button class="topic-chip" data-topic="food-crisis">Food Crisis</button>
+                                <button class="topic-chip" data-topic="conflict">Conflict</button>
+                                <button class="topic-chip" data-topic="political">Political</button>
+                                <button class="topic-chip" data-topic="climate">Climate</button>
+                                <button class="topic-chip" data-topic="health">Health</button>
+                                <button class="topic-chip" data-topic="economic">Economic</button>
+                            </div>
+                        </div>
+                        <div class="control-row">
+                            <div class="control-group">
+                                <label class="control-label">Region</label>
+                                <select id="report-region-select" class="form-select">
+                                    <option value="">All Regions</option>
+                                    <option value="lac">LAC (Latin America & Caribbean)</option>
+                                    <option value="mena">MENA (Middle East & North Africa)</option>
+                                    <option value="east-africa">East Africa</option>
+                                    <option value="west-africa">West Africa</option>
+                                    <option value="asia">Asia Pacific</option>
+                                    <option value="europe">Europe</option>
+                                </select>
+                            </div>
+                            <div class="control-group">
+                                <label class="control-label">Period</label>
+                                <select id="report-period-select" class="form-select">
+                                    <option value="7">Last 7 days</option>
+                                    <option value="14">Last 14 days</option>
+                                    <option value="30">Last 30 days</option>
+                                </select>
+                            </div>
+                            <button class="btn-generate-report" id="btn-generate-report">
+                                <span class="btn-text">Generate Report</span>
+                                <span class="btn-loading" style="display:none;">Generating...</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Generated Report Output -->
+            <div id="topic-report-output" class="topic-report-output glass-card" style="display: none;">
+                <!-- Report Header with Trend -->
+                <div class="report-header">
+                    <div class="report-title-row">
+                        <h3 id="report-title">Migration Report - LAC</h3>
+                        <span class="report-trend-badge" id="report-trend">stable</span>
+                    </div>
+                    <div class="report-meta-row">
+                        <span class="report-period" id="report-period-label">Feb 2 - Feb 9, 2026</span>
+                        <span class="report-summary" id="report-summary">9 countries | 2 media | 1 report</span>
+                    </div>
+                    <div class="report-actions">
+                        <button class="btn-export" onclick="TopicReportGenerator.exportReport()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            Export
+                        </button>
+                        <button class="btn-copy" onclick="TopicReportGenerator.copyReport()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                            Copy
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Regional Stats -->
+                <div class="report-stats" id="report-stats">
+                    <!-- Populated by JS: IDPs, Refugees totals -->
+                </div>
+
+                <!-- Key Developments (AI-generated) -->
+                <div class="report-section">
+                    <h4 class="report-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                        Key Developments
+                    </h4>
+                    <ul class="report-developments" id="report-developments">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+
+                <!-- Country Matrix -->
+                <div class="report-section">
+                    <h4 class="report-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
+                        Country Matrix
+                    </h4>
+                    <div class="country-matrix-wrapper">
+                        <table class="country-matrix" id="report-country-matrix">
+                            <thead>
+                                <tr>
+                                    <th>Country</th>
+                                    <th>Signal</th>
+                                    <th>Stock</th>
+                                    <th>Flow Δ</th>
+                                    <th>Trend</th>
+                                    <th>Conf.</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Sources -->
+                <div class="report-section collapsible">
+                    <h4 class="report-section-title section-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+                        Sources
+                        <span class="toggle-icon">▼</span>
+                    </h4>
+                    <div class="report-sources" id="report-sources">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Daily Intelligence Briefing -->
+            <div class="glass-card daily-briefing-card" style="margin-top: var(--space-lg);">
+                <div class="card-header">
+                    <h3>Daily Intelligence Briefing</h3>
+                    <span class="badge" id="briefing-date">Loading...</span>
+                </div>
+                <div class="card-body">
+                    <div class="briefing-headlines" id="briefing-top-headlines">
+                        <div class="loading-placeholder" style="padding: var(--space-md); text-align: center; color: var(--text-secondary);">
+                            Loading briefing...
+                        </div>
+                    </div>
+                    <div class="briefing-regions">
+                        <div class="region-tabs" id="briefing-region-tabs">
+                            <button class="region-tab active" data-region="all">All</button>
+                            <button class="region-tab" data-region="LAC">Americas</button>
+                            <button class="region-tab" data-region="MENA">Middle East</button>
+                            <button class="region-tab" data-region="AFRICA_EAST">East Africa</button>
+                            <button class="region-tab" data-region="AFRICA_WEST">West Africa</button>
+                            <button class="region-tab" data-region="ASIA">Asia</button>
+                            <button class="region-tab" data-region="EUROPE">Europe</button>
+                        </div>
+                        <div class="region-content" id="briefing-region-content">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ReliefWeb Latest Reports -->
+            <div class="glass-card" style="margin-top: var(--space-lg);">
+                <div class="card-header">
+                    <h3>ReliefWeb: Official Reports</h3>
+                    <span class="badge" style="background: rgba(100, 210, 255, 0.15); color: var(--accent-teal);">UN/NGO Sources</span>
+                </div>
+                <div class="card-body" id="reliefweb-reports-list">
+                    <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
+                        Loading humanitarian reports...
+                    </div>
+                </div>
+            </div>
+
+            <!-- WHO Disease Outbreaks -->
+            <div class="glass-card" style="margin-top: var(--space-lg);">
+                <div class="card-header">
+                    <h3>WHO Disease Outbreaks</h3>
+                    <span class="badge" style="background: var(--danger);">WHO DON</span>
+                </div>
+                <div class="card-body" id="who-outbreaks-container">
+                    <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
+                        Loading WHO data...
+                    </div>
+                </div>
+            </div>
+
+            <!-- GDELT Media Coverage -->
+            <div class="glass-card" style="margin-top: var(--space-lg);">
+                <div class="card-header">
+                    <h3>GDELT Media Coverage</h3>
+                    <span class="badge">Real-time</span>
+                </div>
+                <div class="card-body no-padding">
+                    <div id="gdelt-media-container" class="data-table-container" style="max-height: 400px;">
+                        <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
+                            Loading media data...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+
+    </main>
+
+</div>
+
+<!-- AI Analysis FAB Button -->
+<button id="ai-fab" class="ai-fab" aria-label="AI Analysis">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
+        <circle cx="7.5" cy="14.5" r="1.5"/>
+        <circle cx="16.5" cy="14.5" r="1.5"/>
+    </svg>
+    <span class="fab-label">AI</span>
+</button>
+
+<!-- AI Analysis Modal -->
+<div id="ai-modal" class="ai-modal hidden">
+    <div class="ai-modal-backdrop"></div>
+    <div class="ai-modal-content">
+        <div class="ai-modal-header">
+            <h2>🤖 AI Crisis Analysis</h2>
+            <button id="ai-modal-close" class="ai-modal-close">&times;</button>
+        </div>
+        <div class="ai-modal-body">
+            <!-- Analysis Type Selector -->
+            <div class="ai-type-selector">
+                <button class="ai-type-btn active" data-type="global">
+                    <span class="ai-type-icon">🌍</span>
+                    <span>Global</span>
+                </button>
+                <button class="ai-type-btn" data-type="country">
+                    <span class="ai-type-icon">🏳️</span>
+                    <span>Country</span>
+                </button>
+                <button class="ai-type-btn" data-type="custom">
+                    <span class="ai-type-icon">💬</span>
+                    <span>Ask</span>
+                </button>
+            </div>
+
+            <!-- Country Selector (hidden by default) -->
+            <div id="country-selector" class="ai-country-selector hidden">
+                <select id="country-select">
+                    <option value="">Select a country...</option>
+                    <!-- Africa - East -->
+                    <option value="SDN">Sudan</option>
+                    <option value="SSD">South Sudan</option>
+                    <option value="ETH">Ethiopia</option>
+                    <option value="SOM">Somalia</option>
+                    <option value="KEN">Kenya</option>
+                    <option value="UGA">Uganda</option>
+                    <!-- Africa - Central -->
+                    <option value="COD">DR Congo</option>
+                    <option value="CAF">Central African Republic</option>
+                    <option value="TCD">Chad</option>
+                    <option value="CMR">Cameroon</option>
+                    <option value="RWA">Rwanda</option>
+                    <option value="BDI">Burundi</option>
+                    <!-- Africa - West -->
+                    <option value="NGA">Nigeria</option>
+                    <option value="MLI">Mali</option>
+                    <option value="BFA">Burkina Faso</option>
+                    <option value="NER">Niger</option>
+                    <!-- Africa - Other -->
+                    <option value="LBY">Libya</option>
+                    <option value="MOZ">Mozambique</option>
+                    <!-- MENA -->
+                    <option value="SYR">Syria</option>
+                    <option value="IRQ">Iraq</option>
+                    <option value="YEM">Yemen</option>
+                    <option value="LBN">Lebanon</option>
+                    <option value="PSE">Palestine</option>
+                    <!-- Asia -->
+                    <option value="AFG">Afghanistan</option>
+                    <option value="PAK">Pakistan</option>
+                    <option value="BGD">Bangladesh</option>
+                    <option value="MMR">Myanmar</option>
+                    <!-- LAC -->
+                    <option value="HTI">Haiti</option>
+                    <option value="VEN">Venezuela</option>
+                    <option value="COL">Colombia</option>
+                    <!-- Europe -->
+                    <option value="UKR">Ukraine</option>
+                </select>
+            </div>
+
+            <!-- Custom Question Input (hidden by default) -->
+            <div id="custom-question" class="ai-custom-question hidden">
+                <input type="text" id="question-input" placeholder="Ask about crisis trends, risks, or specific countries...">
+                <button id="ask-btn" class="ai-ask-btn">Ask</button>
+            </div>
+
+            <!-- Analysis Button -->
+            <button id="analyze-btn" class="ai-analyze-btn">
+                <span class="btn-text">Analyze</span>
+                <span class="btn-loading hidden">
+                    <span class="loading-spinner"></span>
+                    Analyzing...
+                </span>
+            </button>
+
+            <!-- Results Container -->
+            <div id="ai-results" class="ai-results hidden">
+                <div class="ai-result-section">
+                    <h4>🔍 Key Findings</h4>
+                    <ul id="findings-list"></ul>
+                </div>
+                <div class="ai-result-section">
+                    <h4>⚡ Primary Drivers</h4>
+                    <ul id="drivers-list"></ul>
+                </div>
+                <div class="ai-result-section">
+                    <h4>👁️ Near-Term Risk Outlook</h4>
+                    <p class="section-methodology">Risk outlook based on current indicator trends and composite early-warning signals (30-day horizon)</p>
+                    <ul id="watchlist-list"></ul>
+                </div>
+                <!-- News Signal Section (in modal) -->
+                <div id="news-signal-section" class="news-signal-section hidden"></div>
+                <div id="custom-answer" class="ai-custom-answer hidden"></div>
+                <div class="ai-result-meta">
+                    <span id="result-model"></span>
+                    <span id="result-time"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Country Detail Modal -->
+<div id="country-modal" class="ai-modal hidden">
+    <div class="ai-modal-backdrop"></div>
+    <div class="ai-modal-content" style="max-width: 820px;">
+        <div class="ai-modal-header">
+            <h2 id="country-modal-title">Country Details</h2>
+            <button id="country-modal-close" class="ai-modal-close">&times;</button>
+        </div>
+        <div class="ai-modal-body" id="country-modal-body">
+            <div class="loading-spinner"></div>
+            Loading country data...
+        </div>
+    </div>
+</div>
+
+<!-- Footer (compact) -->
+<footer class="app-footer">
+    <div class="footer-sources">
+        <span class="footer-source">HungerMap LIVE (WFP)</span>
+        <span class="footer-source">FEWS NET</span>
+        <span class="footer-source">Open-Meteo</span>
+        <span class="footer-source">GDELT Project</span>
+        <span class="footer-source">World Bank</span>
+        <span class="footer-source">UNHCR</span>
+        <span class="footer-source">IOM DTM</span>
+        <span class="footer-source">ReliefWeb</span>
+    </div>
+</footer>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- App Scripts -->
+<script th:src="@{/js/app.js(v=226)}"></script>
+<script th:src="@{/js/map.js(v=10)}"></script>
+
+</body>
+</html>

@@ -1,0 +1,1887 @@
+package com.crisismonitor.service;
+
+import com.crisismonitor.model.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * AI Analysis Service using Claude API.
+ * Builds compact data packs and generates non-obvious insights.
+ * Responses are cached in Redis to minimize API costs.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ClaudeAnalysisService {
+
+    private final RiskScoreService riskScoreService;
+    private final GDELTService gdeltService;
+    private final OpenMeteoService openMeteoService;
+    private final CurrencyService currencyService;
+    private final FewsNetService fewsNetService;
+    private final HungerMapService hungerMapService;
+    private final WorldBankService worldBankService;
+    private final DTMService dtmService;
+    private final ClimateService climateService;
+    private final RegionalClusterService regionalClusterService;
+    private final ReliefWebService reliefWebService;
+    private final UNHCRService unhcrService;
+    private final ObjectMapper objectMapper;
+    private final RedisTemplate<String, Object> redisTemplate;
+
+    @Value("${anthropic.api.key:}")
+    private String apiKey;
+
+    @Value("${anthropic.model:claude-3-haiku-20240307}")
+    private String model;
+
+    private final WebClient webClient = WebClient.builder()
+            .baseUrl("https://api.anthropic.com/v1")
+            .build();
+
+    // Redis key for Claude situation detection cache (4 hour TTL)
+    private static final String CLAUDE_SITUATIONS_CACHE_KEY = "claudeSituations::latest";
+
+    /**
+     * Global analysis - overview of all monitored countries
+     */
+    @Cacheable(value = "aiAnalysisGlobal", key = "'global:' + #dataVersion")
+    public AIAnalysis analyzeGlobal(String dataVersion) {
+        log.info("Generating global AI analysis (cache miss)");
+
+        // Build news signal for top risk country
+        NewsSignal newsSignal = buildTopNewsSignal();
+
+        String dataPack = buildGlobalDataPack();
+        String prompt = buildGlobalPrompt(dataPack, newsSignal);
+
+        AIAnalysis analysis = callClaude(prompt, "global", null, null, newsSignal);
+        analysis.setDataVersion(dataVersion);
+        analysis.setFromCache(false);
+        analysis.setNewsSignal(newsSignal);
+
+        return analysis;
+    }
+
+    /**
+     * Country-specific deep-dive analysis
+     */
+    @Cacheable(value = "aiAnalysisCountry", key = "#iso3 + ':' + #dataVersion")
+    public AIAnalysis analyzeCountry(String iso3, String dataVersion) {
+        log.info("Generating country AI analysis for {} (cache miss)", iso3);
+
+        String dataPack = buildCountryDataPack(iso3);
+        if (dataPack == null) {
+            return AIAnalysis.builder()
+                    .scope("country")
+                    .countryIso3(iso3)
+                    .keyFindings(List.of("Country not found in monitored list"))
+                    .drivers(List.of())
+                    .watchList(List.of())
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+        }
+
+        String countryName = getCountryName(iso3);
+        String prompt = buildCountryPrompt(dataPack, countryName);
+
+        AIAnalysis analysis = callClaude(prompt, "country", iso3, countryName);
+        analysis.setDataVersion(dataVersion);
+        analysis.setFromCache(false);
+
+        return analysis;
+    }
+
+    /**
+     * Regional briefing analysis - intelligence brief for a specific region
+     * Regions: Africa, LAC, MENA, Asia, Europe
+     */
+    @Cacheable(value = "aiAnalysisRegionV2", key = "#region + ':' + #dataVersion")
+    public AIAnalysis analyzeRegion(String region, String dataVersion) {
+        log.info("Generating regional AI analysis for {} (cache miss)", region);
+
+        String dataPack = buildRegionalDataPack(region);
+        if (dataPack == null || dataPack.isEmpty()) {
+            return AIAnalysis.builder()
+                    .scope("region")
+                    .region(region)
+                    .keyFindings(List.of("No data available for region: " + region))
+                    .drivers(List.of())
+                    .watchList(List.of())
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+        }
+
+        String prompt = buildRegionalPrompt(dataPack, region);
+        AIAnalysis analysis = callClaudeRegional(prompt, region);
+        analysis.setDataVersion(dataVersion);
+        analysis.setFromCache(false);
+        analysis.setRegion(region);
+
+        return analysis;
+    }
+
+    /**
+     * Custom question analysis
+     */
+    @Cacheable(value = "aiAnalysisCustom", key = "#questionHash + ':' + #dataVersion")
+    public AIAnalysis analyzeCustom(String question, String questionHash, String dataVersion) {
+        log.info("Generating custom AI analysis (cache miss)");
+
+        String dataPack = buildGlobalDataPack();
+        String prompt = buildCustomPrompt(dataPack, question);
+
+        AIAnalysis analysis = callClaudeCustom(prompt, question);
+        analysis.setDataVersion(dataVersion);
+        analysis.setFromCache(false);
+
+        return analysis;
+    }
+
+    /**
+     * Generate a version hash based on current date and hour.
+     * Analysis is refreshed hourly to get new insights.
+     */
+    public String generateDataVersion() {
+        // Hourly version - refreshes analysis once per hour
+        LocalDateTime now = LocalDateTime.now();
+        return now.toLocalDate().toString() + "-" + now.getHour() + "-v7"; // v7 = added ReliefWeb humanitarian intel
+    }
+
+    /**
+     * Build compact data pack for global analysis - ONLY USER-VISIBLE METRICS
+     *
+     * Visible in dashboard:
+     * - Risk Score (0-100) + Risk Level (CRITICAL, ALERT, WARNING, WATCH, STABLE)
+     * - IPC Phase (1-5) + People in IPC 3+
+     * - Inflation % (from World Bank)
+     * - IDPs (Internally Displaced Persons)
+     * - NDVI Alert Level (SEVERE, MODERATE, NORMAL)
+     *
+     * NOT visible (do not include):
+     * - Internal scores (Climate Score, Conflict Score, Economic Score, Food Security Score)
+     * - z-scores, article counts, precipitation anomaly %, currency change %
+     */
+    private String buildGlobalDataPack() {
+        StringBuilder pack = new StringBuilder();
+
+        // ===== RISK SCORES =====
+        List<RiskScore> scores = riskScoreService.getAllRiskScores();
+
+        pack.append("## RISK SCORES\n");
+        pack.append("Countries by Risk Level (visible in dashboard):\n\n");
+
+        // Critical + Alert (score >= 71)
+        List<RiskScore> highRisk = scores.stream()
+                .filter(s -> s.getScore() >= 71)
+                .sorted((a, b) -> b.getScore() - a.getScore())
+                .toList();
+
+        for (RiskScore s : highRisk) {
+            pack.append(String.format("- %s: Risk Score %d (%s)\n",
+                    s.getCountryName(), s.getScore(), s.getRiskLevel()));
+        }
+
+        // Warning (51-70)
+        List<RiskScore> warning = scores.stream()
+                .filter(s -> s.getScore() >= 51 && s.getScore() < 71)
+                .sorted((a, b) -> b.getScore() - a.getScore())
+                .toList();
+
+        pack.append("\nWarning level:\n");
+        for (RiskScore s : warning) {
+            pack.append(String.format("- %s: Risk Score %d (WARNING)\n",
+                    s.getCountryName(), s.getScore()));
+        }
+
+        // ===== FOOD SECURITY (IPC) =====
+        pack.append("\n## FOOD SECURITY (IPC Phases)\n");
+
+        List<IPCAlert> ipcAlerts = fewsNetService.getCriticalAlerts();
+        Map<String, Country> ipcData = hungerMapService.getIpcData();
+
+        // Phase 5 (Famine)
+        List<IPCAlert> phase5 = ipcAlerts.stream()
+                .filter(a -> a.getIpcPhase() != null && a.getIpcPhase() >= 5.0)
+                .toList();
+        if (!phase5.isEmpty()) {
+            pack.append("\nPhase 5 (Famine):\n");
+            for (IPCAlert a : phase5) {
+                Country ipc = ipcData.get(a.getIso2() != null ?
+                        getIso3FromIso2(a.getIso2()) : null);
+                String population = ipc != null && ipc.getPeoplePhase3to5() != null ?
+                        formatPopulation(ipc.getPeoplePhase3to5()) + " people IPC 3+" : "";
+                pack.append(String.format("- %s: IPC Phase 5 (Famine)%s\n",
+                        a.getCountryName(), population.isEmpty() ? "" : "; " + population));
+            }
+        }
+
+        // Phase 4 (Emergency)
+        List<IPCAlert> phase4 = ipcAlerts.stream()
+                .filter(a -> a.getIpcPhase() != null && a.getIpcPhase() >= 4.0 && a.getIpcPhase() < 5.0)
+                .toList();
+        if (!phase4.isEmpty()) {
+            pack.append("\nPhase 4 (Emergency):\n");
+            for (IPCAlert a : phase4) {
+                Country ipc = ipcData.get(a.getIso2() != null ?
+                        getIso3FromIso2(a.getIso2()) : null);
+                String population = ipc != null && ipc.getPeoplePhase3to5() != null ?
+                        formatPopulation(ipc.getPeoplePhase3to5()) + " people IPC 3+" : "";
+                pack.append(String.format("- %s: IPC Phase 4 (Emergency)%s\n",
+                        a.getCountryName(), population.isEmpty() ? "" : "; " + population));
+            }
+        }
+
+        // ===== INFLATION (World Bank) =====
+        pack.append("\n## INFLATION\n");
+        try {
+            List<EconomicIndicator> highInflation = worldBankService.getHighInflationCountries();
+            if (highInflation != null && !highInflation.isEmpty()) {
+                for (EconomicIndicator e : highInflation.stream().limit(10).toList()) {
+                    pack.append(String.format("- %s: Inflation %.1f%%\n",
+                            e.getCountryName(), e.getValue()));
+                }
+            } else {
+                pack.append("(No high inflation data available)\n");
+            }
+        } catch (Exception e) {
+            pack.append("(Inflation data not available)\n");
+        }
+
+        // ===== IDPs (Internally Displaced Persons) =====
+        pack.append("\n## INTERNALLY DISPLACED PERSONS (IDPs)\n");
+        try {
+            List<MobilityStock> idpData = dtmService.getCountryLevelIdps();
+            if (idpData != null && !idpData.isEmpty()) {
+                for (MobilityStock m : idpData.stream()
+                        .filter(m -> m.getIdps() != null && m.getIdps() > 100000)
+                        .limit(10)
+                        .toList()) {
+                    pack.append(String.format("- %s: %s IDPs\n",
+                            m.getCountryName(), formatPopulation(m.getIdps())));
+                }
+            } else {
+                pack.append("(IDP data not available)\n");
+            }
+        } catch (Exception e) {
+            pack.append("(IDP data not available)\n");
+        }
+
+        // ===== CLIMATE STRESS (NDVI) =====
+        pack.append("\n## CLIMATE STRESS (NDVI)\n");
+        try {
+            List<ClimateData> climateStress = climateService.getCountriesWithClimateStress();
+            if (climateStress != null && !climateStress.isEmpty()) {
+                List<ClimateData> severe = climateStress.stream()
+                        .filter(c -> "SEVERE".equals(c.getAlertLevel()))
+                        .toList();
+                List<ClimateData> moderate = climateStress.stream()
+                        .filter(c -> "MODERATE".equals(c.getAlertLevel()))
+                        .toList();
+
+                if (!severe.isEmpty()) {
+                    pack.append("SEVERE drought stress: ");
+                    pack.append(severe.stream().map(ClimateData::getName).collect(Collectors.joining(", ")));
+                    pack.append("\n");
+                }
+                if (!moderate.isEmpty()) {
+                    pack.append("MODERATE drought stress: ");
+                    pack.append(moderate.stream().map(ClimateData::getName).limit(8).collect(Collectors.joining(", ")));
+                    pack.append("\n");
+                }
+            } else {
+                pack.append("(Climate data not available)\n");
+            }
+        } catch (Exception e) {
+            pack.append("(Climate data not available)\n");
+        }
+
+        // ===== CROSS-SIGNAL COUNTRIES =====
+        pack.append("\n## CROSS-SIGNAL ANALYSIS (countries appearing in multiple indicators)\n");
+        Map<String, Integer> crossSignal = new HashMap<>();
+
+        // Count appearances
+        for (RiskScore s : highRisk) {
+            crossSignal.merge(s.getCountryName(), 1, Integer::sum);
+        }
+        for (IPCAlert a : ipcAlerts) {
+            if (a.getIpcPhase() != null && a.getIpcPhase() >= 4.0) {
+                crossSignal.merge(a.getCountryName(), 1, Integer::sum);
+            }
+        }
+
+        // List countries in 2+ categories
+        crossSignal.entrySet().stream()
+                .filter(e -> e.getValue() >= 2)
+                .sorted((a, b) -> b.getValue() - a.getValue())
+                .forEach(e -> pack.append(String.format("- %s: appears in %d indicator categories\n",
+                        e.getKey(), e.getValue())));
+
+        // ===== REGIONAL CLUSTER ALERTS =====
+        pack.append("\n## REGIONAL CLUSTER ALERTS\n");
+        try {
+            List<RegionalClusterService.ClusterAlert> clusters = regionalClusterService.analyzeRegionalClusters(scores);
+            if (clusters != null && !clusters.isEmpty()) {
+                for (RegionalClusterService.ClusterAlert cluster : clusters) {
+                    pack.append(String.format("- %s: %s — %s\n",
+                            cluster.getClusterName(),
+                            cluster.getStatus(),
+                            cluster.getDescription()));
+                    if (cluster.getAffectedCountries() != null && !cluster.getAffectedCountries().isEmpty()) {
+                        pack.append("  Affected: ").append(String.join(", ", cluster.getAffectedCountries())).append("\n");
+                    }
+                }
+            } else {
+                pack.append("No significant regional cluster alerts.\n");
+            }
+        } catch (Exception e) {
+            pack.append("(Regional cluster data not available)\n");
+        }
+
+        return pack.toString();
+    }
+
+    private String formatPopulation(Long pop) {
+        if (pop == null) return "N/A";
+        if (pop >= 1_000_000) return String.format("%.1fM", pop / 1_000_000.0);
+        if (pop >= 1_000) return String.format("%.0fK", pop / 1_000.0);
+        return pop.toString();
+    }
+
+    /**
+     * Build NewsSignal for the highest-risk country with media spike.
+     * Provides news context for the AI Brief.
+     */
+    private NewsSignal buildTopNewsSignal() {
+        try {
+            // Get top risk country
+            List<RiskScore> scores = riskScoreService.getAllRiskScores();
+            if (scores == null || scores.isEmpty()) return null;
+
+            RiskScore topRisk = scores.stream()
+                    .filter(s -> s.getScore() >= 51) // At least WARNING level
+                    .max((a, b) -> Integer.compare(a.getScore(), b.getScore()))
+                    .orElse(scores.get(0));
+
+            String iso3 = topRisk.getIso3();
+            String countryName = topRisk.getCountryName();
+            String riskLevel = topRisk.getRiskLevel();
+            int riskScore = topRisk.getScore();
+
+            // Get media spike data
+            MediaSpike spike = gdeltService.getConflictSpikeIndex(iso3);
+            if (spike == null) return null;
+
+            Double zScore = spike.getZScore();
+            Integer articles = spike.getArticlesLast7Days();
+
+            // Calculate news level
+            String newsLevel = NewsSignal.calculateLevel(zScore, articles);
+            String levelIcon = NewsSignal.getLevelIcon(newsLevel);
+
+            // Calculate convergence
+            String convergence = NewsSignal.calculateConvergence(riskLevel, newsLevel);
+            String convergenceIcon = NewsSignal.getConvergenceIcon(convergence);
+
+            // Format spike stat
+            String spikeStat = String.format("%d articles / 7d (Z=%.1f)",
+                    articles != null ? articles : 0,
+                    zScore != null ? zScore : 0.0);
+
+            // Get headlines with URLs (GDELT - media)
+            List<Headline> headlines = gdeltService.getTopHeadlinesWithUrls(iso3, 3);
+
+            // Get humanitarian reports (ReliefWeb - official UN/NGO reports)
+            List<Headline> humanitarianReports = reliefWebService.getLatestReportsAsHeadlines(iso3, 3);
+
+            return NewsSignal.builder()
+                    .iso3(iso3)
+                    .countryName(countryName)
+                    .level(newsLevel)
+                    .levelIcon(levelIcon)
+                    .convergenceTag(convergence)
+                    .convergenceIcon(convergenceIcon)
+                    .convergent(convergence != null && convergence.contains("Convergent"))
+                    .articlesLast7Days(articles)
+                    .zScore(zScore)
+                    .spikeStat(spikeStat)
+                    .headlines(headlines)
+                    .humanitarianReports(humanitarianReports)
+                    .riskLevel(riskLevel)
+                    .riskScore(riskScore)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Error building news signal: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String getIso3FromIso2(String iso2) {
+        // Simple mapping for common crisis countries
+        Map<String, String> mapping = Map.ofEntries(
+                Map.entry("SD", "SDN"), Map.entry("SS", "SSD"), Map.entry("SO", "SOM"),
+                Map.entry("ET", "ETH"), Map.entry("YE", "YEM"), Map.entry("AF", "AFG"),
+                Map.entry("CD", "COD"), Map.entry("HT", "HTI"), Map.entry("CF", "CAF"),
+                Map.entry("NG", "NGA"), Map.entry("ML", "MLI"), Map.entry("NE", "NER"),
+                Map.entry("BF", "BFA"), Map.entry("TD", "TCD"), Map.entry("MZ", "MOZ"),
+                Map.entry("MM", "MMR"), Map.entry("SY", "SYR"), Map.entry("UA", "UKR"),
+                Map.entry("LB", "LBN"), Map.entry("VE", "VEN"), Map.entry("ZW", "ZWE")
+        );
+        return mapping.getOrDefault(iso2, iso2);
+    }
+
+    /**
+     * Build compact data pack for country-specific analysis
+     */
+    private String buildCountryDataPack(String iso3) {
+        List<RiskScore> scores = riskScoreService.getAllRiskScores();
+        RiskScore country = scores.stream()
+                .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
+                .findFirst()
+                .orElse(null);
+
+        if (country == null) return null;
+
+        StringBuilder pack = new StringBuilder();
+
+        // Full risk score breakdown
+        pack.append("## ").append(country.getCountryName().toUpperCase()).append(" RISK PROFILE\n");
+        pack.append(String.format("Overall Score: %d/100 (%s)\n", country.getScore(), country.getRiskLevel()));
+        pack.append(String.format("Confidence: %.0f%%\n", country.getConfidence() * 100));
+        pack.append(String.format("Horizon: %s - %s\n\n", country.getHorizon(), country.getHorizonReason()));
+
+        pack.append("### INDICATOR BREAKDOWN\n");
+        pack.append(String.format("- Climate: %d/100 (Precip anomaly: %.1f%%)\n",
+                country.getClimateScore(),
+                country.getPrecipitationAnomaly() != null ? country.getPrecipitationAnomaly() : 0));
+        pack.append(String.format("- Conflict: %d/100 (GDELT z-score: %.1f)\n",
+                country.getConflictScore(),
+                country.getGdeltZScore() != null ? country.getGdeltZScore() : 0));
+        pack.append(String.format("- Economic: %d/100 (Currency 30d: %.1f%%)\n",
+                country.getEconomicScore(),
+                country.getCurrencyChange30d() != null ? country.getCurrencyChange30d() : 0));
+        pack.append(String.format("- Food Security: %d/100 (IPC Phase: %.0f)\n",
+                country.getFoodSecurityScore(),
+                country.getIpcPhase() != null ? country.getIpcPhase() : 0));
+
+        pack.append("\n### ELEVATED INDICATORS (2-of-3 rule)\n");
+        if (country.isClimateElevated()) pack.append("- Climate: ELEVATED\n");
+        if (country.isConflictElevated()) pack.append("- Conflict: ELEVATED\n");
+        if (country.isEconomicElevated()) pack.append("- Economic: ELEVATED\n");
+        pack.append(String.format("Confirmation: %d/3 elevated\n", country.getElevatedCount()));
+
+        pack.append("\n### PRIMARY DRIVERS\n");
+        if (country.getDrivers() != null) {
+            for (String driver : country.getDrivers()) {
+                pack.append("- ").append(driver).append("\n");
+            }
+        }
+
+        // Add conflict headlines
+        pack.append("\n### RECENT NEWS (GDELT)\n");
+        List<MediaSpike> spikes = gdeltService.getAllConflictSpikes();
+        spikes.stream()
+                .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
+                .findFirst()
+                .ifPresent(s -> {
+                    if (s.getTopHeadlines() != null) {
+                        s.getTopHeadlines().forEach(h -> pack.append("- ").append(h).append("\n"));
+                    }
+                });
+
+        // Compare to regional peers
+        pack.append("\n### REGIONAL CONTEXT\n");
+        String region = getRegion(iso3);
+        List<RiskScore> peers = scores.stream()
+                .filter(s -> region.equals(getRegion(s.getIso3())))
+                .filter(s -> !iso3.equalsIgnoreCase(s.getIso3()))
+                .sorted((a, b) -> b.getScore() - a.getScore())
+                .limit(3)
+                .toList();
+
+        pack.append("Regional peers: ");
+        pack.append(peers.stream()
+                .map(s -> String.format("%s(%d)", s.getCountryName(), s.getScore()))
+                .collect(Collectors.joining(", ")));
+
+        return pack.toString();
+    }
+
+    /**
+     * Build regional data pack for a specific region (Africa, LAC, MENA, Asia, Europe)
+     */
+    private String buildRegionalDataPack(String region) {
+        List<RiskScore> allScores = riskScoreService.getAllRiskScores();
+
+        // Filter scores by region
+        List<RiskScore> regionalScores = allScores.stream()
+                .filter(s -> region.equalsIgnoreCase(getRegion(s.getIso3())))
+                .sorted((a, b) -> b.getScore() - a.getScore())
+                .toList();
+
+        if (regionalScores.isEmpty()) {
+            log.warn("No risk scores found for region: {}", region);
+            return null;
+        }
+
+        StringBuilder pack = new StringBuilder();
+        pack.append("# REGIONAL INTELLIGENCE BRIEFING: ").append(region.toUpperCase()).append("\n\n");
+
+        // Regional summary
+        int criticalCount = (int) regionalScores.stream().filter(s -> "CRITICAL".equals(s.getRiskLevel())).count();
+        int alertCount = (int) regionalScores.stream().filter(s -> "ALERT".equals(s.getRiskLevel())).count();
+        int warningCount = (int) regionalScores.stream().filter(s -> "WARNING".equals(s.getRiskLevel())).count();
+        double avgScore = regionalScores.stream().mapToInt(RiskScore::getScore).average().orElse(0);
+
+        pack.append("## REGIONAL OVERVIEW\n");
+        pack.append(String.format("- Countries monitored: %d\n", regionalScores.size()));
+        pack.append(String.format("- CRITICAL: %d | ALERT: %d | WARNING: %d\n", criticalCount, alertCount, warningCount));
+        pack.append(String.format("- Average risk score: %.0f/100\n\n", avgScore));
+
+        // Top risk countries (top 5)
+        pack.append("## TOP RISK COUNTRIES\n");
+        regionalScores.stream().limit(5).forEach(s -> {
+            pack.append(String.format("### %s (%s) - Score: %d/100 [%s]\n",
+                    s.getCountryName(), s.getIso3(), s.getScore(), s.getRiskLevel()));
+            pack.append(String.format("  - Climate: %d | Conflict: %d | Economic: %d | Food: %d\n",
+                    s.getClimateScore(), s.getConflictScore(), s.getEconomicScore(), s.getFoodSecurityScore()));
+            if (s.getDrivers() != null && !s.getDrivers().isEmpty()) {
+                pack.append("  - Drivers: ").append(String.join(", ", s.getDrivers())).append("\n");
+            }
+            pack.append("  - Trend: ").append(s.getTrend() != null ? s.getTrend() : "stable").append("\n\n");
+        });
+
+        // Common drivers across region
+        pack.append("## DOMINANT REGIONAL DRIVERS\n");
+        Map<String, Long> driverCounts = regionalScores.stream()
+                .filter(s -> s.getDrivers() != null)
+                .flatMap(s -> s.getDrivers().stream())
+                .collect(Collectors.groupingBy(d -> d, Collectors.counting()));
+
+        driverCounts.entrySet().stream()
+                .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+                .limit(4)
+                .forEach(e -> pack.append(String.format("- %s: affects %d countries\n", e.getKey(), e.getValue())));
+
+        // Add cluster alerts for region
+        pack.append("\n## CLUSTER CONVERGENCE\n");
+        List<RegionalClusterService.ClusterAlert> clusters = regionalClusterService.analyzeRegionalClusters(regionalScores);
+        if (clusters.isEmpty()) {
+            pack.append("No significant cluster convergence detected.\n");
+        } else {
+            clusters.forEach(c -> pack.append(String.format("- %s: %s - %s\n",
+                    c.getClusterName(), c.getStatus(), c.getDescription())));
+        }
+
+        // Recent news for top countries
+        pack.append("\n## RECENT DEVELOPMENTS (GDELT)\n");
+        List<MediaSpike> spikes = gdeltService.getAllConflictSpikes();
+        regionalScores.stream().limit(3).forEach(country -> {
+            spikes.stream()
+                    .filter(s -> country.getIso3().equalsIgnoreCase(s.getIso3()))
+                    .findFirst()
+                    .ifPresent(s -> {
+                        pack.append(String.format("\n**%s:**\n", country.getCountryName()));
+                        if (s.getTopHeadlines() != null) {
+                            s.getTopHeadlines().stream().limit(2).forEach(h ->
+                                    pack.append("  - ").append(h).append("\n"));
+                        }
+                    });
+        });
+
+        return pack.toString();
+    }
+
+    /**
+     * Build regional analysis prompt - intelligence briefing style
+     */
+    private String buildRegionalPrompt(String dataPack, String region) {
+        String regionName = switch (region.toLowerCase()) {
+            case "africa" -> "Africa (Sub-Saharan)";
+            case "mena" -> "Middle East & North Africa";
+            case "lac", "americas" -> "Latin America & Caribbean";
+            case "asia" -> "Asia-Pacific";
+            case "europe" -> "Eastern Europe";
+            default -> region;
+        };
+
+        return String.format("""
+            You are a senior humanitarian intelligence analyst producing a MORNING BRIEF for %s.
+
+            Your audience: Decision-makers at WFP, UNHCR, OCHA who need to understand what's happening in the region NOW.
+
+            ## DATA PACKAGE
+            %s
+
+            ## YOUR TASK
+            Produce a 150-200 word INTELLIGENCE BRIEF covering:
+
+            1. **SITUATION SUMMARY** (2-3 sentences): The overall state of the region - is it stable, deteriorating, or critical? What's the dominant narrative?
+
+            2. **KEY DEVELOPMENTS** (3-4 bullet points): The 3-4 most important things happening RIGHT NOW. Focus on changes, escalations, or emerging patterns.
+
+            3. **SPILLOVER RISKS**: Any cross-border dynamics or regional contagion risks. How are crises in one country affecting neighbors?
+
+            4. **WATCH LIST**: 1-2 countries or situations to monitor closely in the next 7 days.
+
+            ## STYLE REQUIREMENTS
+            - Write like a State Department intelligence brief - professional, precise, no speculation
+            - Lead with the most important information
+            - Use specific numbers when available
+            - No emojis, no markdown headers in output
+            - Focus on "so what" - why should the reader care?
+
+            Respond with ONLY the brief - no preamble, no explanation.
+            """, regionName, dataPack);
+    }
+
+    /**
+     * Call Claude for regional analysis
+     */
+    private AIAnalysis callClaudeRegional(String prompt, String region) {
+        try {
+            String systemPrompt = "You are a humanitarian intelligence analyst providing regional situation briefs. Be concise, data-driven, and actionable.";
+
+            ObjectNode requestBody = objectMapper.createObjectNode();
+            requestBody.put("model", model);
+            requestBody.put("max_tokens", 1000);
+            requestBody.put("system", systemPrompt);
+
+            ArrayNode messages = objectMapper.createArrayNode();
+            ObjectNode userMessage = objectMapper.createObjectNode();
+            userMessage.put("role", "user");
+            userMessage.put("content", prompt);
+            messages.add(userMessage);
+            requestBody.set("messages", messages);
+
+            String response = webClient.post()
+                    .uri("/messages")
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .bodyValue(requestBody.toString())
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            if (response == null) {
+                throw new RuntimeException("Empty response from Claude API");
+            }
+
+            JsonNode responseJson = objectMapper.readTree(response);
+            String content = responseJson.path("content").get(0).path("text").asText();
+
+            return AIAnalysis.builder()
+                    .scope("region")
+                    .region(region)
+                    .summary(content)
+                    .keyFindings(List.of(content)) // Put full brief in findings
+                    .drivers(List.of())
+                    .watchList(List.of())
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Error calling Claude for regional analysis: {}", e.getMessage());
+            return AIAnalysis.builder()
+                    .scope("region")
+                    .region(region)
+                    .summary("Analysis generation failed: " + e.getMessage())
+                    .keyFindings(List.of("Error generating regional brief"))
+                    .drivers(List.of())
+                    .watchList(List.of())
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+        }
+    }
+
+    private String buildGlobalPrompt(String dataPack, NewsSignal newsSignal) {
+        // Build news signal context for the prompt
+        String newsContext = "";
+        if (newsSignal != null && newsSignal.getHeadlines() != null && !newsSignal.getHeadlines().isEmpty()) {
+            StringBuilder news = new StringBuilder();
+            news.append("\n## NEWS & INTELLIGENCE SIGNAL (").append(newsSignal.getCountryName()).append(")\n");
+            news.append("Media Level: ").append(newsSignal.getLevel());
+            news.append(" | Risk Level: ").append(newsSignal.getRiskLevel());
+            if (newsSignal.getConvergenceTag() != null) {
+                news.append(" | ").append(newsSignal.getConvergenceTag());
+            }
+            news.append("\nMedia spike: ").append(newsSignal.getSpikeStat()).append("\n");
+            news.append("Media headlines (GDELT):\n");
+            for (Headline h : newsSignal.getHeadlines()) {
+                news.append("- ").append(h.getTitle()).append("\n");
+            }
+
+            // Add ReliefWeb official reports
+            if (newsSignal.getHumanitarianReports() != null && !newsSignal.getHumanitarianReports().isEmpty()) {
+                news.append("\nOfficial humanitarian reports (ReliefWeb - UN/NGO sources):\n");
+                for (Headline h : newsSignal.getHumanitarianReports()) {
+                    news.append("- ").append(h.getSource() != null ? h.getSource() + ": " : "")
+                            .append(h.getTitle()).append("\n");
+                }
+            }
+
+            newsContext = news.toString();
+        }
+
+        return """
+            You are a humanitarian early warning analyst writing a risk brief.
+            Your job: RANK humanitarian risk by priority for decision-makers.
+
+            STRICT RULES:
+            1. ONLY cite: IPC Phase, Risk Score, Inflation %%, NDVI level, IDPs, people IPC 3+
+            2. NEVER use internal scores, z-scores, article counts, or hidden metrics
+            3. ONLY cite IPC Phase for a country if it's EXPLICITLY stated in the data
+            4. Use STRONG verbs: "highest", "largest", "converging" — NOT "shows", "faces", "demonstrates"
+            5. Use RISK language, not commands: "high risk of X" NOT "X required" or "X needed"
+            6. Use INSTITUTIONAL language: neutral, analytical, policy-appropriate
+
+            DATA SNAPSHOT:
+            %s
+            %s
+
+            ANALYSIS STRUCTURE:
+
+            1. KEY FINDINGS (5 items) — ranked by severity
+            Format: "[Ranking insight]. Evidence: [metric] [value]; [metric] [value]. Confidence: High/Medium"
+
+            CORRECT: "Sudan has the highest humanitarian severity. Evidence: IPC Phase 5 (Famine); 24.6M people IPC 3+; 9.6M IDPs. Confidence: High"
+            CORRECT: "Horn of Africa triangle converging on high-risk signals. Evidence: Ethiopia Risk Score 78; Somalia Risk Score 76 (IPC Phase 4); Yemen Risk Score 76 (IPC Phase 4). Confidence: Medium"
+
+            WRONG: "all reaching IPC Phase 4" ← only say this if ALL countries have explicit IPC Phase 4 in data
+
+            2. PRIMARY DRIVERS (3 items) — explain the WHY
+            Format: "[Driver]: [countries] share [specific pattern with numbers]"
+
+            CORRECT: "Economic collapse trajectory: Sudan (138.8%% inflation), South Sudan (91.4%% inflation) driving food access crisis"
+            CORRECT: "Climate-food nexus: Afghanistan, Somalia combine NDVI drought stress with IPC Phase 4"
+
+            3. NEAR-TERM RISK OUTLOOK (30 days) — Top 3 with explicit priority level
+            Risk outlook based on current indicator trends and composite early-warning signals.
+            Format: "[PRIORITY LEVEL]: [Country] — [evidence] — [risk statement]"
+
+            Priority levels:
+            - CRITICAL = immediate severity (famine, mass displacement)
+            - IMMEDIATE = escalation trajectory (economic collapse, conflict spike)
+            - SCALE = large affected population needing response
+
+            LANGUAGE EXAMPLES (use institutional, neutral tone):
+            CORRECT: "CRITICAL: Sudan — IPC Phase 5 + 9.6M IDPs + 138.8%% inflation — high risk of geographic expansion of famine conditions and increased cross-border displacement pressure"
+            CORRECT: "IMMEDIATE: South Sudan — Risk Score 91 + 91.4%% inflation — macroeconomic deterioration within the upcoming lean season increasing risk of transition to famine conditions"
+            CORRECT: "SCALE: DR Congo — 27.7M people IPC 3+ + 5.3M IDPs — crisis scale may exceed current response capacity"
+
+            WRONG: "containment required" or "immediate action needed" ← too commanding
+            WRONG: "may trigger famine transition" ← use "increasing risk of transition to famine conditions"
+            WRONG: "response capacity gap" ← use "crisis scale may exceed current response capacity"
+            WRONG: "cross-border displacement flows" ← use "cross-border displacement pressure"
+            WRONG: "within seasonal cycle" ← use "within the upcoming lean season"
+
+            4. END with global context (add to last driver):
+            "Priority concentration: [Top 3 countries] account for [X]M people in IPC 3+."
+
+            5. OPERATIONAL INSIGHT (1 sentence) — ONLY if NEWS & INTELLIGENCE SIGNAL section is present above
+            One sentence on whether media coverage AND official humanitarian reporting confirm or contradict the risk indicators.
+            Consider both GDELT media headlines and ReliefWeb official reports when assessing convergence/divergence.
+            Examples:
+            - "Operational reporting confirms rapid deterioration; media attention aligns with severity indicators."
+            - "Limited official reporting despite high risk suggests potential monitoring gap."
+            - "Media escalation precedes formal humanitarian response mobilization."
+            If no news signal data, set operationalInsight to null.
+
+            RESPOND IN THIS EXACT JSON:
+            {
+              "keyFindings": ["finding1", "finding2", "finding3", "finding4", "finding5"],
+              "drivers": ["driver1", "driver2", "driver3 + priority concentration statement"],
+              "watchList": ["CRITICAL: country1...", "IMMEDIATE: country2...", "SCALE: country3..."],
+              "operationalInsight": "One sentence if news signal present, otherwise null"
+            }
+
+            Write like an analyst briefing decision-makers. Risk language, not commands. Institutional tone.
+            """.formatted(dataPack, newsContext);
+    }
+
+    private String buildCountryPrompt(String dataPack, String countryName) {
+        return """
+            You are a senior humanitarian crisis analyst. Analyze %s using ONLY the data below.
+
+            STRICT RULES:
+            1. ONLY use facts from the DATA section - no external information
+            2. Cite specific numbers for every claim
+            3. Compare to regional peers shown in the data
+            4. If data is missing, say "not in snapshot"
+
+            DATA SNAPSHOT:
+            %s
+
+            FORMAT: Each finding must include "Evidence: [metric]=[value]"
+
+            Respond in this EXACT JSON:
+            {
+              "keyFindings": ["finding1 with evidence", "finding2 with evidence", "finding3 with evidence", "finding4 with evidence", "finding5 with evidence"],
+              "drivers": ["driver1 with metrics", "driver2 with metrics", "driver3 with metrics"],
+              "watchList": ["watch1 with reasoning", "watch2 with reasoning", "watch3 with reasoning"]
+            }
+
+            FOCUS ON:
+            - Which indicators are ELEVATED (marked in data)
+            - The 2-of-3 confirmation status
+            - Comparison with regional peers listed
+            - The stated horizon and reasoning
+            - Recent headlines if provided
+
+            Cite only what appears in the data. No hallucinations.
+            """.formatted(countryName, dataPack);
+    }
+
+    private String buildCustomPrompt(String dataPack, String question) {
+        return """
+            You are a senior humanitarian crisis analyst. Answer this specific question using the crisis monitoring data below.
+
+            QUESTION: %s
+
+            DATA:
+            %s
+
+            Provide a focused, analytical answer. Cite specific data points. Avoid obvious observations.
+            If the question cannot be answered from the data, explain what additional information would be needed.
+
+            Keep your response concise (2-3 paragraphs max).
+            """.formatted(question, dataPack);
+    }
+
+    private AIAnalysis callClaude(String prompt, String scope, String iso3, String countryName) {
+        return callClaude(prompt, scope, iso3, countryName, null);
+    }
+
+    private AIAnalysis callClaude(String prompt, String scope, String iso3, String countryName, NewsSignal newsSignal) {
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("Anthropic API key not configured, returning mock analysis");
+            return mockAnalysis(scope, iso3, countryName);
+        }
+
+        try {
+            Map<String, Object> request = Map.of(
+                    "model", model,
+                    "max_tokens", 1024,
+                    "messages", List.of(Map.of("role", "user", "content", prompt))
+            );
+
+            String response = webClient.post()
+                    .uri("/messages")
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            return parseClaudeResponse(response, scope, iso3, countryName, newsSignal);
+
+        } catch (Exception e) {
+            log.error("Claude API call failed: {}", e.getMessage());
+            return mockAnalysis(scope, iso3, countryName);
+        }
+    }
+
+    private AIAnalysis callClaudeCustom(String prompt, String question) {
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("Anthropic API key not configured, returning mock analysis");
+            return AIAnalysis.builder()
+                    .scope("custom")
+                    .customQuestion(question)
+                    .customAnswer("API key not configured. Please set anthropic.api.key in application.properties")
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+        }
+
+        try {
+            Map<String, Object> request = Map.of(
+                    "model", model,
+                    "max_tokens", 1024,
+                    "messages", List.of(Map.of("role", "user", "content", prompt))
+            );
+
+            String response = webClient.post()
+                    .uri("/messages")
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            JsonNode root = objectMapper.readTree(response);
+            String content = root.path("content").get(0).path("text").asText();
+
+            return AIAnalysis.builder()
+                    .scope("custom")
+                    .customQuestion(question)
+                    .customAnswer(content)
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Claude API call failed: {}", e.getMessage());
+            return AIAnalysis.builder()
+                    .scope("custom")
+                    .customQuestion(question)
+                    .customAnswer("Analysis failed: " + e.getMessage())
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+        }
+    }
+
+    private AIAnalysis parseClaudeResponse(String response, String scope, String iso3, String countryName, NewsSignal newsSignal) {
+        try {
+            JsonNode root = objectMapper.readTree(response);
+            String content = root.path("content").get(0).path("text").asText();
+
+            // Extract JSON from response (Claude might wrap it in markdown)
+            String json = content;
+            if (content.contains("```json")) {
+                json = content.substring(content.indexOf("```json") + 7);
+                json = json.substring(0, json.indexOf("```"));
+            } else if (content.contains("{")) {
+                json = content.substring(content.indexOf("{"));
+                json = json.substring(0, json.lastIndexOf("}") + 1);
+            }
+
+            JsonNode analysis = objectMapper.readTree(json);
+
+            List<String> findings = new ArrayList<>();
+            analysis.path("keyFindings").forEach(n -> findings.add(n.asText()));
+
+            List<String> drivers = new ArrayList<>();
+            analysis.path("drivers").forEach(n -> drivers.add(n.asText()));
+
+            List<String> watchList = new ArrayList<>();
+            analysis.path("watchList").forEach(n -> watchList.add(n.asText()));
+
+            // Extract operational insight for news signal
+            String operationalInsight = null;
+            if (analysis.has("operationalInsight") && !analysis.path("operationalInsight").isNull()) {
+                operationalInsight = analysis.path("operationalInsight").asText();
+                if (operationalInsight != null && !operationalInsight.isBlank() && !"null".equals(operationalInsight)) {
+                    // Set on the news signal if present
+                    if (newsSignal != null) {
+                        newsSignal.setOperationalInsight(operationalInsight);
+                    }
+                }
+            }
+
+            return AIAnalysis.builder()
+                    .scope(scope)
+                    .countryIso3(iso3)
+                    .countryName(countryName)
+                    .keyFindings(findings)
+                    .drivers(drivers)
+                    .watchList(watchList)
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Failed to parse Claude response: {}", e.getMessage());
+            return mockAnalysis(scope, iso3, countryName);
+        }
+    }
+
+    private AIAnalysis mockAnalysis(String scope, String iso3, String countryName) {
+        return AIAnalysis.builder()
+                .scope(scope)
+                .countryIso3(iso3)
+                .countryName(countryName)
+                .keyFindings(List.of(
+                        "Configure anthropic.api.key in application.properties to enable AI analysis",
+                        "Mock data: Multiple countries show converging climate-conflict stress patterns",
+                        "Mock data: Currency instability correlating with food insecurity in Sahel region",
+                        "Mock data: Regional spillover effects visible from Sudan to Chad and South Sudan",
+                        "Mock data: Economic pressure building in East Africa following drought conditions"
+                ))
+                .drivers(List.of(
+                        "Configure API key for real analysis",
+                        "Mock driver: Climate-induced displacement",
+                        "Mock driver: Cross-border conflict dynamics"
+                ))
+                .watchList(List.of(
+                        "Set anthropic.api.key property",
+                        "Mock: Monitor rainy season developments",
+                        "Mock: Track currency movements"
+                ))
+                .generatedAt(LocalDateTime.now())
+                .model(model + " (mock)")
+                .fromCache(false)
+                .build();
+    }
+
+    private String getCountryName(String iso3) {
+        List<RiskScore> scores = riskScoreService.getAllRiskScores();
+        return scores.stream()
+                .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
+                .findFirst()
+                .map(RiskScore::getCountryName)
+                .orElse(iso3);
+    }
+
+    private String getRegion(String iso3) {
+        // Region mapping aligned with MonitoredCountries.COUNTRY_REGIONS
+        Set<String> africa = Set.of("SDN", "SSD", "SOM", "ETH", "COD", "CAF", "NGA", "MLI", "NER", "BFA", "TCD", "MOZ", "ZWE", "KEN", "UGA", "RWA", "BDI", "CMR");
+        Set<String> mena = Set.of("YEM", "SYR", "LBY", "LBN", "IRQ", "PSE");
+        Set<String> asia = Set.of("AFG", "PAK", "MMR", "BGD");
+        Set<String> lac = Set.of("HTI", "VEN", "COL", "PER", "ECU", "GTM", "HND", "SLV", "NIC", "MEX", "CUB", "PAN");
+        Set<String> europe = Set.of("UKR");
+
+        if (africa.contains(iso3)) return "africa";
+        if (mena.contains(iso3)) return "mena";
+        if (asia.contains(iso3)) return "asia";
+        if (lac.contains(iso3)) return "lac";
+        if (europe.contains(iso3)) return "europe";
+        return "other";
+    }
+
+    // ========================================
+    // DEEP ANALYSIS - CONTEXTUAL SCORING
+    // ========================================
+
+    /**
+     * Deep contextual analysis with dynamic weighting.
+     * Claude acts as the reasoning engine, determining weights based on context.
+     * Single call - meant to be triggered by user button for cost control.
+     */
+    public DeepAnalysisResult deepAnalyze(String iso3) {
+        log.info("Starting deep contextual analysis for {}", iso3);
+        long start = System.currentTimeMillis();
+
+        if (apiKey == null || apiKey.isBlank()) {
+            return DeepAnalysisResult.builder()
+                    .iso3(iso3)
+                    .countryName(getCountryName(iso3))
+                    .score(0)
+                    .reasoning("API key not configured. Please set anthropic.api.key in application.properties")
+                    .build();
+        }
+
+        // Build comprehensive data package
+        String dataPack = buildDeepDataPack(iso3);
+        if (dataPack == null) {
+            return DeepAnalysisResult.builder()
+                    .iso3(iso3)
+                    .countryName(iso3)
+                    .score(0)
+                    .reasoning("Country not found in monitored list")
+                    .build();
+        }
+
+        String prompt = buildDeepAnalysisPrompt(dataPack, getCountryName(iso3));
+
+        try {
+            Map<String, Object> request = Map.of(
+                    "model", model,
+                    "max_tokens", 2048,
+                    "messages", List.of(Map.of("role", "user", "content", prompt))
+            );
+
+            String response = webClient.post()
+                    .uri("/messages")
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            DeepAnalysisResult result = parseDeepAnalysisResponse(response, iso3);
+            result.setDurationMs(System.currentTimeMillis() - start);
+            result.setModel(model);
+
+            log.info("Deep analysis completed for {} in {}ms", iso3, result.getDurationMs());
+            return result;
+
+        } catch (Exception e) {
+            log.error("Deep analysis failed for {}: {}", iso3, e.getMessage());
+            return DeepAnalysisResult.builder()
+                    .iso3(iso3)
+                    .countryName(getCountryName(iso3))
+                    .score(0)
+                    .reasoning("Analysis failed: " + e.getMessage())
+                    .build();
+        }
+    }
+
+    /**
+     * Build comprehensive data pack for deep analysis.
+     * Organized by data freshness: REALTIME → RECENT → BASELINE → STRUCTURAL
+     * Token-efficient format optimized for Claude.
+     */
+    private String buildDeepDataPack(String iso3) {
+        List<RiskScore> scores = riskScoreService.getAllRiskScores();
+        RiskScore country = scores.stream()
+                .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
+                .findFirst()
+                .orElse(null);
+
+        if (country == null) return null;
+
+        StringBuilder pack = new StringBuilder();
+        String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+
+        // === HEADER ===
+        pack.append("# ").append(country.getCountryName().toUpperCase())
+            .append(" (").append(iso3).append(") — Analysis: ").append(now).append(" UTC\n\n");
+
+        // === SECTION 1: REAL-TIME SIGNALS (updated within hours) ===
+        pack.append("## REALTIME SIGNALS [use for current situation]\n");
+
+        // GDELT - truly real-time
+        try {
+            MediaSpike spike = gdeltService.getConflictSpikeIndex(iso3);
+            if (spike != null) {
+                pack.append(String.format("Media: z=%.1f (%s), %d articles/7d\n",
+                    spike.getZScore() != null ? spike.getZScore() : 0,
+                    spike.getSpikeLevel() != null ? spike.getSpikeLevel() : "NORMAL",
+                    spike.getArticlesLast7Days() != null ? spike.getArticlesLast7Days() : 0));
+                // Top 3 headlines
+                if (spike.getTopHeadlines() != null && !spike.getTopHeadlines().isEmpty()) {
+                    pack.append("Headlines: ");
+                    pack.append(spike.getTopHeadlines().stream().limit(3)
+                        .map(h -> h.length() > 80 ? h.substring(0, 77) + "..." : h)
+                        .collect(Collectors.joining(" | ")));
+                    pack.append("\n");
+                }
+            }
+        } catch (Exception e) { /* skip */ }
+
+        // Currency - daily
+        try {
+            CurrencyData currency = currencyService.getCurrencyData(country.getIso2());
+            if (currency != null && currency.getChange30d() != null) {
+                pack.append(String.format("Currency: %.1f%% (30d), trend=%s\n",
+                    currency.getChange30d(),
+                    currency.getTrend() != null ? currency.getTrend() : "N/A"));
+            }
+        } catch (Exception e) { /* skip */ }
+
+        // === SECTION 2: RECENT DATA (updated within days) ===
+        pack.append("\n## RECENT DATA [conditions this week]\n");
+
+        // Climate - daily satellite
+        pack.append(String.format("Precip anomaly: %.1f%% vs 5yr avg\n",
+            country.getPrecipitationAnomaly() != null ? country.getPrecipitationAnomaly() : 0));
+
+        // NDVI
+        try {
+            List<ClimateData> climateStress = climateService.getCountriesWithClimateStress();
+            climateStress.stream()
+                .filter(c -> iso3.equalsIgnoreCase(c.getIso3()))
+                .findFirst()
+                .ifPresent(c -> pack.append(String.format("NDVI drought: %s\n", c.getAlertLevel())));
+        } catch (Exception e) { /* skip */ }
+
+        // ReliefWeb - recent reports (compact)
+        try {
+            List<Headline> reports = reliefWebService.getLatestReportsAsHeadlines(iso3, 3);
+            if (reports != null && !reports.isEmpty()) {
+                pack.append("ReliefWeb: ");
+                pack.append(reports.stream()
+                    .map(h -> (h.getSource() != null ? h.getSource() + ": " : "") +
+                             (h.getTitle().length() > 60 ? h.getTitle().substring(0, 57) + "..." : h.getTitle()))
+                    .collect(Collectors.joining(" | ")));
+                pack.append("\n");
+            }
+        } catch (Exception e) { /* skip */ }
+
+        // === SECTION 3: BASELINE DATA (monthly assessments) ===
+        pack.append("\n## BASELINE DATA [last formal assessment - may have changed]\n");
+
+        // IPC
+        Map<String, Country> ipcData = hungerMapService.getIpcData();
+        Country ipc = ipcData.get(iso3);
+        if (ipc != null) {
+            pack.append(String.format("IPC: Phase %.0f, %s people (%s%%) in IPC3+\n",
+                country.getIpcPhase() != null ? country.getIpcPhase() : 0,
+                ipc.getPeoplePhase3to5() != null ? formatPopulation(ipc.getPeoplePhase3to5()) : "N/A",
+                ipc.getPercentPhase3to5() != null ? String.format("%.0f", ipc.getPercentPhase3to5()) : "N/A"));
+        }
+
+        // IDPs
+        try {
+            List<MobilityStock> idpData = dtmService.getCountryLevelIdps();
+            idpData.stream()
+                .filter(m -> iso3.equalsIgnoreCase(m.getIso3()))
+                .findFirst()
+                .ifPresent(m -> {
+                    if (m.getIdps() != null) {
+                        pack.append(String.format("IDPs: %s\n", formatPopulation(m.getIdps())));
+                    }
+                });
+        } catch (Exception e) { /* skip */ }
+
+        // Refugees (UNHCR)
+        try {
+            List<MobilityStock> displacement = unhcrService.getDisplacementByOrigin();
+            displacement.stream()
+                .filter(m -> iso3.equalsIgnoreCase(m.getIso3()))
+                .findFirst()
+                .ifPresent(m -> {
+                    if (m.getRefugees() != null && m.getRefugees() > 0) {
+                        pack.append(String.format("Refugees abroad: %s\n", formatPopulation(m.getRefugees())));
+                    }
+                });
+        } catch (Exception e) { /* skip */ }
+
+        // === SECTION 4: STRUCTURAL CONTEXT (annual - for background only) ===
+        pack.append("\n## STRUCTURAL [annual data - context only]\n");
+
+        try {
+            List<EconomicIndicator> inflation = worldBankService.getHighInflationCountries();
+            inflation.stream()
+                .filter(i -> iso3.equalsIgnoreCase(i.getIso3()))
+                .findFirst()
+                .ifPresent(i -> pack.append(String.format("Inflation baseline: %.1f%% (2024)\n", i.getValue())));
+        } catch (Exception e) { /* skip */ }
+
+        // === SECTION 5: COMPUTED SCORES & TRENDS ===
+        pack.append("\n## RISK SCORES [computed from above]\n");
+        pack.append(String.format("Static score: %d/100 (%s)\n", country.getScore(), country.getRiskLevel()));
+        pack.append(String.format("Components: Climate=%d, Conflict=%d, Economic=%d, Food=%d\n",
+            country.getClimateScore(), country.getConflictScore(),
+            country.getEconomicScore(), country.getFoodSecurityScore()));
+        pack.append(String.format("Elevated: %s%s%s (%d/3)\n",
+            country.isClimateElevated() ? "Climate " : "",
+            country.isConflictElevated() ? "Conflict " : "",
+            country.isEconomicElevated() ? "Economic " : "",
+            country.getElevatedCount()));
+
+        // Trend data
+        if (country.getPreviousScore() != null && country.getScoreDelta() != null) {
+            pack.append(String.format("Trend: %s %+d pts from 7d ago (was %d)\n",
+                country.getTrendIcon() != null ? country.getTrendIcon() : "→",
+                country.getScoreDelta(),
+                country.getPreviousScore()));
+        }
+        if (country.getPersistenceLabel() != null) {
+            pack.append(String.format("Persistence: %s\n", country.getPersistenceLabel()));
+        }
+
+        // === SECTION 6: REGIONAL CONTEXT ===
+        pack.append("\n## REGIONAL [cross-border risk]\n");
+        String region = getRegion(iso3);
+        List<RiskScore> peers = scores.stream()
+            .filter(s -> region.equals(getRegion(s.getIso3())))
+            .filter(s -> !iso3.equalsIgnoreCase(s.getIso3()))
+            .sorted((a, b) -> b.getScore() - a.getScore())
+            .limit(4)
+            .toList();
+
+        pack.append("Neighbors: ");
+        pack.append(peers.stream()
+            .map(s -> String.format("%s=%d", s.getCountryName(), s.getScore()))
+            .collect(Collectors.joining(", ")));
+        pack.append("\n");
+
+        // Regional cluster alerts
+        try {
+            List<RegionalClusterService.ClusterAlert> clusters = regionalClusterService.analyzeRegionalClusters(scores);
+            clusters.stream()
+                .filter(c -> c.getAffectedCountries() != null && c.getAffectedCountries().contains(country.getCountryName()))
+                .findFirst()
+                .ifPresent(c -> pack.append(String.format("Cluster alert: %s - %s\n", c.getClusterName(), c.getStatus())));
+        } catch (Exception e) { /* skip */ }
+
+        return pack.toString();
+    }
+
+    private String buildDeepAnalysisPrompt(String dataPack, String countryName) {
+        return """
+You are a humanitarian early warning analyst. Provide contextual risk scoring for %s.
+
+DATA FRESHNESS GUIDE:
+- REALTIME: Current situation (hours old) - weight heavily
+- RECENT: This week's conditions - reliable
+- BASELINE: Last formal assessment (weeks/months) - may have changed
+- STRUCTURAL: Annual data - background context only
+
+CRITICAL: When REALTIME signals diverge from BASELINE, the situation is CHANGING.
+Example: If baseline IPC=Phase 3 but realtime shows currency collapse + negative news spike, actual conditions are likely WORSE than baseline suggests.
+
+DATA:
+%s
+
+OUTPUT JSON (be concise, cite numbers):
+{
+  "score": <0-100>,
+  "riskLevel": "<CRITICAL|ALERT|WARNING|WATCH|STABLE>",
+  "weights": {"climate":<0-100>,"conflict":<0-100>,"economic":<0-100>,"food":<0-100>},
+  "weightReasoning": "<2 sentences: why these weights for this context>",
+  "reasoning": "<3 sentences: overall assessment citing key numbers>",
+  "drivers": ["<driver1: specific evidence>","<driver2>","<driver3>"],
+  "trajectory": "<DETERIORATING|STABLE|IMPROVING>",
+  "trajectoryReason": "<1 sentence with evidence>",
+  "hotspots": ["<indicator1 to watch>","<indicator2>"],
+  "confidenceLevel": "<HIGH|MEDIUM|LOW>",
+  "confidenceReason": "<1 sentence on data quality>"
+}
+
+Score bands: 86-100 CRITICAL, 71-85 ALERT, 51-70 WARNING, 31-50 WATCH, 0-30 STABLE
+Weights must sum to 100. Consider cascade effects and non-linear amplification.
+""".formatted(countryName, dataPack);
+    }
+
+    private DeepAnalysisResult parseDeepAnalysisResponse(String response, String iso3) {
+        try {
+            JsonNode root = objectMapper.readTree(response);
+            String content = root.path("content").get(0).path("text").asText();
+
+            // Extract JSON from response
+            String json = content;
+            if (content.contains("```json")) {
+                json = content.substring(content.indexOf("```json") + 7);
+                json = json.substring(0, json.indexOf("```"));
+            } else if (content.contains("{")) {
+                json = content.substring(content.indexOf("{"));
+                json = json.substring(0, json.lastIndexOf("}") + 1);
+            }
+
+            JsonNode analysis = objectMapper.readTree(json);
+
+            // Parse weights
+            Map<String, Integer> weights = new HashMap<>();
+            JsonNode weightsNode = analysis.path("weights");
+            weights.put("climate", weightsNode.path("climate").asInt(25));
+            weights.put("conflict", weightsNode.path("conflict").asInt(25));
+            weights.put("economic", weightsNode.path("economic").asInt(20));
+            weights.put("food", weightsNode.path("food").asInt(30));
+
+            // Parse drivers
+            List<String> drivers = new ArrayList<>();
+            analysis.path("drivers").forEach(n -> drivers.add(n.asText()));
+
+            // Parse hotspots
+            List<String> hotspots = new ArrayList<>();
+            analysis.path("hotspots").forEach(n -> hotspots.add(n.asText()));
+
+            return DeepAnalysisResult.builder()
+                    .iso3(iso3)
+                    .countryName(getCountryName(iso3))
+                    .score(analysis.path("score").asInt())
+                    .riskLevel(analysis.path("riskLevel").asText())
+                    .weights(weights)
+                    .weightReasoning(analysis.path("weightReasoning").asText())
+                    .reasoning(analysis.path("reasoning").asText())
+                    .drivers(drivers)
+                    .trajectory(analysis.path("trajectory").asText())
+                    .trajectoryReason(analysis.path("trajectoryReason").asText())
+                    .hotspots(hotspots)
+                    .confidenceLevel(analysis.path("confidenceLevel").asText())
+                    .confidenceReason(analysis.path("confidenceReason").asText())
+                    .generatedAt(LocalDateTime.now())
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Failed to parse deep analysis response: {}", e.getMessage());
+            return DeepAnalysisResult.builder()
+                    .iso3(iso3)
+                    .countryName(getCountryName(iso3))
+                    .score(0)
+                    .reasoning("Failed to parse analysis: " + e.getMessage())
+                    .build();
+        }
+    }
+
+    /**
+     * Get the top risk country ISO3 for deep analysis
+     */
+    public String getTopRiskCountryIso3() {
+        List<RiskScore> scores = riskScoreService.getAllRiskScores();
+        if (scores == null || scores.isEmpty()) return "SDN"; // Default fallback
+        return scores.get(0).getIso3();
+    }
+
+    // ========================================
+    // SITUATION DETECTION - CLAUDE-NATIVE
+    // ========================================
+
+    /**
+     * Get cached Claude situation detection result from Redis (for page load).
+     * Returns null if no cached result exists.
+     */
+    public SituationDetectionResult getCachedSituationResult() {
+        try {
+            Object cached = redisTemplate.opsForValue().get(CLAUDE_SITUATIONS_CACHE_KEY);
+            if (cached == null) {
+                log.debug("No cached Claude situations in Redis");
+                return null;
+            }
+
+            // Handle both direct object and LinkedHashMap (from JSON deserialization)
+            if (cached instanceof SituationDetectionResult) {
+                log.debug("Found cached Claude situations in Redis (direct)");
+                return (SituationDetectionResult) cached;
+            }
+
+            // If it's a Map (from JSON), convert it
+            if (cached instanceof java.util.Map) {
+                log.debug("Found cached Claude situations in Redis (Map), converting...");
+                String json = objectMapper.writeValueAsString(cached);
+                SituationDetectionResult result = objectMapper.readValue(json, SituationDetectionResult.class);
+                return result;
+            }
+
+            log.warn("Unexpected cache type: {}", cached.getClass().getName());
+            return null;
+        } catch (Exception e) {
+            log.error("Error reading Claude situations from Redis: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Save Claude situation detection result to Redis (4 hour TTL).
+     */
+    private void cacheSituationResult(SituationDetectionResult result) {
+        try {
+            redisTemplate.opsForValue().set(CLAUDE_SITUATIONS_CACHE_KEY, result,
+                java.time.Duration.ofHours(4));
+            log.info("Cached Claude situations in Redis (4h TTL)");
+        } catch (Exception e) {
+            log.error("Error caching Claude situations to Redis: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Claude-Native Situation Detection.
+     * Pre-filters countries with triggers, then uses Claude for semantic analysis.
+     * Single API call for cost control.
+     * Results are cached in memory for subsequent page loads.
+     */
+    public SituationDetectionResult detectSituations() {
+        log.info("Starting Claude-Native situation detection");
+        long start = System.currentTimeMillis();
+
+        if (apiKey == null || apiKey.isBlank()) {
+            return SituationDetectionResult.builder()
+                    .status("ERROR")
+                    .message("API key not configured")
+                    .situations(List.of())
+                    .build();
+        }
+
+        // Step 1: Collect signals and pre-filter countries with triggers
+        List<CountrySignals> triggeredCountries = collectTriggeredCountries();
+
+        if (triggeredCountries.isEmpty()) {
+            // Don't cache empty results - keep existing cache so page isn't empty
+            log.info("No triggered countries found - keeping existing cache");
+            return SituationDetectionResult.builder()
+                    .status("OK")
+                    .message("No triggered countries detected")
+                    .situations(List.of())
+                    .analyzedCountries(0)
+                    .durationMs(System.currentTimeMillis() - start)
+                    .build();
+        }
+
+        // Step 2: Build batch prompt for Claude
+        String prompt = buildSituationDetectionPrompt(triggeredCountries);
+
+        try {
+            Map<String, Object> request = Map.of(
+                    "model", model,
+                    "max_tokens", 3000,
+                    "messages", List.of(Map.of("role", "user", "content", prompt))
+            );
+
+            String response = webClient.post()
+                    .uri("/messages")
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            SituationDetectionResult result = parseSituationDetectionResponse(response);
+            result.setAnalyzedCountries(triggeredCountries.size());
+            result.setDurationMs(System.currentTimeMillis() - start);
+            result.setModel(model);
+            result.setGeneratedAt(LocalDateTime.now());
+
+            // Only cache if we have situations - don't overwrite good cache with empty results
+            if (result.getSituations() != null && !result.getSituations().isEmpty()) {
+                cacheSituationResult(result);
+                log.info("Situation detection completed: {} situations in {}ms (cached to Redis)",
+                        result.getSituations().size(), result.getDurationMs());
+            } else {
+                log.info("Situation detection completed: 0 situations in {}ms (not cached, keeping existing)",
+                        result.getDurationMs());
+            }
+            return result;
+
+        } catch (Exception e) {
+            log.error("Situation detection failed: {}", e.getMessage());
+            return SituationDetectionResult.builder()
+                    .status("ERROR")
+                    .message("Analysis failed: " + e.getMessage())
+                    .situations(List.of())
+                    .durationMs(System.currentTimeMillis() - start)
+                    .build();
+        }
+    }
+
+    /**
+     * Collect signals for all countries and filter to those with triggers.
+     * Uses CACHED batch data to avoid rate limiting.
+     * Triggers: z-score > 2.0, currency collapse > 20%, flash updates, high risk score
+     */
+    private List<CountrySignals> collectTriggeredCountries() {
+        List<CountrySignals> triggered = new ArrayList<>();
+        List<RiskScore> scores = riskScoreService.getAllRiskScores();
+
+        if (scores == null || scores.isEmpty()) return triggered;
+
+        // Pre-fetch all cached batch data (already cached, no new API calls)
+        List<MediaSpike> allSpikes = gdeltService.getAllConflictSpikes();
+        Map<String, MediaSpike> spikesByIso3 = new HashMap<>();
+        if (allSpikes != null) {
+            for (MediaSpike spike : allSpikes) {
+                if (spike.getIso3() != null) {
+                    spikesByIso3.put(spike.getIso3(), spike);
+                }
+            }
+        }
+
+        List<CurrencyData> allCurrency = currencyService.getAllCurrencyData();
+        Map<String, CurrencyData> currencyByIso2 = new HashMap<>();
+        if (allCurrency != null) {
+            for (CurrencyData c : allCurrency) {
+                if (c.getIso2() != null) {
+                    currencyByIso2.put(c.getIso2(), c);
+                }
+            }
+        }
+
+        for (RiskScore score : scores) {
+            String iso3 = score.getIso3();
+            CountrySignals signals = new CountrySignals();
+            signals.setIso3(iso3);
+            signals.setCountryName(score.getCountryName());
+            signals.setRiskScore(score.getScore());
+            signals.setRiskLevel(score.getRiskLevel());
+
+            boolean hasTrigger = false;
+
+            // Check media spike from cached data (z-score > 2.0)
+            MediaSpike spike = spikesByIso3.get(iso3);
+            if (spike != null) {
+                signals.setMediaZScore(spike.getZScore());
+                signals.setMediaArticles(spike.getArticlesLast7Days());
+                signals.setMediaSpikeLevel(spike.getSpikeLevel());
+                if (spike.getTopHeadlines() != null && !spike.getTopHeadlines().isEmpty()) {
+                    signals.setTopHeadlines(spike.getTopHeadlines().stream().limit(3).toList());
+                }
+                if (spike.getZScore() != null && spike.getZScore() > 2.0) {
+                    hasTrigger = true;
+                    signals.addTrigger("MEDIA_SPIKE", String.format("z=%.1f", spike.getZScore()));
+                }
+            }
+
+            // Check currency collapse from cached data (> 20% devaluation in 30d)
+            CurrencyData currency = currencyByIso2.get(score.getIso2());
+            if (currency != null && currency.getChange30d() != null) {
+                signals.setCurrencyChange30d(currency.getChange30d());
+                if (currency.getChange30d() > 20) {
+                    hasTrigger = true;
+                    signals.addTrigger("CURRENCY_COLLAPSE", String.format("%.1f%%", currency.getChange30d()));
+                }
+            }
+
+            // Check high risk score (>= 75) or deteriorating trend
+            if (score.getScore() >= 75) {
+                hasTrigger = true;
+                signals.addTrigger("HIGH_RISK", String.format("Score %d", score.getScore()));
+            }
+            if (score.getScoreDelta() != null && score.getScoreDelta() >= 5) {
+                hasTrigger = true;
+                signals.addTrigger("DETERIORATING", String.format("+%d pts", score.getScoreDelta()));
+            }
+
+            // Add climate data from RiskScore (already computed)
+            signals.setPrecipAnomaly(score.getPrecipitationAnomaly());
+
+            // Add IPC if available from RiskScore
+            signals.setIpcPhase(score.getIpcPhase());
+
+            if (hasTrigger) {
+                triggered.add(signals);
+            }
+        }
+
+        // Sort by risk score descending, limit to top 10
+        triggered.sort((a, b) -> b.getRiskScore() - a.getRiskScore());
+        return triggered.stream().limit(10).toList();
+    }
+
+    private String buildSituationDetectionPrompt(List<CountrySignals> countries) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("""
+You are a humanitarian early warning analyst. Detect ACTIVE SITUATIONS from the data below.
+
+SITUATION TYPES (only use these):
+- VIOLENCE_ESCALATION: Conflict intensity increasing, attacks, clashes, casualties
+- DISPLACEMENT_SURGE: Population movement, refugees, IDPs, exodus
+- FOOD_CRISIS: Famine risk, IPC deterioration, hunger
+- ACCESS_CONSTRAINTS: Aid blocked, convoy attacks, humanitarian access denied
+- CLIMATE_SHOCK: Flood, drought, cyclone impact
+- HEALTH_EMERGENCY: Disease outbreak, epidemic
+
+DETECTION RULES:
+1. Only detect situations with CONCRETE EVIDENCE (headlines, reports, data spikes)
+2. Do NOT infer situations from high risk scores alone
+3. Severity: CRITICAL (immediate humanitarian impact), HIGH (escalating), ELEVATED (developing), WATCH (monitoring)
+4. Each country can have 0, 1, or multiple situations
+
+DATA FOR ANALYSIS:
+""");
+
+        for (CountrySignals c : countries) {
+            sb.append("\n### ").append(c.getCountryName()).append(" (").append(c.getIso3()).append(")\n");
+            sb.append("Risk: ").append(c.getRiskScore()).append(" (").append(c.getRiskLevel()).append(")\n");
+
+            if (c.getTriggers() != null && !c.getTriggers().isEmpty()) {
+                sb.append("Triggers: ").append(String.join(", ", c.getTriggers())).append("\n");
+            }
+
+            if (c.getMediaZScore() != null) {
+                sb.append(String.format("Media: z=%.1f, %d articles, level=%s\n",
+                        c.getMediaZScore(), c.getMediaArticles() != null ? c.getMediaArticles() : 0,
+                        c.getMediaSpikeLevel() != null ? c.getMediaSpikeLevel() : "N/A"));
+            }
+
+            if (c.getTopHeadlines() != null && !c.getTopHeadlines().isEmpty()) {
+                sb.append("Headlines: ");
+                sb.append(c.getTopHeadlines().stream()
+                        .map(h -> h.length() > 70 ? h.substring(0, 67) + "..." : h)
+                        .collect(Collectors.joining(" | ")));
+                sb.append("\n");
+            }
+
+            if (c.getCurrencyChange30d() != null && Math.abs(c.getCurrencyChange30d()) > 5) {
+                sb.append(String.format("Currency: %.1f%% (30d)\n", c.getCurrencyChange30d()));
+            }
+
+            if (c.getPrecipAnomaly() != null && Math.abs(c.getPrecipAnomaly()) > 30) {
+                sb.append(String.format("Climate: %.1f%% precip anomaly\n", c.getPrecipAnomaly()));
+            }
+
+            if (c.getIpcPhase() != null && c.getIpcPhase() >= 3) {
+                sb.append(String.format("Food: IPC Phase %.0f\n", c.getIpcPhase()));
+            }
+
+            if (c.getRecentReports() != null && !c.getRecentReports().isEmpty()) {
+                sb.append("Reports: ");
+                sb.append(c.getRecentReports().stream()
+                        .map(r -> r.length() > 60 ? r.substring(0, 57) + "..." : r)
+                        .collect(Collectors.joining(" | ")));
+                sb.append("\n");
+            }
+        }
+
+        sb.append("""
+
+OUTPUT JSON (array of situations, can be empty if no situations detected):
+{
+  "situations": [
+    {
+      "iso3": "<ISO3>",
+      "countryName": "<name>",
+      "type": "<SITUATION_TYPE>",
+      "severity": "<CRITICAL|HIGH|ELEVATED|WATCH>",
+      "summary": "<1 sentence: what is happening>",
+      "evidence": ["<specific evidence 1>", "<evidence 2>"],
+      "trajectory": "<WORSENING|STABLE|UNCLEAR>",
+      "confidence": "<HIGH|MEDIUM|LOW>"
+    }
+  ],
+  "globalContext": "<1 sentence on cross-border or regional patterns if any>"
+}
+
+Be precise. Only report situations with clear evidence. Empty array is valid if no situations detected.
+""");
+
+        return sb.toString();
+    }
+
+    private SituationDetectionResult parseSituationDetectionResponse(String response) {
+        try {
+            JsonNode root = objectMapper.readTree(response);
+            String content = root.path("content").get(0).path("text").asText();
+
+            // Extract JSON from response
+            String json = content;
+            if (content.contains("```json")) {
+                json = content.substring(content.indexOf("```json") + 7);
+                json = json.substring(0, json.indexOf("```"));
+            } else if (content.contains("{")) {
+                json = content.substring(content.indexOf("{"));
+                json = json.substring(0, json.lastIndexOf("}") + 1);
+            }
+
+            JsonNode analysis = objectMapper.readTree(json);
+
+            List<DetectedSituation> situations = new ArrayList<>();
+            JsonNode situationsNode = analysis.path("situations");
+            if (situationsNode.isArray()) {
+                for (JsonNode s : situationsNode) {
+                    List<String> evidence = new ArrayList<>();
+                    s.path("evidence").forEach(e -> evidence.add(e.asText()));
+
+                    DetectedSituation situation = DetectedSituation.builder()
+                            .iso3(s.path("iso3").asText())
+                            .countryName(s.path("countryName").asText())
+                            .type(s.path("type").asText())
+                            .severity(s.path("severity").asText())
+                            .summary(s.path("summary").asText())
+                            .evidence(evidence)
+                            .trajectory(s.path("trajectory").asText())
+                            .confidence(s.path("confidence").asText())
+                            .build();
+                    situations.add(situation);
+                }
+            }
+
+            String globalContext = analysis.path("globalContext").asText(null);
+
+            return SituationDetectionResult.builder()
+                    .status("OK")
+                    .situations(situations)
+                    .globalContext(globalContext)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Failed to parse situation detection response: {}", e.getMessage());
+            return SituationDetectionResult.builder()
+                    .status("ERROR")
+                    .message("Failed to parse response: " + e.getMessage())
+                    .situations(List.of())
+                    .build();
+        }
+    }
+
+    // ========================================
+    // SITUATION DETECTION DTOs
+    // ========================================
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class SituationDetectionResult {
+        private String status;
+        private String message;
+        private List<DetectedSituation> situations;
+        private String globalContext;
+        private int analyzedCountries;
+        private long durationMs;
+        private String model;
+        private LocalDateTime generatedAt;
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class DetectedSituation {
+        private String iso3;
+        private String countryName;
+        private String type;
+        private String severity;
+        private String summary;
+        private List<String> evidence;
+        private String trajectory;
+        private String confidence;
+    }
+
+    @lombok.Data
+    public static class CountrySignals {
+        private String iso3;
+        private String countryName;
+        private int riskScore;
+        private String riskLevel;
+        private Double mediaZScore;
+        private Integer mediaArticles;
+        private String mediaSpikeLevel;
+        private List<String> topHeadlines;
+        private Double currencyChange30d;
+        private Double precipAnomaly;
+        private Double ipcPhase;
+        private List<String> recentReports;
+        private List<String> triggers = new ArrayList<>();
+
+        public void addTrigger(String type, String detail) {
+            triggers.add(type + ": " + detail);
+        }
+    }
+
+    // ========================================
+    // DEEP ANALYSIS RESULT DTO
+    // ========================================
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class DeepAnalysisResult {
+        private String iso3;
+        private String countryName;
+        private int score;
+        private String riskLevel;
+        private Map<String, Integer> weights;
+        private String weightReasoning;
+        private String reasoning;
+        private List<String> drivers;
+        private String trajectory;
+        private String trajectoryReason;
+        private List<String> hotspots;
+        private String confidenceLevel;
+        private String confidenceReason;
+        private LocalDateTime generatedAt;
+        private String model;
+        private long durationMs;
+    }
+}

@@ -1,0 +1,56 @@
+{
+  "regions": {
+    "AFRICA": {
+      "name": "Africa",
+      "countries": ["SDN", "SSD", "ETH", "SOM", "KEN", "UGA", "COD", "CAF", "TCD", "CMR", "RWA", "BDI", "NGA", "MLI", "BFA", "NER", "LBY", "MOZ", "ZWE", "TZA", "MWI", "ZMB", "AGO", "NAM", "BWA", "ZAF", "SEN", "GHA", "CIV", "GIN", "SLE", "LBR", "MRT", "GMB", "GNB", "CPV", "BEN", "TGO", "GAB", "COG", "GNQ", "STP", "COM", "MUS", "SYC", "MDG", "REU", "MYT", "DJI", "ERI", "LSO", "SWZ"],
+      "countryNames": ["Sudan", "South Sudan", "Ethiopia", "Somalia", "Kenya", "Uganda", "Congo", "DRC", "Central African Republic", "Chad", "Cameroon", "Rwanda", "Burundi", "Nigeria", "Mali", "Burkina Faso", "Niger", "Libya", "Mozambique", "Zimbabwe", "Tanzania", "Malawi", "Zambia", "Angola", "Namibia", "Botswana", "South Africa", "Senegal", "Ghana", "Ivory Coast", "Guinea", "Sierra Leone", "Liberia", "Mauritania", "Gambia", "Eritrea", "Djibouti"],
+      "feeds": {
+        "humanitarian": "https://reliefweb.int/updates/rss.xml?search=primary_country.id:(212 OR 218 OR 79 OR 206 OR 64 OR 48 OR 172 OR 147 OR 42 OR 169)",
+        "general": "https://feeds.bbci.co.uk/news/world/africa/rss.xml"
+      }
+    },
+    "MENA": {
+      "name": "Middle East & North Africa",
+      "countries": ["SYR", "IRQ", "YEM", "LBN", "PSE", "JOR", "ISR", "EGY", "LBY", "TUN", "DZA", "MAR", "SAU", "ARE", "KWT", "QAT", "BHR", "OMN", "IRN", "TUR"],
+      "countryNames": ["Syria", "Iraq", "Yemen", "Lebanon", "Palestine", "Palestinian", "Jordan", "Israel", "Egypt", "Libya", "Tunisia", "Algeria", "Morocco", "Saudi Arabia", "UAE", "Emirates", "Kuwait", "Qatar", "Bahrain", "Oman", "Iran", "Turkey"],
+      "feeds": {
+        "humanitarian": "https://reliefweb.int/updates/rss.xml?search=primary_country.id:(269 OR 222 OR 113 OR 135 OR 180 OR 116 OR 74 OR 144 OR 231 OR 68 OR 149 OR 112)",
+        "general": "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml"
+      }
+    },
+    "ASIA": {
+      "name": "Asia Pacific",
+      "countries": ["AFG", "PAK", "BGD", "MMR", "IND", "NPL", "BTN", "LKA", "MDV", "THA", "VNM", "KHM", "LAO", "MYS", "SGP", "IDN", "PHL", "TLS", "PNG", "FJI", "SLB", "VUT", "WSM", "TON", "KIR", "MHL", "FSM", "PLW", "PRK", "KOR", "JPN", "MNG", "CHN", "TWN", "HKG", "MAC"],
+      "countryNames": ["Afghanistan", "Pakistan", "Bangladesh", "Myanmar", "Burma", "India", "Nepal", "Bhutan", "Sri Lanka", "Maldives", "Thailand", "Vietnam", "Cambodia", "Laos", "Malaysia", "Singapore", "Indonesia", "Philippines", "Timor", "Papua New Guinea", "Fiji", "North Korea", "South Korea", "Japan", "Mongolia", "China"],
+      "feeds": {
+        "humanitarian": "https://reliefweb.int/updates/rss.xml?search=primary_country.id:(13 OR 181 OR 34 OR 160 OR 110 OR 168 OR 217 OR 187 OR 111 OR 46 OR 134)",
+        "general": "https://feeds.bbci.co.uk/news/world/asia/rss.xml"
+      }
+    },
+    "LAC": {
+      "name": "Latin America & Caribbean",
+      "countries": ["HTI", "DOM", "CUB", "JAM", "TTO", "BRB", "GRD", "VCT", "LCA", "DMA", "ATG", "KNA", "BHS", "MEX", "GTM", "BLZ", "SLV", "HND", "NIC", "CRI", "PAN", "COL", "VEN", "ECU", "PER", "BOL", "BRA", "PRY", "URY", "ARG", "CHL", "GUY", "SUR"],
+      "countryNames": ["Haiti", "Dominican Republic", "Cuba", "Jamaica", "Trinidad", "Tobago", "Mexico", "Guatemala", "Belize", "El Salvador", "Honduras", "Nicaragua", "Costa Rica", "Panama", "Colombia", "Venezuela", "Ecuador", "Peru", "Bolivia", "Brazil", "Paraguay", "Uruguay", "Argentina", "Chile", "Guyana", "Suriname"],
+      "feeds": {
+        "humanitarian": "https://reliefweb.int/updates/rss.xml?search=primary_country.id:(104 OR 63 OR 264 OR 55 OR 99 OR 185 OR 105 OR 200 OR 73 OR 41 OR 151 OR 32)",
+        "general": "https://feeds.bbci.co.uk/news/world/latin_america/rss.xml"
+      }
+    },
+    "EUROPE": {
+      "name": "Europe",
+      "countries": ["UKR", "RUS", "BLR", "MDA", "GEO", "ARM", "AZE", "KAZ", "UZB", "TKM", "TJK", "KGZ", "POL", "CZE", "SVK", "HUN", "ROU", "BGR", "SRB", "HRV", "SVN", "BIH", "MNE", "MKD", "ALB", "XKX", "GRC", "CYP", "MLT"],
+      "countryNames": ["Ukraine", "Russia", "Belarus", "Moldova", "Georgia", "Armenia", "Azerbaijan", "Kazakhstan", "Uzbekistan", "Turkmenistan", "Tajikistan", "Kyrgyzstan", "Poland", "Czech", "Slovakia", "Hungary", "Romania", "Bulgaria", "Serbia", "Croatia", "Slovenia", "Bosnia", "Montenegro", "Macedonia", "Albania", "Kosovo", "Greece", "Cyprus"],
+      "feeds": {
+        "humanitarian": "https://reliefweb.int/updates/rss.xml?search=primary_country.id:(254)",
+        "general": "https://feeds.bbci.co.uk/news/world/europe/rss.xml"
+      }
+    }
+  },
+  "reliefWebCountryIds": {
+    "SDN": 212, "SSD": 218, "ETH": 79, "SOM": 206, "COD": 64, "CAF": 48,
+    "NGA": 172, "MLI": 147, "BFA": 42, "NER": 169, "YEM": 269, "SYR": 222,
+    "IRQ": 113, "LBN": 135, "PSE": 180, "AFG": 13, "PAK": 181, "BGD": 34,
+    "MMR": 160, "HTI": 104, "VEN": 264, "COL": 63, "UKR": 254, "CHL": 55,
+    "PER": 185, "GTM": 99, "HND": 105, "SLV": 200, "ECU": 73
+  }
+}
