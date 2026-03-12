@@ -22,10 +22,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * and refreshes them periodically BEFORE they expire.
  *
  * Strategy:
- * 1. Warm up all caches on startup (async but tracked)
- * 2. In-memory fallback for each cache
- * 3. Proactive refresh at 50% of TTL (not waiting for expiry)
- * 4. Expose readiness status for frontend polling
+ * Phase 1 (~30s): Climate, Currency, Food Security, WHO, ReliefWeb → Risk Scores → Intelligence Feed
+ * Phase 2 (background, ~15min): GDELT → Re-calc Risk Scores → Active Situations
  */
 @Slf4j
 @Service
@@ -41,6 +39,8 @@ public class CacheWarmupService {
     private final IntelligenceFeedService intelligenceFeedService;
     private final NewsAggregatorService newsAggregatorService;
     private final SituationDetectionService situationDetectionService;
+    private final WHODiseaseOutbreakService whoDiseaseOutbreakService;
+    private final ReliefWebService reliefWebService;
 
     // Track warmup status
     private final AtomicBoolean warmupComplete = new AtomicBoolean(false);
@@ -50,9 +50,6 @@ public class CacheWarmupService {
     // In-memory fallback (survives cache eviction)
     private final Map<String, Object> memoryFallback = new ConcurrentHashMap<>();
 
-    /**
-     * Get warmup status for all caches
-     */
     public Map<String, Object> getWarmupStatus() {
         Map<String, Object> status = new HashMap<>();
         status.put("complete", warmupComplete.get());
@@ -61,73 +58,79 @@ public class CacheWarmupService {
         return status;
     }
 
-    /**
-     * Check if a specific cache is ready
-     */
     public boolean isCacheReady(String cacheName) {
         return Boolean.TRUE.equals(cacheStatus.get(cacheName));
     }
 
-    /**
-     * Check if all main caches are ready
-     */
     public boolean isAllReady() {
         return warmupComplete.get();
     }
 
-    /**
-     * Get in-memory fallback data
-     */
     @SuppressWarnings("unchecked")
     public <T> T getFallback(String key) {
         return (T) memoryFallback.get(key);
     }
 
-    /**
-     * Warm up caches after application starts
-     */
     @EventListener(ApplicationReadyEvent.class)
     @Async
     public void warmupOnStartup() {
         log.info("=== Starting cache warmup ===");
         long startTime = System.currentTimeMillis();
 
-        // Clear stale in-memory fallback to avoid ClassCastException with DevTools restart
         memoryFallback.clear();
         cacheStatus.clear();
         warmupComplete.set(false);
-        log.info("Cleared stale fallback cache");
 
-        // Warm up each cache independently (parallel where possible)
+        // Phase 1: All fast data sources in parallel
         CompletableFuture<Void> climateFuture = warmupClimate();
         CompletableFuture<Void> currencyFuture = warmupCurrency();
-        CompletableFuture<Void> conflictFuture = warmupConflict();
         CompletableFuture<Void> foodSecurityFuture = warmupFoodSecurity();
+        CompletableFuture<Void> whoFuture = warmupWHO();
+        CompletableFuture<Void> briefingFuture = CompletableFuture.runAsync(this::warmupDailyBriefing);
 
-        // Start IntelligenceFeed and DailyBriefing IMMEDIATELY - they don't need GDELT
-        // These use ReliefWeb and RSS feeds which are fast
-        CompletableFuture.runAsync(() -> {
-            warmupIntelligenceFeed();  // Fast - uses ReliefWeb, skips GDELT if not ready
-            warmupDailyBriefing();     // Fast - uses RSS feeds and ReliefWeb API
-            log.info("Intelligence Feed and Daily Briefing warmed up (GDELT-independent)");
-        });
-
-        // Risk scores need climate + currency + conflict + food security
-        // Active Situations needs GDELT spikes
-        CompletableFuture.allOf(climateFuture, currencyFuture, conflictFuture, foodSecurityFuture)
+        // Phase 1 complete: risk scores + intelligence feed + mark ready
+        // Active Situations stays in Phase 2 (depends on GDELT)
+        CompletableFuture.allOf(climateFuture, currencyFuture, foodSecurityFuture, whoFuture, briefingFuture)
                 .thenRun(() -> {
                     warmupRiskScores();
-                    warmupActiveSituations(); // Needs GDELT data
+                    warmupIntelligenceFeed(); // Needs risk scores
 
                     long duration = System.currentTimeMillis() - startTime;
                     warmupComplete.set(true);
-                    log.info("=== Cache warmup complete in {}s ===", duration / 1000);
+                    log.info("=== Phase 1 warmup complete in {}s ===", duration / 1000);
                 })
                 .exceptionally(e -> {
-                    log.error("Cache warmup failed: {}", e.getMessage());
-                    warmupComplete.set(true); // Mark complete even on failure
+                    log.error("Phase 1 warmup failed: {}", e.getMessage());
+                    warmupComplete.set(true);
                     return null;
                 });
+
+        // Phase 2: GDELT in background (slow, 15s rate limit per call)
+        CompletableFuture.runAsync(() -> {
+            try {
+                log.info("Phase 2: Starting GDELT warmup in background...");
+                warmupConflict().join();
+
+                // Re-calculate everything with GDELT data
+                evictCache("allRiskScores");
+                evictCache("riskScore");
+                memoryFallback.remove("allRiskScores");
+                warmupRiskScores();
+
+                evictCache("intelligenceFeed");
+                memoryFallback.remove("intelligenceFeed");
+                warmupIntelligenceFeed();
+
+                evictCache("activeSituationsV2");
+                memoryFallback.remove("activeSituations");
+                warmupActiveSituations();
+
+                long duration = System.currentTimeMillis() - startTime;
+                log.info("=== Phase 2 complete in {}s (full data with GDELT) ===", duration / 1000);
+            } catch (Exception e) {
+                log.error("Phase 2 (GDELT) warmup failed: {}", e.getMessage());
+            }
+        });
     }
 
     @Async
@@ -198,6 +201,23 @@ public class CacheWarmupService {
         });
     }
 
+    @Async
+    public CompletableFuture<Void> warmupWHO() {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                log.info("Warming up WHO Disease Outbreaks cache...");
+                var data = whoDiseaseOutbreakService.getRecentOutbreaks();
+                memoryFallback.put("whoDiseaseOutbreaks", data);
+                cacheStatus.put("who", true);
+                lastRefresh.put("who", LocalDateTime.now());
+                log.info("WHO cache warmed: {} entries", data != null ? data.size() : 0);
+            } catch (Exception e) {
+                log.error("WHO warmup failed: {}", e.getMessage());
+                cacheStatus.put("who", false);
+            }
+        });
+    }
+
     private void warmupRiskScores() {
         try {
             log.info("Warming up risk score cache...");
@@ -215,7 +235,6 @@ public class CacheWarmupService {
     private void warmupIntelligenceFeed() {
         try {
             log.info("Warming up Intelligence Feed cache...");
-            // Clear stale cache first to avoid deserialization issues
             evictCache("intelligenceFeed");
             var data = intelligenceFeedService.getIntelligenceFeed();
             memoryFallback.put("intelligenceFeed", data);
@@ -258,27 +277,40 @@ public class CacheWarmupService {
         }
     }
 
+    // === Scheduled Refreshes ===
+
     /**
-     * Proactive refresh at 30 minutes (before 1-hour GDELT/FEWS TTL expires)
-     * and at 55 minutes (before 2-hour Risk/Climate/Currency TTL expires)
+     * Refresh GDELT every 3 hours (TTL is 4h, refresh before expiry)
      */
-    @Scheduled(fixedRate = 30 * 60 * 1000, initialDelay = 30 * 60 * 1000)
-    public void refreshShortTtlCaches() {
-        log.info("Scheduled refresh for short-TTL caches (conflict, food security)...");
-
-        // Evict before refresh to force new fetch
+    @Scheduled(fixedRate = 3 * 60 * 60 * 1000, initialDelay = 3 * 60 * 60 * 1000)
+    public void refreshGdeltCaches() {
+        log.info("Scheduled refresh for GDELT caches...");
         evictCache("gdeltAllSpikes");
-        evictCache("fewsAllIPC");
+        evictCache("gdeltSpikeIndex");
+        evictCache("gdeltConflictCount");
 
-        warmupConflict();
+        CompletableFuture.runAsync(() -> {
+            warmupConflict().join();
+            evictCache("allRiskScores");
+            evictCache("riskScore");
+            warmupRiskScores();
+            evictCache("activeSituationsV2");
+            warmupActiveSituations();
+            evictCache("intelligenceFeed");
+            warmupIntelligenceFeed();
+        });
+    }
+
+    @Scheduled(fixedRate = 30 * 60 * 1000, initialDelay = 30 * 60 * 1000)
+    public void refreshFoodSecurityCaches() {
+        log.info("Scheduled refresh for food security caches...");
+        evictCache("fewsAllIPC");
         warmupFoodSecurity();
     }
 
     @Scheduled(fixedRate = 55 * 60 * 1000, initialDelay = 55 * 60 * 1000)
     public void refreshLongTtlCaches() {
         log.info("Scheduled refresh for long-TTL caches (climate, currency, risk)...");
-
-        // Evict before refresh
         evictCache("allPrecipAnomalies");
         evictCache("allCurrencyData");
         evictCache("allRiskScores");
@@ -290,24 +322,25 @@ public class CacheWarmupService {
                 .thenRun(this::warmupRiskScores);
     }
 
-    /**
-     * Refresh Intelligence Feed, Situations, and Daily Briefing every 45 minutes
-     * This ensures news data is always ready and fast for users
-     */
     @Scheduled(fixedRate = 45 * 60 * 1000, initialDelay = 45 * 60 * 1000)
     public void refreshIntelligenceAndBriefing() {
         log.info("Scheduled refresh for Intelligence, Situations, and Briefing...");
         evictCache("intelligenceFeed");
         evictCache("activeSituationsV2");
         evictCache("dailyBriefing");
+        evictCache("whoDiseaseOutbreaks");
         warmupIntelligenceFeed();
         warmupActiveSituations();
         warmupDailyBriefing();
+        CompletableFuture.runAsync(() -> {
+            try {
+                warmupWHO().join();
+            } catch (Exception e) {
+                log.warn("WHO refresh failed: {}", e.getMessage());
+            }
+        });
     }
 
-    /**
-     * Evict a specific cache entry
-     */
     private void evictCache(String cacheName) {
         try {
             Cache cache = cacheManager.getCache(cacheName);

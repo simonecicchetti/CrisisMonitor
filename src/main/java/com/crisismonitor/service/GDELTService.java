@@ -65,26 +65,31 @@ public class GDELTService {
                 .build();
     }
 
+    // Lock object for thread-safe rate limiting
+    private static final Object RATE_LIMIT_LOCK = new Object();
+
     /**
-     * Rate limiter - ensures minimum 5 seconds between any GDELT API call.
-     * Thread-safe using AtomicLong.
+     * Rate limiter - ensures minimum 15 seconds between any GDELT API call.
+     * Thread-safe using synchronized block to prevent concurrent requests.
      */
     private void waitForRateLimit() {
-        long now = System.currentTimeMillis();
-        long lastRequest = lastRequestTime.get();
-        long elapsed = now - lastRequest;
+        synchronized (RATE_LIMIT_LOCK) {
+            long now = System.currentTimeMillis();
+            long lastRequest = lastRequestTime.get();
+            long elapsed = now - lastRequest;
 
-        if (elapsed < RATE_LIMIT_MS) {
-            long waitTime = RATE_LIMIT_MS - elapsed;
-            log.debug("GDELT rate limit: waiting {}ms", waitTime);
-            try {
-                Thread.sleep(waitTime);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            if (elapsed < RATE_LIMIT_MS) {
+                long waitTime = RATE_LIMIT_MS - elapsed;
+                log.debug("GDELT rate limit: waiting {}ms", waitTime);
+                try {
+                    Thread.sleep(waitTime);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
-        }
 
-        lastRequestTime.set(System.currentTimeMillis());
+            lastRequestTime.set(System.currentTimeMillis());
+        }
     }
 
     /**
@@ -470,9 +475,8 @@ public class GDELTService {
                 if (spike != null && !"ERROR".equals(spike.getSpikeLevel())) {
                     spikes.add(spike);
                 }
-                // GDELT requires 5 seconds between requests
-                // Each country makes 2-3 API calls, so wait 15s between countries
-                Thread.sleep(15000);
+                // Rate limiting is handled inside each API call by waitForRateLimit()
+                // No extra sleep needed here
             } catch (Exception e) {
                 log.warn("Error getting spike for {}: {}", iso3, e.getMessage());
             }

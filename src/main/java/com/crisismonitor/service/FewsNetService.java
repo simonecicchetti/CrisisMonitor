@@ -70,7 +70,7 @@ public class FewsNetService {
      * Get latest IPC phase for a country (national level)
      * Uses pre-cached data for reliability
      */
-    @Cacheable(value = "fewsIPC", key = "#iso2")
+    @Cacheable(value = "fewsIPC", key = "#iso2", unless = "#result == null")
     public IPCAlert getLatestIPCPhase(String iso2) {
         log.info("Getting IPC data for {}", iso2);
 

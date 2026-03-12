@@ -126,7 +126,7 @@ public class OpenMeteoService {
     /**
      * Get precipitation anomaly for a single country
      */
-    @Cacheable(value = "precipAnomaly", key = "#iso2")
+    @Cacheable(value = "precipAnomaly", key = "#iso2", unless = "#result == null")
     public PrecipitationAnomaly getPrecipitationAnomaly(String iso2) {
         Object[] coords = COUNTRY_COORDS.get(iso2);
         if (coords == null) {

@@ -249,7 +249,7 @@ public class NewsAggregatorService {
 
             // Fetch recent updates (situation reports, news)
             String response = client.get()
-                .uri("https://api.reliefweb.int/v1/reports?appname=crisis-monitor&limit=30&preset=latest&fields[include][]=title&fields[include][]=url&fields[include][]=source&fields[include][]=date&fields[include][]=country&fields[include][]=body-html")
+                .uri("https://api.reliefweb.int/v1/reports?appname=crisis-monitor&limit=30&preset=latest&query[value]=language:\"English\"&fields[include][]=title&fields[include][]=url&fields[include][]=source&fields[include][]=date&fields[include][]=country&fields[include][]=body-html")
                 .header("User-Agent", "CrisisMonitor/1.0 (humanitarian monitoring)")
                 .retrieve()
                 .bodyToMono(String.class)

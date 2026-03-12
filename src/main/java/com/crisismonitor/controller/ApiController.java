@@ -58,6 +58,19 @@ public class ApiController {
     private final CountryProfileService countryProfileService;
     private final WHODiseaseOutbreakService whoDiseaseOutbreakService;
 
+    /**
+     * Health/keep-alive endpoint for Cloud Scheduler.
+     * Prevents cold starts by pinging every 10 minutes.
+     */
+    @GetMapping("/health")
+    public Map<String, Object> health() {
+        return Map.of(
+            "status", "ok",
+            "warmupComplete", cacheWarmupService.isAllReady(),
+            "timestamp", LocalDateTime.now().toString()
+        );
+    }
+
     @GetMapping("/countries")
     public List<Country> getCountries() {
         return dashboardService.getEnrichedCountries();

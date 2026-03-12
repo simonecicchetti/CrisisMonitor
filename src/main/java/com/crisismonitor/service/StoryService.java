@@ -64,7 +64,6 @@ public class StoryService {
         // Migration-specific sources
         Map.entry("MMC", "https://mixedmigration.org/feed/"),
         Map.entry("IOM News", "https://www.iom.int/news/rss.xml"),
-        Map.entry("IOM Americas", "https://rosanjose.iom.int/es/news/feed"),
         // LAC specialized
         Map.entry("InSight Crime", "https://insightcrime.org/feed/"),
         Map.entry("Americas Quarterly", "https://www.americasquarterly.org/feed/"),
@@ -1242,6 +1241,12 @@ public class StoryService {
                     List<String> detectedTopics = detectTopics(titleClean);
                     if (topic != null && !topic.isBlank()) {
                         if (!detectedTopics.contains(topic.toLowerCase())) continue;
+                    }
+
+                    // Crisis relevance filter for BBC feeds: skip articles with no crisis topics
+                    // BBC regional feeds include sports, entertainment, business - filter to crisis content only
+                    if (sourceName.startsWith("BBC") && detectedTopics.isEmpty() && country == null) {
+                        continue; // Skip non-crisis BBC articles
                     }
 
                     items.add(NewsItem.builder()

@@ -59,6 +59,8 @@ public class CurrencyService {
             Map.entry("PH", "PHP"),   // Philippine Peso
             Map.entry("ID", "IDR"),   // Indonesian Rupiah
             Map.entry("VN", "VND"),   // Vietnamese Dong
+            // Europe
+            Map.entry("UA", "UAH"),   // Ukrainian Hryvnia
             // Latin America (EC uses USD - no tracking)
             Map.entry("HT", "HTG"),   // Haitian Gourde
             Map.entry("PE", "PEN"),   // Peruvian Sol
@@ -82,6 +84,8 @@ public class CurrencyService {
             Map.entry("MM", "Myanmar"),
             // Southeast Asia
             Map.entry("PH", "Philippines"), Map.entry("ID", "Indonesia"), Map.entry("VN", "Vietnam"),
+            // Europe
+            Map.entry("UA", "Ukraine"),
             // Latin America
             Map.entry("HT", "Haiti"), Map.entry("PE", "Peru"), Map.entry("CO", "Colombia"),
             Map.entry("GT", "Guatemala"), Map.entry("HN", "Honduras")
@@ -119,6 +123,8 @@ public class CurrencyService {
             Map.entry("PHP", 56.0),     // Philippines
             Map.entry("IDR", 15600.0),  // Indonesia
             Map.entry("VND", 24500.0),  // Vietnam
+            // Europe
+            Map.entry("UAH", 41.0),     // Ukraine
             // Latin America
             Map.entry("HTG", 130.0),    // Haiti
             Map.entry("PEN", 3.7),      // Peru
@@ -171,7 +177,7 @@ public class CurrencyService {
     /**
      * Get currency data for a specific country
      */
-    @Cacheable(value = "currencyData", key = "#iso2")
+    @Cacheable(value = "currencyData", key = "#iso2", unless = "#result == null")
     public CurrencyData getCurrencyData(String iso2) {
         String currencyCode = COUNTRY_CURRENCY.get(iso2);
         if (currencyCode == null) {

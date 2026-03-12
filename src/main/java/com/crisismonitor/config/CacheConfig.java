@@ -86,8 +86,8 @@ public class CacheConfig {
         cacheConfigs.put("currencyData", longTtlConfig);
         cacheConfigs.put("exchangeRates", longTtlConfig);
 
-        // GDELT: 1 hour TTL (rate limited)
-        RedisCacheConfiguration gdeltConfig = defaultConfig.entryTtl(Duration.ofHours(1));
+        // GDELT: 4 hour TTL (rate limited, slow to fetch - keep cached longer)
+        RedisCacheConfiguration gdeltConfig = defaultConfig.entryTtl(Duration.ofHours(4));
         cacheConfigs.put("gdeltConflictCount", gdeltConfig);
         cacheConfigs.put("gdeltSpikeIndex", gdeltConfig);
         cacheConfigs.put("gdeltTone", gdeltConfig);
@@ -127,14 +127,15 @@ public class CacheConfig {
         cacheConfigs.put("topicIntelligence", defaultConfig);
 
         // Intelligence Feed: 1 hour TTL (pre-aggregated feed data)
-        cacheConfigs.put("intelligenceFeed", gdeltConfig);
+        RedisCacheConfiguration oneHourConfig = defaultConfig.entryTtl(Duration.ofHours(1));
+        cacheConfigs.put("intelligenceFeed", oneHourConfig);
 
         // Daily Briefing: 1 hour TTL (news aggregation)
-        cacheConfigs.put("dailyBriefing", gdeltConfig);
+        cacheConfigs.put("dailyBriefing", oneHourConfig);
 
         // Active Situations: 1 hour TTL (situation detection)
-        cacheConfigs.put("activeSituations", gdeltConfig);
-        cacheConfigs.put("activeSituationsV2", gdeltConfig);
+        cacheConfigs.put("activeSituations", oneHourConfig);
+        cacheConfigs.put("activeSituationsV2", oneHourConfig);
 
         // Claude Situation Detection: 4 hour TTL (expensive Claude API call, persists across restarts)
         RedisCacheConfiguration claudeSituationsConfig = defaultConfig.entryTtl(Duration.ofHours(4));
@@ -148,25 +149,25 @@ public class CacheConfig {
         cacheConfigs.put("newsFeed", newsFeedConfig);
 
         // Country Profile (aggregated): 1 hour TTL (combines multiple data sources)
-        cacheConfigs.put("countryProfileAggregated", gdeltConfig);
+        cacheConfigs.put("countryProfileAggregated", oneHourConfig);
 
         // Region Detail drill-down: 1 hour TTL
-        cacheConfigs.put("regionDetail", gdeltConfig);
+        cacheConfigs.put("regionDetail", oneHourConfig);
 
         // AI Analysis v2: 4 hour TTL
         cacheConfigs.put("aiAnalysisRegionV2", aiConfig);
 
         // Overview/Region context: 1 hour TTL
-        cacheConfigs.put("overviewContext", gdeltConfig);
-        cacheConfigs.put("regionContext", gdeltConfig);
+        cacheConfigs.put("overviewContext", oneHourConfig);
+        cacheConfigs.put("regionContext", oneHourConfig);
 
         // Regional Pulse: 1 hour TTL
-        cacheConfigs.put("regionalPulseV2", gdeltConfig);
+        cacheConfigs.put("regionalPulseV2", oneHourConfig);
 
         // ReliefWeb: 1 hour TTL
-        cacheConfigs.put("reliefwebDisasters", gdeltConfig);
-        cacheConfigs.put("reliefwebHeadlines", gdeltConfig);
-        cacheConfigs.put("reliefwebReports", gdeltConfig);
+        cacheConfigs.put("reliefwebDisasters", oneHourConfig);
+        cacheConfigs.put("reliefwebHeadlines", oneHourConfig);
+        cacheConfigs.put("reliefwebReports", oneHourConfig);
 
         // RSS: 30 min TTL
         cacheConfigs.put("rssGlobal", defaultConfig);

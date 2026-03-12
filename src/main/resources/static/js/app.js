@@ -1933,9 +1933,13 @@ const OverviewManager = {
       this.situationsCache = { situations, status, fetchedAt: Date.now() };
 
       if (status === 'WARMING_UP') {
-        container.innerHTML = '<div class="brief-bullet warming">System warming up, data loading...</div>';
-        // Retry in 15s
-        setTimeout(() => { this.loaded = false; this.loadBriefBullets(); }, 15000);
+        container.innerHTML = '<div class="brief-bullet warming">Situation detection in progress — GDELT data loading in background</div>';
+        // Retry up to 4 times, every 45s
+        if (!this._briefRetries) this._briefRetries = 0;
+        if (this._briefRetries < 4) {
+          this._briefRetries++;
+          setTimeout(() => { this.loaded = false; this.loadBriefBullets(); }, 45000);
+        }
         return;
       }
 
@@ -2005,7 +2009,13 @@ const OverviewManager = {
       }
 
       if (status === 'WARMING_UP') {
-        container.innerHTML = '<div class="loading-placeholder">Warming up...</div>';
+        container.innerHTML = '<div class="loading-placeholder" style="color: var(--text-muted); font-size: 0.85rem;">Situation detection in progress (GDELT data loading)...</div>';
+        // Retry up to 4 times, every 60s
+        if (!this._situationRetries) this._situationRetries = 0;
+        if (this._situationRetries < 4) {
+          this._situationRetries++;
+          setTimeout(() => this.loadTopSituations(), 60000);
+        }
         return;
       }
 

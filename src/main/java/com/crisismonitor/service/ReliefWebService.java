@@ -121,6 +121,7 @@ public class ReliefWebService {
                     .queryParam("preset", "latest")
                     .queryParam("filter[field]", "primary_country.id")
                     .queryParam("filter[value]", countryId)
+                    .queryParam("query[value]", "language:\"English\"")
                     .queryParam("fields[include][]", "title")
                     .queryParam("fields[include][]", "source.shortname")
                     .queryParam("fields[include][]", "date.original")
