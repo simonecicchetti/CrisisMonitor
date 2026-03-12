@@ -1763,8 +1763,7 @@ const OverviewManager = {
       await Promise.all([
         this.loadLiveNews(),
         this.loadRegionalPulse(),
-        this.loadContextHeadlines(),
-        this.loadTopSituations()
+        this.loadContextHeadlines()
       ]);
       console.log('[Overview] all blocks loaded');
     } catch (error) {

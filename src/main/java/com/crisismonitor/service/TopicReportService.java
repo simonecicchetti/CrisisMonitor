@@ -286,42 +286,40 @@ public class TopicReportService {
         log.info("Using GDELT keywords for {}: {}", topic, gdeltKeywords);
 
         // Track if we're limiting data
-        int maxGdeltCountries = 15;  // Increased from 8
         int maxReliefWebCountries = 12;  // Increased from 6
-        boolean isDataLimited = countriesToSearch.size() > maxGdeltCountries;
+        boolean isDataLimited = false;
 
-        // Fetch GDELT headlines for target countries with correct topic and timeframe
-        for (String iso3 : countriesToSearch.subList(0, Math.min(maxGdeltCountries, countriesToSearch.size()))) {
-            try {
-                // Pass days and topic keywords to GDELT
-                var headlines = gdeltService.getTopHeadlinesWithUrls(iso3, 15, days, gdeltKeywords);
-                if (headlines != null) {
+        // Use cached GDELT spikes instead of making new API calls per country
+        // This avoids 15s × N rate-limited calls that cause the report to hang
+        try {
+            var cachedSpikes = gdeltService.getAllConflictSpikes();
+            if (cachedSpikes != null) {
+                for (var spike : cachedSpikes) {
+                    String iso3 = spike.getIso3();
+                    if (!countriesToSearch.contains(iso3)) continue;
+
                     CountryData cd = countryDataMap.computeIfAbsent(iso3, k -> new CountryData(iso3));
+                    cd.mediaCount = spike.getArticlesLast7Days() != null ? spike.getArticlesLast7Days() : 0;
 
-                    for (var h : headlines) {
-                        // Articles already filtered by topic at GDELT query level
-                        // But do a secondary check for relevance
-                        if (matchesTopic(h.getTitle(), keywords)) {
-                            cd.mediaCount++;
-                            cd.headlines.add(h.getTitle());
-
-                            allSources.add(new SourceItem(
-                                "GDELT",
-                                h.getTitle(),
-                                h.getUrl(),
-                                h.getSource(),
-                                LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d"))
-                            ));
+                    // Use cached headline titles from spike data
+                    if (spike.getTopHeadlines() != null) {
+                        for (String headline : spike.getTopHeadlines()) {
+                            if (matchesTopic(headline, keywords)) {
+                                cd.headlines.add(headline);
+                                allSources.add(new SourceItem(
+                                    "GDELT",
+                                    headline,
+                                    null,
+                                    "GDELT",
+                                    LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d"))
+                                ));
+                            }
                         }
                     }
                 }
-                // Small delay to avoid rate limiting
-                Thread.sleep(50);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            } catch (Exception e) {
-                log.debug("Error fetching GDELT for {}: {}", iso3, e.getMessage());
             }
+        } catch (Exception e) {
+            log.warn("Error reading cached GDELT data: {}", e.getMessage());
         }
 
         // Fetch ReliefWeb reports with correct timeframe
@@ -494,13 +492,12 @@ public class TopicReportService {
         summary.setCoverageQuality(coverageQuality);
 
         // Data limitation notice if region has more countries than we queried
-        if (isDataLimited) {
+        if (countriesToSearch.size() > maxReliefWebCountries) {
             summary.setDataLimitation(String.format(
                 "Showing %d of %d countries in region",
-                Math.min(maxGdeltCountries, countriesToSearch.size()),
+                maxReliefWebCountries,
                 countriesToSearch.size()
             ));
-            log.info("Data limited: {} of {} countries queried", maxGdeltCountries, countriesToSearch.size());
         }
         report.setRegionalSummary(summary);
 
