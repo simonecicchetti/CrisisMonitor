@@ -13,8 +13,13 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import com.crisismonitor.config.MonitoredCountries;
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -44,6 +49,7 @@ public class ClaudeAnalysisService {
     private final UNHCRService unhcrService;
     private final ObjectMapper objectMapper;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final org.springframework.cache.CacheManager cacheManager;
 
     @Value("${anthropic.api.key:}")
     private String apiKey;
@@ -54,6 +60,15 @@ public class ClaudeAnalysisService {
     private final WebClient webClient = WebClient.builder()
             .baseUrl("https://api.anthropic.com/v1")
             .build();
+
+    // General-purpose WebClient for RSS/external fetches
+    private final WebClient rssClient = WebClient.builder()
+            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
+            .defaultHeader("User-Agent", "CrisisMonitor/1.0 (humanitarian monitoring)")
+            .build();
+
+    // Per-country lock to prevent duplicate builds under concurrent load
+    private final Map<String, Object> countryDataPackLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
     // Redis key for Claude situation detection cache (4 hour TTL)
     private static final String CLAUDE_SITUATIONS_CACHE_KEY = "claudeSituations::latest";
@@ -86,7 +101,7 @@ public class ClaudeAnalysisService {
     public AIAnalysis analyzeCountry(String iso3, String dataVersion) {
         log.info("Generating country AI analysis for {} (cache miss)", iso3);
 
-        String dataPack = buildCountryDataPack(iso3);
+        String dataPack = getCountryDataPack(iso3);
         if (dataPack == null) {
             return AIAnalysis.builder()
                     .scope("country")
@@ -137,23 +152,6 @@ public class ClaudeAnalysisService {
         analysis.setDataVersion(dataVersion);
         analysis.setFromCache(false);
         analysis.setRegion(region);
-
-        return analysis;
-    }
-
-    /**
-     * Custom question analysis
-     */
-    @Cacheable(value = "aiAnalysisCustom", key = "#questionHash + ':' + #dataVersion")
-    public AIAnalysis analyzeCustom(String question, String questionHash, String dataVersion) {
-        log.info("Generating custom AI analysis (cache miss)");
-
-        String dataPack = buildGlobalDataPack();
-        String prompt = buildCustomPrompt(dataPack, question);
-
-        AIAnalysis analysis = callClaudeCustom(prompt, question);
-        analysis.setDataVersion(dataVersion);
-        analysis.setFromCache(false);
 
         return analysis;
     }
@@ -452,7 +450,40 @@ public class ClaudeAnalysisService {
     }
 
     /**
-     * Build compact data pack for country-specific analysis
+     * Get country data pack, using Redis cache to avoid rebuilding for every user.
+     * With 1000 concurrent users, only the first request builds the pack;
+     * all others get it from cache.
+     */
+    public String getCountryDataPack(String iso3) {
+        try {
+            org.springframework.cache.Cache cache = cacheManager.getCache("countryDataPack");
+            // Fast path: cache hit (no lock needed)
+            if (cache != null) {
+                String cached = cache.get(iso3, String.class);
+                if (cached != null) return cached;
+            }
+            // Slow path: lock per-country so only one thread builds
+            synchronized (countryDataPackLocks.computeIfAbsent(iso3, k -> new Object())) {
+                // Double-check after acquiring lock
+                if (cache != null) {
+                    String cached = cache.get(iso3, String.class);
+                    if (cached != null) return cached;
+                }
+                String pack = buildCountryDataPack(iso3);
+                if (pack != null && cache != null) {
+                    cache.put(iso3, pack);
+                }
+                return pack;
+            }
+        } catch (Exception e) {
+            log.debug("Country data pack cache error for {}, building fresh: {}", iso3, e.getMessage());
+            return buildCountryDataPack(iso3);
+        }
+    }
+
+    /**
+     * Build compact data pack for country-specific analysis.
+     * GDELT headlines inside are individually cached (4h) by GDELTService.
      */
     private String buildCountryDataPack(String iso3) {
         List<RiskScore> scores = riskScoreService.getAllRiskScores();
@@ -498,17 +529,44 @@ public class ClaudeAnalysisService {
             }
         }
 
-        // Add conflict headlines
-        pack.append("\n### RECENT NEWS (GDELT)\n");
+        // === RECENT NEWS (multiple sources for reliability) ===
+        pack.append("\n### RECENT NEWS\n");
+
+        // 1. Google News RSS — most reliable for fresh general news
+        try {
+            String countryName = MonitoredCountries.getName(iso3);
+            List<String> googleNews = fetchGoogleNews(countryName, 10);
+            if (!googleNews.isEmpty()) {
+                pack.append("Latest news headlines:\n");
+                googleNews.forEach(h -> pack.append("- ").append(h).append("\n"));
+            }
+        } catch (Exception e) {
+            log.debug("Google News fetch failed for {}: {}", iso3, e.getMessage());
+        }
+
+        // 2. GDELT conflict headlines (from cached spikes — zero cost)
         List<MediaSpike> spikes = gdeltService.getAllConflictSpikes();
         spikes.stream()
                 .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
                 .findFirst()
                 .ifPresent(s -> {
-                    if (s.getTopHeadlines() != null) {
-                        s.getTopHeadlines().forEach(h -> pack.append("- ").append(h).append("\n"));
+                    if (s.getTopHeadlines() != null && !s.getTopHeadlines().isEmpty()) {
+                        pack.append("Conflict/security media:\n");
+                        s.getTopHeadlines().stream().limit(3).forEach(h -> pack.append("- ").append(h).append("\n"));
                     }
                 });
+
+        // 3. ReliefWeb humanitarian reports (last 7 days)
+        try {
+            List<Headline> reports = reliefWebService.getLatestReportsAsHeadlines(iso3, 5, 7);
+            if (reports != null && !reports.isEmpty()) {
+                pack.append("Humanitarian reports:\n");
+                reports.forEach(r -> pack.append("- ").append(r.getTitle())
+                        .append(r.getSource() != null ? " [" + r.getSource() + "]" : "").append("\n"));
+            }
+        } catch (Exception e) {
+            log.debug("ReliefWeb reports failed for {}: {}", iso3, e.getMessage());
+        }
 
         // Compare to regional peers
         pack.append("\n### REGIONAL CONTEXT\n");
@@ -526,6 +584,61 @@ public class ClaudeAnalysisService {
                 .collect(Collectors.joining(", ")));
 
         return pack.toString();
+    }
+
+    /**
+     * Fetch recent news headlines from Google News RSS for a country.
+     * Free, no API key, always up-to-date. Returns plain titles.
+     */
+    private List<String> fetchGoogleNews(String countryName, int limit) {
+        try {
+            String query = URLEncoder.encode(countryName, StandardCharsets.UTF_8);
+            String url = "https://news.google.com/rss/search?q=" + query + "&hl=en&gl=US&ceid=US:en";
+
+            String xml = rssClient.get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(10))
+                    .block();
+
+            if (xml == null || xml.isBlank()) return Collections.emptyList();
+
+            XmlMapper xmlMapper = new XmlMapper();
+            xmlMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            NewsAggregatorService.RssFeed feed = xmlMapper.readValue(xml, NewsAggregatorService.RssFeed.class);
+
+            if (feed == null || feed.getChannel() == null || feed.getChannel().getItems() == null) {
+                return Collections.emptyList();
+            }
+
+            Set<String> seen = new HashSet<>();
+            List<String> headlines = new ArrayList<>();
+
+            for (NewsAggregatorService.RssItem item : feed.getChannel().getItems()) {
+                if (headlines.size() >= limit) break;
+                String title = item.getTitle();
+                if (title == null || title.isBlank()) continue;
+
+                // Remove " - SourceName" suffix that Google News appends
+                int dashIdx = title.lastIndexOf(" - ");
+                String cleanTitle = dashIdx > 0 ? title.substring(0, dashIdx).trim() : title.trim();
+                if (cleanTitle.length() > 120) cleanTitle = cleanTitle.substring(0, 117) + "...";
+
+                // Dedup by first 40 chars
+                String key = cleanTitle.substring(0, Math.min(40, cleanTitle.length())).toLowerCase();
+                if (seen.add(key)) {
+                    headlines.add(cleanTitle);
+                }
+            }
+
+            log.info("Fetched {} Google News headlines for {}", headlines.size(), countryName);
+            return headlines;
+
+        } catch (Exception e) {
+            log.warn("Google News RSS failed for {}: {}", countryName, e.getMessage());
+            return Collections.emptyList();
+        }
     }
 
     /**
@@ -858,22 +971,6 @@ public class ClaudeAnalysisService {
             """.formatted(countryName, dataPack);
     }
 
-    private String buildCustomPrompt(String dataPack, String question) {
-        return """
-            You are a senior humanitarian crisis analyst. Answer this specific question using the crisis monitoring data below.
-
-            QUESTION: %s
-
-            DATA:
-            %s
-
-            Provide a focused, analytical answer. Cite specific data points. Avoid obvious observations.
-            If the question cannot be answered from the data, explain what additional information would be needed.
-
-            Keep your response concise (2-3 paragraphs max).
-            """.formatted(question, dataPack);
-    }
-
     private AIAnalysis callClaude(String prompt, String scope, String iso3, String countryName) {
         return callClaude(prompt, scope, iso3, countryName, null);
     }
@@ -906,61 +1003,6 @@ public class ClaudeAnalysisService {
         } catch (Exception e) {
             log.error("Claude API call failed: {}", e.getMessage());
             return mockAnalysis(scope, iso3, countryName);
-        }
-    }
-
-    private AIAnalysis callClaudeCustom(String prompt, String question) {
-        if (apiKey == null || apiKey.isBlank()) {
-            log.warn("Anthropic API key not configured, returning mock analysis");
-            return AIAnalysis.builder()
-                    .scope("custom")
-                    .customQuestion(question)
-                    .customAnswer("API key not configured. Please set anthropic.api.key in application.properties")
-                    .generatedAt(LocalDateTime.now())
-                    .model(model)
-                    .fromCache(false)
-                    .build();
-        }
-
-        try {
-            Map<String, Object> request = Map.of(
-                    "model", model,
-                    "max_tokens", 1024,
-                    "messages", List.of(Map.of("role", "user", "content", prompt))
-            );
-
-            String response = webClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-
-            JsonNode root = objectMapper.readTree(response);
-            String content = root.path("content").get(0).path("text").asText();
-
-            return AIAnalysis.builder()
-                    .scope("custom")
-                    .customQuestion(question)
-                    .customAnswer(content)
-                    .generatedAt(LocalDateTime.now())
-                    .model(model)
-                    .fromCache(false)
-                    .build();
-
-        } catch (Exception e) {
-            log.error("Claude API call failed: {}", e.getMessage());
-            return AIAnalysis.builder()
-                    .scope("custom")
-                    .customQuestion(question)
-                    .customAnswer("Analysis failed: " + e.getMessage())
-                    .generatedAt(LocalDateTime.now())
-                    .model(model)
-                    .fromCache(false)
-                    .build();
         }
     }
 
@@ -1771,11 +1813,21 @@ Be precise. Only report situations with clear evidence. Empty array is valid if 
                     List<String> evidence = new ArrayList<>();
                     s.path("evidence").forEach(e -> evidence.add(e.asText()));
 
+                    // Validate severity — fallback if Claude returns empty/invalid
+                    String severity = s.path("severity").asText("");
+                    if (!Set.of("CRITICAL", "HIGH", "ELEVATED", "WATCH").contains(severity.toUpperCase())) {
+                        // Derive from confidence or default to ELEVATED
+                        String conf = s.path("confidence").asText("").toUpperCase();
+                        severity = "HIGH".equals(conf) ? "HIGH" : "ELEVATED";
+                    } else {
+                        severity = severity.toUpperCase();
+                    }
+
                     DetectedSituation situation = DetectedSituation.builder()
                             .iso3(s.path("iso3").asText())
                             .countryName(s.path("countryName").asText())
                             .type(s.path("type").asText())
-                            .severity(s.path("severity").asText())
+                            .severity(severity)
                             .summary(s.path("summary").asText())
                             .evidence(evidence)
                             .trajectory(s.path("trajectory").asText())

@@ -1043,82 +1043,63 @@
             <button id="ai-modal-close" class="ai-modal-close">&times;</button>
         </div>
         <div class="ai-modal-body">
-            <!-- Analysis Type Selector -->
-            <div class="ai-type-selector">
-                <button class="ai-type-btn active" data-type="global">
-                    <span class="ai-type-icon">🌍</span>
-                    <span>Global</span>
-                </button>
-                <button class="ai-type-btn" data-type="country">
-                    <span class="ai-type-icon">🏳️</span>
-                    <span>Country</span>
-                </button>
-                <button class="ai-type-btn" data-type="custom">
-                    <span class="ai-type-icon">💬</span>
-                    <span>Ask</span>
-                </button>
-            </div>
-
-            <!-- Country Selector (hidden by default) -->
-            <div id="country-selector" class="ai-country-selector hidden">
+            <!-- Country Selector (optional context) -->
+            <div id="country-selector" class="ai-country-selector">
                 <select id="country-select">
-                    <option value="">Select a country...</option>
-                    <!-- Africa - East -->
-                    <option value="SDN">Sudan</option>
-                    <option value="SSD">South Sudan</option>
-                    <option value="ETH">Ethiopia</option>
-                    <option value="SOM">Somalia</option>
-                    <option value="KEN">Kenya</option>
-                    <option value="UGA">Uganda</option>
-                    <!-- Africa - Central -->
-                    <option value="COD">DR Congo</option>
+                    <option value="">All countries (global)</option>
+                    <!-- Africa -->
+                    <option value="BFA">Burkina Faso</option>
+                    <option value="BDI">Burundi</option>
+                    <option value="CMR">Cameroon</option>
                     <option value="CAF">Central African Republic</option>
                     <option value="TCD">Chad</option>
-                    <option value="CMR">Cameroon</option>
-                    <option value="RWA">Rwanda</option>
-                    <option value="BDI">Burundi</option>
-                    <!-- Africa - West -->
-                    <option value="NGA">Nigeria</option>
-                    <option value="MLI">Mali</option>
-                    <option value="BFA">Burkina Faso</option>
-                    <option value="NER">Niger</option>
-                    <!-- Africa - Other -->
+                    <option value="COD">DR Congo</option>
+                    <option value="ETH">Ethiopia</option>
+                    <option value="KEN">Kenya</option>
                     <option value="LBY">Libya</option>
+                    <option value="MLI">Mali</option>
                     <option value="MOZ">Mozambique</option>
+                    <option value="NER">Niger</option>
+                    <option value="NGA">Nigeria</option>
+                    <option value="RWA">Rwanda</option>
+                    <option value="SOM">Somalia</option>
+                    <option value="SSD">South Sudan</option>
+                    <option value="SDN">Sudan</option>
+                    <option value="UGA">Uganda</option>
                     <!-- MENA -->
-                    <option value="SYR">Syria</option>
+                    <option value="IRN">Iran</option>
                     <option value="IRQ">Iraq</option>
-                    <option value="YEM">Yemen</option>
                     <option value="LBN">Lebanon</option>
                     <option value="PSE">Palestine</option>
+                    <option value="SYR">Syria</option>
+                    <option value="YEM">Yemen</option>
                     <!-- Asia -->
                     <option value="AFG">Afghanistan</option>
-                    <option value="PAK">Pakistan</option>
                     <option value="BGD">Bangladesh</option>
                     <option value="MMR">Myanmar</option>
+                    <option value="PAK">Pakistan</option>
                     <!-- LAC -->
-                    <option value="HTI">Haiti</option>
-                    <option value="VEN">Venezuela</option>
                     <option value="COL">Colombia</option>
+                    <option value="CUB">Cuba</option>
+                    <option value="ECU">Ecuador</option>
+                    <option value="SLV">El Salvador</option>
+                    <option value="GTM">Guatemala</option>
+                    <option value="HTI">Haiti</option>
+                    <option value="HND">Honduras</option>
+                    <option value="MEX">Mexico</option>
+                    <option value="NIC">Nicaragua</option>
+                    <option value="PAN">Panama</option>
+                    <option value="PER">Peru</option>
+                    <option value="VEN">Venezuela</option>
                     <!-- Europe -->
                     <option value="UKR">Ukraine</option>
                 </select>
             </div>
 
-            <!-- Custom Question Input (hidden by default) -->
-            <div id="custom-question" class="ai-custom-question hidden">
-                <input type="text" id="question-input" placeholder="Ask about crisis trends, risks, or specific countries...">
-                <button id="ask-btn" class="ai-ask-btn">Ask</button>
+            <!-- Briefing Button -->
+            <div class="ai-briefing-action">
+                <button id="briefing-btn" class="ai-briefing-btn" disabled>Select a country above</button>
             </div>
-
-            <!-- Analysis Button -->
-            <button id="analyze-btn" class="ai-analyze-btn">
-                <span class="btn-text">Analyze</span>
-                <span class="btn-loading hidden">
-                    <span class="loading-spinner"></span>
-                    Analyzing...
-                </span>
-            </button>
 
             <!-- Results Container -->
             <div id="ai-results" class="ai-results hidden">

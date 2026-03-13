@@ -23,7 +23,7 @@ public final class MonitoredCountries {
         // Africa - Other
         "LBY", "MOZ",
         // MENA
-        "SYR", "IRQ", "YEM", "LBN", "PSE",
+        "SYR", "IRQ", "YEM", "LBN", "PSE", "IRN",
         // Asia
         "AFG", "PAK", "BGD", "MMR",
         // LAC (expanded for migration monitoring)
@@ -66,6 +66,7 @@ public final class MonitoredCountries {
         names.put("YEM", "Yemen");
         names.put("LBN", "Lebanon");
         names.put("PSE", "Palestine");
+        names.put("IRN", "Iran");
         // Asia
         names.put("AFG", "Afghanistan");
         names.put("PAK", "Pakistan");
@@ -121,6 +122,7 @@ public final class MonitoredCountries {
         terms.put("YEM", "yemen");
         terms.put("LBN", "lebanon");
         terms.put("PSE", "palestinian");
+        terms.put("IRN", "iran");
         terms.put("AFG", "afghanistan");
         terms.put("PAK", "pakistan");
         terms.put("BGD", "bangladesh");
@@ -173,6 +175,7 @@ public final class MonitoredCountries {
         aliases.put("YEM", List.of("yemen", "yemeni", "sanaa", "sana'a", "aden", "houthi"));
         aliases.put("LBN", List.of("lebanon", "lebanese", "beirut", "hezbollah"));
         aliases.put("PSE", List.of("gaza", "palestine", "palestinian", "west bank", "rafah", "hamas"));
+        aliases.put("IRN", List.of("iran", "iranian", "tehran", "irgc", "hormuz", "strait of hormuz", "persian gulf"));
         aliases.put("AFG", List.of("afghanistan", "afghan", "kabul", "taliban"));
         aliases.put("PAK", List.of("pakistan", "pakistani", "islamabad", "karachi"));
         aliases.put("BGD", List.of("bangladesh", "bangladeshi", "dhaka", "cox's bazar", "rohingya"));
@@ -205,7 +208,7 @@ public final class MonitoredCountries {
             regions.put(c, "Africa");
         }
         // MENA (includes North Africa: Libya)
-        for (String c : List.of("SYR", "IRQ", "YEM", "LBN", "PSE", "LBY")) {
+        for (String c : List.of("SYR", "IRQ", "YEM", "LBN", "PSE", "LBY", "IRN")) {
             regions.put(c, "MENA");
         }
         // Asia

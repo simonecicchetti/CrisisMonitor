@@ -70,7 +70,20 @@ public class OpenMeteoService {
             Map.entry("CO", new Object[]{4.71, -74.07, "Bogota"}),
             Map.entry("EC", new Object[]{-0.18, -78.47, "Quito"}),
             Map.entry("GT", new Object[]{14.63, -90.51, "Guatemala City"}),
-            Map.entry("HN", new Object[]{14.07, -87.19, "Tegucigalpa"})
+            Map.entry("HN", new Object[]{14.07, -87.19, "Tegucigalpa"}),
+            Map.entry("CM", new Object[]{3.87, 11.52, "Yaounde"}),
+            Map.entry("RW", new Object[]{-1.94, 30.06, "Kigali"}),
+            Map.entry("BI", new Object[]{-3.38, 29.36, "Bujumbura"}),
+            Map.entry("LY", new Object[]{32.90, 13.18, "Tripoli"}),
+            Map.entry("IR", new Object[]{35.69, 51.39, "Tehran"}),
+            Map.entry("PS", new Object[]{31.90, 35.20, "Ramallah"}),
+            Map.entry("VE", new Object[]{10.49, -66.88, "Caracas"}),
+            Map.entry("SV", new Object[]{13.69, -89.19, "San Salvador"}),
+            Map.entry("NI", new Object[]{12.15, -86.27, "Managua"}),
+            Map.entry("MX", new Object[]{19.43, -99.13, "Mexico City"}),
+            Map.entry("CU", new Object[]{23.11, -82.37, "Havana"}),
+            Map.entry("PA", new Object[]{8.98, -79.52, "Panama City"}),
+            Map.entry("UA", new Object[]{50.45, 30.52, "Kyiv"})
     );
 
     // ISO2 to ISO3 mapping
@@ -81,9 +94,12 @@ public class OpenMeteoService {
             Map.entry("ML", "MLI"), Map.entry("BF", "BFA"), Map.entry("NE", "NER"),
             Map.entry("TD", "TCD"), Map.entry("CF", "CAF"), Map.entry("MZ", "MOZ"),
             Map.entry("KE", "KEN"), Map.entry("UG", "UGA"), Map.entry("ZW", "ZWE"),
+            Map.entry("CM", "CMR"), Map.entry("RW", "RWA"), Map.entry("BI", "BDI"),
+            Map.entry("LY", "LBY"),
             // Middle East
             Map.entry("YE", "YEM"), Map.entry("AF", "AFG"), Map.entry("IQ", "IRQ"),
-            Map.entry("SY", "SYR"), Map.entry("LB", "LBN"),
+            Map.entry("SY", "SYR"), Map.entry("LB", "LBN"), Map.entry("IR", "IRN"),
+            Map.entry("PS", "PSE"),
             // South Asia
             Map.entry("PK", "PAK"), Map.entry("BD", "BGD"), Map.entry("IN", "IND"),
             Map.entry("MM", "MMR"),
@@ -91,7 +107,11 @@ public class OpenMeteoService {
             Map.entry("PH", "PHL"), Map.entry("ID", "IDN"), Map.entry("VN", "VNM"),
             // Latin America
             Map.entry("HT", "HTI"), Map.entry("PE", "PER"), Map.entry("CO", "COL"),
-            Map.entry("EC", "ECU"), Map.entry("GT", "GTM"), Map.entry("HN", "HND")
+            Map.entry("EC", "ECU"), Map.entry("GT", "GTM"), Map.entry("HN", "HND"),
+            Map.entry("VE", "VEN"), Map.entry("SV", "SLV"), Map.entry("NI", "NIC"),
+            Map.entry("MX", "MEX"), Map.entry("CU", "CUB"), Map.entry("PA", "PAN"),
+            // Europe
+            Map.entry("UA", "UKR")
     );
 
     private static final Map<String, String> COUNTRY_NAMES = Map.ofEntries(
@@ -101,9 +121,12 @@ public class OpenMeteoService {
             Map.entry("ML", "Mali"), Map.entry("BF", "Burkina Faso"), Map.entry("NE", "Niger"),
             Map.entry("TD", "Chad"), Map.entry("CF", "CAR"), Map.entry("MZ", "Mozambique"),
             Map.entry("KE", "Kenya"), Map.entry("UG", "Uganda"), Map.entry("ZW", "Zimbabwe"),
+            Map.entry("CM", "Cameroon"), Map.entry("RW", "Rwanda"), Map.entry("BI", "Burundi"),
+            Map.entry("LY", "Libya"),
             // Middle East
             Map.entry("YE", "Yemen"), Map.entry("AF", "Afghanistan"), Map.entry("IQ", "Iraq"),
-            Map.entry("SY", "Syria"), Map.entry("LB", "Lebanon"),
+            Map.entry("SY", "Syria"), Map.entry("LB", "Lebanon"), Map.entry("IR", "Iran"),
+            Map.entry("PS", "Palestine"),
             // South Asia
             Map.entry("PK", "Pakistan"), Map.entry("BD", "Bangladesh"), Map.entry("IN", "India"),
             Map.entry("MM", "Myanmar"),
@@ -111,7 +134,11 @@ public class OpenMeteoService {
             Map.entry("PH", "Philippines"), Map.entry("ID", "Indonesia"), Map.entry("VN", "Vietnam"),
             // Latin America
             Map.entry("HT", "Haiti"), Map.entry("PE", "Peru"), Map.entry("CO", "Colombia"),
-            Map.entry("EC", "Ecuador"), Map.entry("GT", "Guatemala"), Map.entry("HN", "Honduras")
+            Map.entry("EC", "Ecuador"), Map.entry("GT", "Guatemala"), Map.entry("HN", "Honduras"),
+            Map.entry("VE", "Venezuela"), Map.entry("SV", "El Salvador"), Map.entry("NI", "Nicaragua"),
+            Map.entry("MX", "Mexico"), Map.entry("CU", "Cuba"), Map.entry("PA", "Panama"),
+            // Europe
+            Map.entry("UA", "Ukraine")
     );
 
     public OpenMeteoService() {

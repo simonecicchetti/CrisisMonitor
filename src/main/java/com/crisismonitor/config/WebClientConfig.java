@@ -17,14 +17,14 @@ public class WebClientConfig {
 
     @Bean
     public WebClient hungerMapClient(WebClient.Builder builder) {
-        return builder
+        return builder.clone()
                 .baseUrl("https://api.hungermapdata.org")
                 .build();
     }
 
     @Bean
     public WebClient pdcClient(WebClient.Builder builder) {
-        return builder
+        return builder.clone()
                 .baseUrl("https://apps.pdc.org")
                 .build();
     }

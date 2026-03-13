@@ -1117,56 +1117,63 @@ public class StoryService {
     private List<NewsItem> fetchGdeltForNewsFeed(String region, String topic) {
         List<NewsItem> items = new ArrayList<>();
 
+        // Use cached GDELT spikes instead of live API calls (avoids 6 × 15s rate-limited requests)
+        if (!cacheWarmupService.isCacheReady("conflict")) {
+            log.info("GDELT cache not ready for news feed - warmup in progress");
+            return items;
+        }
+
         try {
-            // Build topic query for GDELT
-            String topicQuery = null;
-            if (topic != null && !topic.isBlank()) {
-                topicQuery = GDELT_TOPIC_QUERIES.get(topic.toLowerCase());
+            @SuppressWarnings("unchecked")
+            List<MediaSpike> spikes = cacheWarmupService.getFallback("gdeltAllSpikes");
+            if (spikes == null || spikes.isEmpty()) {
+                spikes = gdeltService.getAllConflictSpikes();
+            }
+            if (spikes == null || spikes.isEmpty()) {
+                log.info("No GDELT spikes available for news feed");
+                return items;
             }
 
-            if (region != null && !region.isBlank()) {
-                // Single region query
-                List<Headline> headlines = gdeltService.getRegionHeadlines(region, topicQuery, 15);
-                for (Headline h : headlines) {
-                    String country = detectCountryFromText(h.getTitle() != null ? h.getTitle().toLowerCase() : "");
-                    String countryRegion = country != null ?
-                            COUNTRY_TO_REGION.getOrDefault(country, MonitoredCountries.getRegion(country)) : region;
+            // Filter by region if specified
+            var filteredSpikes = spikes.stream()
+                    .filter(s -> s.getTopHeadlines() != null && !s.getTopHeadlines().isEmpty())
+                    .filter(s -> {
+                        if (region == null || region.isBlank()) return true;
+                        String spikeRegion = MonitoredCountries.getRegion(s.getIso3());
+                        return region.equalsIgnoreCase(spikeRegion);
+                    })
+                    .sorted((a, b) -> Double.compare(
+                            b.getZScore() != null ? b.getZScore() : 0,
+                            a.getZScore() != null ? a.getZScore() : 0))
+                    .toList();
+
+            for (MediaSpike spike : filteredSpikes) {
+                for (String title : spike.getTopHeadlines()) {
+                    if (title == null || title.isBlank()) continue;
+
+                    // Filter by topic if specified
+                    if (topic != null && !topic.isBlank()) {
+                        List<String> detected = detectTopics(title);
+                        if (detected.stream().noneMatch(t -> t.equalsIgnoreCase(topic))) {
+                            continue;
+                        }
+                    }
+
+                    String countryRegion = MonitoredCountries.getRegion(spike.getIso3());
 
                     items.add(NewsItem.builder()
-                            .title(h.getTitle())
-                            .url(h.getUrl())
-                            .source(h.getSource() != null ? h.getSource() : "GDELT")
+                            .title(title)
+                            .source("GDELT")
                             .sourceType("GDELT")
-                            .country(country)
-                            .countryName(country != null ? MonitoredCountries.getName(country) : null)
-                            .region(countryRegion != null ? countryRegion : region)
-                            .topics(h.getTitle() != null ? detectTopics(h.getTitle()) : List.of())
+                            .country(spike.getIso3())
+                            .countryName(spike.getCountryName())
+                            .region(countryRegion != null ? countryRegion : "Global")
+                            .topics(detectTopics(title))
                             .build());
                 }
-            } else {
-                // All regions: query each
-                for (String r : List.of("Africa", "MENA", "Asia", "LAC", "Europe", "North America")) {
-                    try {
-                        List<Headline> headlines = gdeltService.getRegionHeadlines(r, topicQuery, 5);
-                        for (Headline h : headlines) {
-                            String country = detectCountryFromText(h.getTitle() != null ? h.getTitle().toLowerCase() : "");
-
-                            items.add(NewsItem.builder()
-                                    .title(h.getTitle())
-                                    .url(h.getUrl())
-                                    .source(h.getSource() != null ? h.getSource() : "GDELT")
-                                    .sourceType("GDELT")
-                                    .country(country)
-                                    .countryName(country != null ? MonitoredCountries.getName(country) : null)
-                                    .region(r)
-                                    .topics(h.getTitle() != null ? detectTopics(h.getTitle()) : List.of())
-                                    .build());
-                        }
-                    } catch (Exception e) {
-                        log.debug("Error fetching GDELT for region {}: {}", r, e.getMessage());
-                    }
-                }
             }
+
+            log.info("Fetched {} GDELT items from cached spikes for news feed", items.size());
         } catch (Exception e) {
             log.warn("Error fetching GDELT for news feed: {}", e.getMessage());
         }
@@ -1243,10 +1250,13 @@ public class StoryService {
                         if (!detectedTopics.contains(topic.toLowerCase())) continue;
                     }
 
-                    // Crisis relevance filter for BBC feeds: skip articles with no crisis topics
-                    // BBC regional feeds include sports, entertainment, business - filter to crisis content only
-                    if (sourceName.startsWith("BBC") && detectedTopics.isEmpty() && country == null) {
-                        continue; // Skip non-crisis BBC articles
+                    // Crisis relevance filter for general media feeds: skip articles with no crisis topics
+                    // BBC, Al Jazeera, Guardian, InSight Crime include politics/sports/business — filter to crisis content only
+                    // Note: humanitarian feeds (UN News, ICRC, IOM, MMC) are NOT filtered as they are crisis-relevant by nature
+                    boolean isGeneralMedia = sourceName.startsWith("BBC") || sourceName.equals("Al Jazeera")
+                            || sourceName.contains("Guardian") || sourceName.equals("InSight Crime");
+                    if (isGeneralMedia && detectedTopics.isEmpty() && country == null) {
+                        continue; // Skip non-crisis articles from general media
                     }
 
                     items.add(NewsItem.builder()

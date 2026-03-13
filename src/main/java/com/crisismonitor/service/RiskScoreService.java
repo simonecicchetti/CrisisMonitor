@@ -33,6 +33,10 @@ public class RiskScoreService {
     private final FewsNetService fewsNetService;
     private final TrendTrackingService trendTrackingService;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private CacheWarmupService cacheWarmupService;
+
     // ISO2 to ISO3 mapping - all monitored countries
     private static final Map<String, String> ISO2_TO_ISO3 = Map.ofEntries(
             // Africa - East
@@ -49,6 +53,7 @@ public class RiskScoreService {
             // MENA
             Map.entry("YE", "YEM"), Map.entry("AF", "AFG"), Map.entry("IQ", "IRQ"),
             Map.entry("SY", "SYR"), Map.entry("LB", "LBN"), Map.entry("PS", "PSE"),
+            Map.entry("IR", "IRN"),
             // Asia
             Map.entry("PK", "PAK"), Map.entry("BD", "BGD"), Map.entry("IN", "IND"),
             Map.entry("MM", "MMR"),
@@ -78,6 +83,7 @@ public class RiskScoreService {
             // MENA
             Map.entry("YE", "Yemen"), Map.entry("AF", "Afghanistan"), Map.entry("IQ", "Iraq"),
             Map.entry("SY", "Syria"), Map.entry("LB", "Lebanon"), Map.entry("PS", "Palestine"),
+            Map.entry("IR", "Iran"),
             // Asia
             Map.entry("PK", "Pakistan"), Map.entry("BD", "Bangladesh"), Map.entry("IN", "India"),
             Map.entry("MM", "Myanmar"),
@@ -101,7 +107,7 @@ public class RiskScoreService {
     /**
      * Calculate risk score for a single country
      */
-    @Cacheable(value = "riskScore", key = "#iso2")
+    @Cacheable(value = "riskScore", key = "#iso2", sync = true)
     public RiskScore calculateRiskScore(String iso2) {
         log.info("Calculating risk score for {}", iso2);
 
@@ -139,13 +145,28 @@ public class RiskScoreService {
             log.warn("Could not get climate data for {}: {}", iso2, e.getMessage());
         }
 
-        // 2. Conflict data (GDELT)
+        // 2. Conflict data (GDELT) - only use if batch cache is ready (avoids individual API calls)
         try {
-            MediaSpike spike = gdeltService.getConflictSpikeIndex(iso3);
+            MediaSpike spike = null;
+            if (cacheWarmupService != null && cacheWarmupService.isCacheReady("conflict")) {
+                spike = gdeltService.getConflictSpikeIndex(iso3);
+            }
             if (spike != null && spike.getZScore() != null) {
                 gdeltZScore = spike.getZScore();
                 // Convert z-score to 0-100 score
                 conflictScore = Math.min(100, Math.max(0, (int)(gdeltZScore * 25 + 25)));
+
+                // Volume floor for chronic conflicts: high absolute article count
+                // indicates ongoing conflict even if z-score is low (no spike vs already-high baseline)
+                if (spike.getArticlesLast7Days() != null) {
+                    int articles = spike.getArticlesLast7Days();
+                    int volumeFloor = 0;
+                    if (articles > 200) volumeFloor = 75;
+                    else if (articles > 100) volumeFloor = 60;
+                    else if (articles > 50) volumeFloor = 45;
+                    conflictScore = Math.max(conflictScore, volumeFloor);
+                }
+
                 dataPoints++;
             }
         } catch (Exception e) {
@@ -285,7 +306,7 @@ public class RiskScoreService {
     /**
      * Get risk scores for all monitored countries
      */
-    @Cacheable("allRiskScores")
+    @Cacheable(value = "allRiskScores", sync = true)
     public List<RiskScore> getAllRiskScores() {
         log.info("Calculating risk scores for all monitored countries");
 

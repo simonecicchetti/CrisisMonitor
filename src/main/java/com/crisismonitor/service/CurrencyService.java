@@ -40,6 +40,10 @@ public class CurrencyService {
             Map.entry("NE", "XOF"),   // CFA Franc (West Africa)
             Map.entry("TD", "XAF"),   // CFA Franc (Central Africa)
             Map.entry("CF", "XAF"),   // CFA Franc (Central Africa)
+            Map.entry("CM", "XAF"),   // CFA Franc (Central Africa) - Cameroon
+            Map.entry("RW", "RWF"),   // Rwandan Franc
+            Map.entry("BI", "BIF"),   // Burundian Franc
+            Map.entry("LY", "LYD"),   // Libyan Dinar
             Map.entry("MZ", "MZN"),   // Mozambican Metical
             Map.entry("KE", "KES"),   // Kenyan Shilling
             Map.entry("UG", "UGX"),   // Ugandan Shilling
@@ -50,6 +54,7 @@ public class CurrencyService {
             Map.entry("IQ", "IQD"),   // Iraqi Dinar
             Map.entry("SY", "SYP"),   // Syrian Pound
             Map.entry("LB", "LBP"),   // Lebanese Pound
+            Map.entry("IR", "IRR"),   // Iranian Rial
             // South Asia
             Map.entry("PK", "PKR"),   // Pakistani Rupee
             Map.entry("BD", "BDT"),   // Bangladeshi Taka
@@ -63,10 +68,15 @@ public class CurrencyService {
             Map.entry("UA", "UAH"),   // Ukrainian Hryvnia
             // Latin America (EC uses USD - no tracking)
             Map.entry("HT", "HTG"),   // Haitian Gourde
+            Map.entry("VE", "VES"),   // Venezuelan Bolívar
             Map.entry("PE", "PEN"),   // Peruvian Sol
             Map.entry("CO", "COP"),   // Colombian Peso
             Map.entry("GT", "GTQ"),   // Guatemalan Quetzal
-            Map.entry("HN", "HNL")    // Honduran Lempira
+            Map.entry("HN", "HNL"),   // Honduran Lempira
+            Map.entry("NI", "NIO"),   // Nicaraguan Córdoba
+            Map.entry("MX", "MXN"),   // Mexican Peso
+            Map.entry("CU", "CUP"),   // Cuban Peso
+            Map.entry("PA", "PAB")    // Panamanian Balboa (pegged to USD)
     );
 
     private static final Map<String, String> COUNTRY_NAMES = Map.ofEntries(
@@ -74,11 +84,14 @@ public class CurrencyService {
             Map.entry("SD", "Sudan"), Map.entry("SS", "South Sudan"), Map.entry("SO", "Somalia"),
             Map.entry("ET", "Ethiopia"), Map.entry("CD", "DR Congo"), Map.entry("NG", "Nigeria"),
             Map.entry("ML", "Mali"), Map.entry("BF", "Burkina Faso"), Map.entry("NE", "Niger"),
-            Map.entry("TD", "Chad"), Map.entry("CF", "CAR"), Map.entry("MZ", "Mozambique"),
+            Map.entry("TD", "Chad"), Map.entry("CF", "CAR"), Map.entry("CM", "Cameroon"),
+            Map.entry("RW", "Rwanda"), Map.entry("BI", "Burundi"),
+            Map.entry("LY", "Libya"), Map.entry("MZ", "Mozambique"),
             Map.entry("KE", "Kenya"), Map.entry("UG", "Uganda"), Map.entry("ZW", "Zimbabwe"),
             // Middle East
             Map.entry("YE", "Yemen"), Map.entry("AF", "Afghanistan"), Map.entry("IQ", "Iraq"),
             Map.entry("SY", "Syria"), Map.entry("LB", "Lebanon"),
+            Map.entry("IR", "Iran"),
             // South Asia
             Map.entry("PK", "Pakistan"), Map.entry("BD", "Bangladesh"), Map.entry("IN", "India"),
             Map.entry("MM", "Myanmar"),
@@ -87,8 +100,11 @@ public class CurrencyService {
             // Europe
             Map.entry("UA", "Ukraine"),
             // Latin America
-            Map.entry("HT", "Haiti"), Map.entry("PE", "Peru"), Map.entry("CO", "Colombia"),
-            Map.entry("GT", "Guatemala"), Map.entry("HN", "Honduras")
+            Map.entry("HT", "Haiti"), Map.entry("VE", "Venezuela"),
+            Map.entry("PE", "Peru"), Map.entry("CO", "Colombia"),
+            Map.entry("GT", "Guatemala"), Map.entry("HN", "Honduras"),
+            Map.entry("NI", "Nicaragua"), Map.entry("MX", "Mexico"),
+            Map.entry("CU", "Cuba"), Map.entry("PA", "Panama")
     );
 
     // Historical baseline rates (approximate values for comparison)
@@ -114,6 +130,7 @@ public class CurrencyService {
             Map.entry("IQD", 1310.0),   // Iraq
             Map.entry("SYP", 13000.0),  // Syria (black market rate)
             Map.entry("LBP", 89000.0),  // Lebanon
+            Map.entry("IRR", 42000.0),  // Iran (official rate ~42000, black market much higher)
             // South Asia
             Map.entry("PKR", 278.0),    // Pakistan
             Map.entry("BDT", 120.0),    // Bangladesh
@@ -130,7 +147,15 @@ public class CurrencyService {
             Map.entry("PEN", 3.7),      // Peru
             Map.entry("COP", 4000.0),   // Colombia
             Map.entry("GTQ", 7.8),      // Guatemala
-            Map.entry("HNL", 24.7)      // Honduras
+            Map.entry("HNL", 24.7),     // Honduras
+            Map.entry("RWF", 1350.0),   // Rwanda
+            Map.entry("BIF", 2900.0),   // Burundi
+            Map.entry("LYD", 4.8),      // Libya
+            Map.entry("VES", 36.5),     // Venezuela
+            Map.entry("NIO", 36.7),     // Nicaragua
+            Map.entry("MXN", 17.2),     // Mexico
+            Map.entry("CUP", 24.0),     // Cuba (official rate)
+            Map.entry("PAB", 1.0)       // Panama (pegged to USD)
     );
 
     public CurrencyService() {

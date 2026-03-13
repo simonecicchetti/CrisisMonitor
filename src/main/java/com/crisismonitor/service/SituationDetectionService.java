@@ -123,6 +123,21 @@ public class SituationDetectionService {
         ISO3_TO_NAME.put("BGD", "Bangladesh");
         ISO3_TO_NAME.put("LBY", "Libya");
         ISO3_TO_NAME.put("IRQ", "Iraq");
+        ISO3_TO_NAME.put("IRN", "Iran");
+        ISO3_TO_NAME.put("KEN", "Kenya");
+        ISO3_TO_NAME.put("UGA", "Uganda");
+        ISO3_TO_NAME.put("CMR", "Cameroon");
+        ISO3_TO_NAME.put("RWA", "Rwanda");
+        ISO3_TO_NAME.put("BDI", "Burundi");
+        ISO3_TO_NAME.put("GTM", "Guatemala");
+        ISO3_TO_NAME.put("HND", "Honduras");
+        ISO3_TO_NAME.put("SLV", "El Salvador");
+        ISO3_TO_NAME.put("NIC", "Nicaragua");
+        ISO3_TO_NAME.put("MEX", "Mexico");
+        ISO3_TO_NAME.put("PER", "Peru");
+        ISO3_TO_NAME.put("ECU", "Ecuador");
+        ISO3_TO_NAME.put("CUB", "Cuba");
+        ISO3_TO_NAME.put("PAN", "Panama");
     }
 
     // Country name aliases for headline matching (multiple names per country)
@@ -154,6 +169,21 @@ public class SituationDetectionService {
         COUNTRY_ALIASES.put("BGD", Arrays.asList("bangladesh", "bangladeshi", "dhaka", "cox's bazar"));
         COUNTRY_ALIASES.put("LBY", Arrays.asList("libya", "libyan", "tripoli", "benghazi"));
         COUNTRY_ALIASES.put("IRQ", Arrays.asList("iraq", "iraqi", "baghdad", "mosul"));
+        COUNTRY_ALIASES.put("IRN", Arrays.asList("iran", "iranian", "tehran", "irgc", "hormuz", "persian gulf"));
+        COUNTRY_ALIASES.put("KEN", Arrays.asList("kenya", "kenyan", "nairobi"));
+        COUNTRY_ALIASES.put("UGA", Arrays.asList("uganda", "ugandan", "kampala"));
+        COUNTRY_ALIASES.put("CMR", Arrays.asList("cameroon", "cameroonian", "yaounde"));
+        COUNTRY_ALIASES.put("RWA", Arrays.asList("rwanda", "rwandan", "kigali"));
+        COUNTRY_ALIASES.put("BDI", Arrays.asList("burundi", "burundian", "bujumbura"));
+        COUNTRY_ALIASES.put("GTM", Arrays.asList("guatemala", "guatemalan"));
+        COUNTRY_ALIASES.put("HND", Arrays.asList("honduras", "honduran", "tegucigalpa"));
+        COUNTRY_ALIASES.put("SLV", Arrays.asList("el salvador", "salvadoran", "salvadorean"));
+        COUNTRY_ALIASES.put("NIC", Arrays.asList("nicaragua", "nicaraguan", "managua"));
+        COUNTRY_ALIASES.put("MEX", Arrays.asList("mexico", "mexican", "mexico city"));
+        COUNTRY_ALIASES.put("PER", Arrays.asList("peru", "peruvian", "lima"));
+        COUNTRY_ALIASES.put("ECU", Arrays.asList("ecuador", "ecuadorian", "quito"));
+        COUNTRY_ALIASES.put("CUB", Arrays.asList("cuba", "cuban", "havana"));
+        COUNTRY_ALIASES.put("PAN", Arrays.asList("panama", "panamanian", "darien"));
     }
 
     /**
@@ -462,7 +492,7 @@ public class SituationDetectionService {
                 for (String keyword : type.getKeywords()) {
                     if (text.contains(keyword)) {
                         score += 2; // Headlines weighted more
-                        break;
+                        // No break: count ALL matching keywords per headline for better type discrimination
                     }
                 }
             }
@@ -472,7 +502,6 @@ public class SituationDetectionService {
                 for (String keyword : type.getKeywords()) {
                     if (text.contains(keyword)) {
                         score += 1;
-                        break;
                     }
                 }
             }
@@ -548,10 +577,12 @@ public class SituationDetectionService {
             }
         }
 
-        // Group situations by type for related-countries detection
-        Map<String, List<String>> typeToCountries = new HashMap<>();
+        // Group situations by region for related-countries detection
+        // Using region (not type) gives more meaningful "also affected" results
+        Map<String, List<String>> regionToCountries = new HashMap<>();
         for (Situation sit : situations) {
-            typeToCountries.computeIfAbsent(sit.getSituationType(), k -> new ArrayList<>())
+            String region = MonitoredCountries.getRegion(sit.getIso3());
+            regionToCountries.computeIfAbsent(region, k -> new ArrayList<>())
                     .add(sit.getCountryName() != null ? sit.getCountryName() : sit.getIso3());
         }
 
@@ -584,8 +615,9 @@ public class SituationDetectionService {
                 sit.setTrajectoryReason("No risk score available");
             }
 
-            // Related countries (same situation type, excluding self)
-            List<String> related = typeToCountries.getOrDefault(sit.getSituationType(), Collections.emptyList())
+            // Related countries (same region, excluding self)
+            String sitRegion = MonitoredCountries.getRegion(sit.getIso3());
+            List<String> related = regionToCountries.getOrDefault(sitRegion, Collections.emptyList())
                     .stream()
                     .filter(name -> !name.equals(sit.getCountryName()) && !name.equals(sit.getIso3()))
                     .limit(5)

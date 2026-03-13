@@ -35,7 +35,8 @@ public class IntelligenceFeedService {
     private static final List<String> PRIORITY_COUNTRIES = Arrays.asList(
         "SDN", "SSD", "YEM", "AFG", "SOM", "ETH", "HTI", "MMR", "COD", "SYR",
         "UKR", "PSE", "NGA", "MLI", "BFA", "NER", "TCD", "CAF", "LBN", "MOZ",
-        "PAK", "BGD", "COL", "VEN", "IRQ", "CMR", "LBY", "BDI", "RWA", "KEN"
+        "PAK", "BGD", "COL", "VEN", "IRQ", "CMR", "LBY", "BDI", "RWA", "KEN",
+        "UGA", "IRN", "GTM", "HND", "SLV", "NIC", "MEX", "PER", "ECU", "CUB", "PAN"
     );
 
     private static final Map<String, String> ISO3_TO_NAME = new HashMap<>();
@@ -66,6 +67,21 @@ public class IntelligenceFeedService {
         ISO3_TO_NAME.put("MOZ", "Mozambique");
         ISO3_TO_NAME.put("LBY", "Libya");
         ISO3_TO_NAME.put("IRQ", "Iraq");
+        ISO3_TO_NAME.put("IRN", "Iran");
+        ISO3_TO_NAME.put("UGA", "Uganda");
+        ISO3_TO_NAME.put("CMR", "Cameroon");
+        ISO3_TO_NAME.put("RWA", "Rwanda");
+        ISO3_TO_NAME.put("BDI", "Burundi");
+        ISO3_TO_NAME.put("KEN", "Kenya");
+        ISO3_TO_NAME.put("GTM", "Guatemala");
+        ISO3_TO_NAME.put("HND", "Honduras");
+        ISO3_TO_NAME.put("SLV", "El Salvador");
+        ISO3_TO_NAME.put("NIC", "Nicaragua");
+        ISO3_TO_NAME.put("MEX", "Mexico");
+        ISO3_TO_NAME.put("PER", "Peru");
+        ISO3_TO_NAME.put("ECU", "Ecuador");
+        ISO3_TO_NAME.put("CUB", "Cuba");
+        ISO3_TO_NAME.put("PAN", "Panama");
     }
 
     /**

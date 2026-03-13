@@ -1,7 +1,6 @@
 package com.crisismonitor.service;
 
 import lombok.Data;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -25,10 +24,16 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class NewsAggregatorService {
 
-    private final WebClient.Builder webClientBuilder;
+    private final WebClient webClient;
+
+    public NewsAggregatorService() {
+        this.webClient = WebClient.builder()
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
+                .defaultHeader("User-Agent", "CrisisMonitor/1.0 (humanitarian monitoring)")
+                .build();
+    }
 
     // RSS Feed URLs for humanitarian news sources
     private static final Map<String, String> NEWS_SOURCES = Map.of(
@@ -200,12 +205,11 @@ public class NewsAggregatorService {
         List<NewsItem> items = new ArrayList<>();
 
         try {
-            WebClient client = webClientBuilder.build();
-            String xml = client.get()
+            String xml = webClient.get()
                 .uri(feedUrl)
                 .retrieve()
                 .bodyToMono(String.class)
-                .timeout(java.time.Duration.ofSeconds(10))
+                .timeout(java.time.Duration.ofSeconds(15))
                 .block();
 
             if (xml == null || xml.isEmpty()) {
@@ -229,10 +233,10 @@ public class NewsAggregatorService {
                 }
             }
 
-            log.debug("Fetched {} items from {}", items.size(), sourceName);
+            log.info("Fetched {} items from {} RSS", items.size(), sourceName);
 
         } catch (Exception e) {
-            log.warn("Error parsing RSS from {}: {}", sourceName, e.getMessage());
+            log.warn("Error parsing RSS from {}: {}", sourceName, e.getMessage(), e);
         }
 
         return items;
@@ -245,12 +249,9 @@ public class NewsAggregatorService {
         List<NewsItem> items = new ArrayList<>();
 
         try {
-            WebClient client = webClientBuilder.build();
-
             // Fetch recent updates (situation reports, news)
-            String response = client.get()
+            String response = webClient.get()
                 .uri("https://api.reliefweb.int/v1/reports?appname=crisis-monitor&limit=30&preset=latest&query[value]=language:\"English\"&fields[include][]=title&fields[include][]=url&fields[include][]=source&fields[include][]=date&fields[include][]=country&fields[include][]=body-html")
-                .header("User-Agent", "CrisisMonitor/1.0 (humanitarian monitoring)")
                 .retrieve()
                 .bodyToMono(String.class)
                 .timeout(java.time.Duration.ofSeconds(15))
@@ -300,10 +301,10 @@ public class NewsAggregatorService {
                 }
             }
 
-            log.debug("Fetched {} items from ReliefWeb API", items.size());
+            log.info("Fetched {} items from ReliefWeb API", items.size());
 
         } catch (Exception e) {
-            log.warn("Error fetching ReliefWeb updates: {}", e.getMessage());
+            log.warn("Error fetching ReliefWeb updates: {}", e.getMessage(), e);
         }
 
         return items;

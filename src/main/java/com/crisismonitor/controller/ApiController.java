@@ -12,10 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.LocalDateTime;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -303,43 +300,62 @@ public class ApiController {
 
     @GetMapping("/risk/scores")
     public DataResponse<List<RiskScore>> getAllRiskScores() {
-        try {
-            List<RiskScore> data = riskScoreService.getAllRiskScores();
-            if (data != null && !data.isEmpty()) {
-                return DataResponse.ready(data);
-            }
-        } catch (Exception e) {
-            // Log but don't fail - try fallback
-        }
-
-        // Try in-memory fallback
+        // Only serve from cache — never calculate on-demand (too expensive with GDELT rate limits)
         List<RiskScore> fallback = cacheWarmupService.getFallback("allRiskScores");
         if (fallback != null && !fallback.isEmpty()) {
-            return DataResponse.stale(fallback, null);
+            return DataResponse.ready(fallback);
         }
 
-        // No data available yet
+        // Warmup still in progress
         return DataResponse.loading("Risk scores are being calculated...");
     }
 
     @GetMapping("/risk/score")
     public RiskScore getRiskScore(@RequestParam String iso2) {
-        return riskScoreService.calculateRiskScore(iso2);
+        // Try cached scores first
+        List<RiskScore> scores = cacheWarmupService.getFallback("allRiskScores");
+        if (scores != null) {
+            return scores.stream()
+                    .filter(s -> iso2.equals(s.getIso2()))
+                    .findFirst()
+                    .orElse(null);
+        }
+        return null;
     }
 
     @GetMapping("/risk/high")
     public List<RiskScore> getHighRiskCountries() {
-        return riskScoreService.getHighRiskCountries();
+        List<RiskScore> scores = cacheWarmupService.getFallback("allRiskScores");
+        if (scores == null) return List.of();
+        return scores.stream().filter(RiskScore::isHighRisk).toList();
     }
 
     @GetMapping("/risk/confirmed")
     public List<RiskScore> getConfirmedWarnings() {
-        return riskScoreService.getConfirmedWarnings();
+        List<RiskScore> scores = cacheWarmupService.getFallback("allRiskScores");
+        if (scores == null) return List.of();
+        return scores.stream()
+                .filter(RiskScore::isConfirmed)
+                .filter(s -> s.getScore() >= 51)
+                .toList();
     }
 
     @GetMapping("/risk/summary")
     public Map<String, Object> getRiskSummary() {
-        return riskScoreService.getRiskSummary();
+        List<RiskScore> scores = cacheWarmupService.getFallback("allRiskScores");
+        if (scores == null || scores.isEmpty()) return Map.of("total", 0);
+        // Build summary from cached scores directly
+        var byLevel = scores.stream()
+                .collect(java.util.stream.Collectors.groupingBy(RiskScore::getRiskLevel, java.util.stream.Collectors.counting()));
+        return Map.of(
+                "total", scores.size(),
+                "critical", byLevel.getOrDefault("CRITICAL", 0L),
+                "alert", byLevel.getOrDefault("ALERT", 0L),
+                "warning", byLevel.getOrDefault("WARNING", 0L),
+                "watch", byLevel.getOrDefault("WATCH", 0L),
+                "stable", byLevel.getOrDefault("STABLE", 0L),
+                "confirmedWarnings", scores.stream().filter(RiskScore::isConfirmed).count()
+        );
     }
 
     // ========== CLIMATE (OPEN-METEO) ==========
@@ -429,22 +445,6 @@ public class ApiController {
         return claudeAnalysisService.analyzeRegion(region.toLowerCase(), dataVersion);
     }
 
-    @PostMapping("/analysis/custom")
-    public AIAnalysis getCustomAnalysis(@RequestBody Map<String, String> request) {
-        String question = request.get("question");
-        if (question == null || question.isBlank()) {
-            return AIAnalysis.builder()
-                    .scope("custom")
-                    .customQuestion("")
-                    .customAnswer("Please provide a question")
-                    .build();
-        }
-
-        String dataVersion = claudeAnalysisService.generateDataVersion();
-        String questionHash = hashQuestion(question);
-        return claudeAnalysisService.analyzeCustom(question, questionHash, dataVersion);
-    }
-
     @GetMapping("/analysis/version")
     public Map<String, String> getDataVersion() {
         return Map.of("version", claudeAnalysisService.generateDataVersion());
@@ -476,8 +476,11 @@ public class ApiController {
 
     @GetMapping("/clusters")
     public List<RegionalClusterService.ClusterAlert> getRegionalClusters() {
-        List<RiskScore> scores = riskScoreService.getAllRiskScores();
-        // Trend data is already enriched during score calculation
+        // Use cached scores to avoid triggering expensive on-demand calculation
+        List<RiskScore> scores = cacheWarmupService.getFallback("allRiskScores");
+        if (scores == null || scores.isEmpty()) {
+            return List.of();
+        }
         return regionalClusterService.analyzeRegionalClusters(scores);
     }
 
@@ -494,16 +497,6 @@ public class ApiController {
     public List<ReliefWebService.DisasterInfo> getReliefWebDisasters(
             @RequestParam String iso3) {
         return reliefWebService.getActiveDisasters(iso3.toUpperCase());
-    }
-
-    private String hashQuestion(String question) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest(question.toLowerCase().trim().getBytes(StandardCharsets.UTF_8));
-            return Base64.getEncoder().encodeToString(digest).substring(0, 8);
-        } catch (Exception e) {
-            return String.valueOf(question.hashCode());
-        }
     }
 
     // ========== CACHE MANAGEMENT ==========

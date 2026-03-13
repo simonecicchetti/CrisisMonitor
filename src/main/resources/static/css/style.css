@@ -706,6 +706,7 @@ h1, h2, h3, h4, h5, h6 {
   border-radius: var(--radius-full);
   background: var(--bg-tertiary);
   color: var(--text-primary);
+  white-space: nowrap;
 }
 
 /* Severity badges with icons for colorblind accessibility */
@@ -1472,7 +1473,7 @@ h1, h2, h3, h4, h5, h6 {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 280px;
+  max-width: 95%;
   padding: 2px 0;
   border-left: 2px solid var(--accent);
   padding-left: var(--space-xs);
@@ -1897,45 +1898,32 @@ h1, h2, h3, h4, h5, h6 {
   border-color: var(--accent-indigo);
 }
 
-/* Custom Question */
-.ai-custom-question {
-  display: flex;
-  gap: var(--space-sm);
+/* Briefing Button */
+.ai-briefing-action {
   margin-bottom: var(--space-lg);
 }
 
-.ai-custom-question input {
-  flex: 1;
-  padding: var(--space-md);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  font-size: 0.9rem;
-}
-
-.ai-custom-question input:focus {
-  outline: none;
-  border-color: var(--accent-indigo);
-}
-
-.ai-custom-question input::placeholder {
-  color: var(--text-muted);
-}
-
-.ai-ask-btn {
+.ai-briefing-btn {
+  width: 100%;
   padding: var(--space-md) var(--space-lg);
   background: var(--accent-indigo);
   border: none;
   border-radius: var(--radius-md);
   color: white;
   font-weight: 600;
+  font-size: 0.95rem;
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
-.ai-ask-btn:hover {
+.ai-briefing-btn:hover:not(:disabled) {
   background: var(--accent-purple);
+}
+
+.ai-briefing-btn:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  cursor: not-allowed;
 }
 
 /* Analyze Button */
@@ -5124,6 +5112,12 @@ h1, h2, h3, h4, h5, h6 {
   border-color: var(--accent-blue);
 }
 
+.form-select.filter-active {
+  border-color: var(--accent-blue);
+  background: rgba(10, 132, 255, 0.08);
+  font-weight: 500;
+}
+
 /* Topic Results */
 .topic-results {
   background: var(--bg-primary);
@@ -5317,8 +5311,8 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* ============================================
-   RESPONSIVE - Hybrid Sidebar + Hamburger
-   Desktop: Collapsible sidebar with hover-expand
+   RESPONSIVE - Sidebar + Hamburger
+   Desktop: Full sidebar
    Tablet/Mobile: Hamburger drawer
    ============================================ */
 
@@ -5331,80 +5325,8 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 
-/* Desktop (1024-1440px) - Collapsible sidebar with hover */
+/* Desktop (1024-1440px) - Full sidebar */
 @media (max-width: 1440px) and (min-width: 1025px) {
-  .sidebar {
-    width: 72px;
-    min-width: 72px;
-    padding: var(--space-sm) 0;
-    transition: width 0.2s ease, min-width 0.2s ease;
-    overflow: visible;
-  }
-
-  .sidebar:hover {
-    width: 240px;
-    min-width: 240px;
-    background: var(--bg-primary);
-    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
-  }
-
-  .sidebar-nav {
-    padding: 0 8px;
-  }
-
-  .sidebar-item {
-    flex-direction: column;
-    gap: 4px;
-    padding: 14px 8px;
-    font-size: 0.64rem;
-    text-align: center;
-    border-radius: var(--radius-md);
-    transition: all 0.2s ease;
-  }
-
-  .sidebar:hover .sidebar-item {
-    flex-direction: row;
-    gap: var(--space-md);
-    padding: 10px var(--space-md);
-    font-size: 0.93rem;
-    text-align: left;
-  }
-
-  .sidebar-icon {
-    width: 24px;
-    height: 24px;
-  }
-
-  .sidebar-icon svg {
-    width: 24px;
-    height: 24px;
-  }
-
-  .sidebar-label {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 56px;
-    opacity: 0.7;
-    transition: max-width 0.2s ease, opacity 0.2s ease;
-  }
-
-  .sidebar:hover .sidebar-label {
-    max-width: 180px;
-    opacity: 1;
-  }
-
-  .sidebar-footer {
-    display: none;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-  }
-
-  .sidebar:hover .sidebar-footer {
-    display: block;
-    opacity: 1;
-  }
-
   .main-content {
     padding: var(--space-lg) var(--space-xl);
     max-width: min(90vw, 1200px);

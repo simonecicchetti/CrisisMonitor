@@ -81,16 +81,22 @@ public class CacheWarmupService {
         cacheStatus.clear();
         warmupComplete.set(false);
 
-        // Phase 1: All fast data sources in parallel
+        // Evict all Redis caches on startup to force fresh data with updated country lists
+        evictAllCaches();
+
+        // Phase 1a: Data APIs first (climate is 276+ calls, needs dedicated bandwidth)
         CompletableFuture<Void> climateFuture = warmupClimate();
         CompletableFuture<Void> currencyFuture = warmupCurrency();
         CompletableFuture<Void> foodSecurityFuture = warmupFoodSecurity();
-        CompletableFuture<Void> whoFuture = warmupWHO();
-        CompletableFuture<Void> briefingFuture = CompletableFuture.runAsync(this::warmupDailyBriefing);
 
-        // Phase 1 complete: risk scores + intelligence feed + mark ready
-        // Active Situations stays in Phase 2 (depends on GDELT)
-        CompletableFuture.allOf(climateFuture, currencyFuture, foodSecurityFuture, whoFuture, briefingFuture)
+        // Phase 1b: Web/RSS sources AFTER data APIs (avoids network congestion)
+        CompletableFuture.allOf(climateFuture, currencyFuture, foodSecurityFuture)
+                .thenCompose(v -> {
+                    log.info("Phase 1a (data APIs) complete, starting Phase 1b (web sources)...");
+                    CompletableFuture<Void> whoFuture = warmupWHO();
+                    CompletableFuture<Void> briefingFuture = CompletableFuture.runAsync(this::warmupDailyBriefing);
+                    return CompletableFuture.allOf(whoFuture, briefingFuture);
+                })
                 .thenRun(() -> {
                     warmupRiskScores();
                     warmupIntelligenceFeed(); // Needs risk scores
@@ -312,7 +318,10 @@ public class CacheWarmupService {
     public void refreshLongTtlCaches() {
         log.info("Scheduled refresh for long-TTL caches (climate, currency, risk)...");
         evictCache("allPrecipAnomalies");
+        evictCache("precipAnomaly");
         evictCache("allCurrencyData");
+        evictCache("currencyData");
+        evictCache("exchangeRates");
         evictCache("allRiskScores");
 
         CompletableFuture<Void> climateFuture = warmupClimate();
@@ -339,6 +348,14 @@ public class CacheWarmupService {
                 log.warn("WHO refresh failed: {}", e.getMessage());
             }
         });
+    }
+
+    private void evictAllCaches() {
+        log.info("Evicting all Redis caches for fresh startup...");
+        for (String cacheName : cacheManager.getCacheNames()) {
+            evictCache(cacheName);
+        }
+        log.info("All caches evicted");
     }
 
     private void evictCache(String cacheName) {

@@ -42,7 +42,7 @@ public class CountryProfileService {
             Map.entry("TCD", "TD"), Map.entry("CAF", "CF"), Map.entry("MOZ", "MZ"),
             Map.entry("KEN", "KE"), Map.entry("UGA", "UG"), Map.entry("ZWE", "ZW"),
             Map.entry("YEM", "YE"), Map.entry("AFG", "AF"), Map.entry("IRQ", "IQ"),
-            Map.entry("SYR", "SY"), Map.entry("LBN", "LB"),
+            Map.entry("SYR", "SY"), Map.entry("LBN", "LB"), Map.entry("IRN", "IR"),
             Map.entry("PAK", "PK"), Map.entry("BGD", "BD"), Map.entry("IND", "IN"),
             Map.entry("MMR", "MM"),
             Map.entry("PHL", "PH"), Map.entry("IDN", "ID"), Map.entry("VNM", "VN"),

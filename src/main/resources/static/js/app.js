@@ -1210,10 +1210,11 @@ const RiskScoreMonitor = {
       return;
     }
 
-    // Update hero stats counts
-    const criticalCount = scores.filter(s => s.riskLevel === 'CRITICAL').length;
-    const alertCount = scores.filter(s => s.riskLevel === 'ALERT').length;
-    const warningCount = scores.filter(s => s.riskLevel === 'WARNING').length;
+    // Update hero stats counts — only count from displayed countries (top 20)
+    const displayedScores = scores.slice(0, 20);
+    const criticalCount = displayedScores.filter(s => s.riskLevel === 'CRITICAL').length;
+    const alertCount = displayedScores.filter(s => s.riskLevel === 'ALERT').length;
+    const warningCount = displayedScores.filter(s => s.riskLevel === 'WARNING').length;
 
     const criticalEl = document.getElementById('ew-critical-count');
     const alertEl = document.getElementById('ew-alert-count');
@@ -2053,8 +2054,8 @@ const OverviewManager = {
     }
 
     try {
-      console.log('[Overview] Live News: fetching /api/stories');
-      const response = await fetch('/api/stories?days=1');
+      console.log('[Overview] Live News: fetching /api/news-feed');
+      const response = await fetch('/api/news-feed');
 
       if (!response.ok) {
         console.error('[Overview] Live News: HTTP error', response.status);
@@ -2062,42 +2063,44 @@ const OverviewManager = {
         return;
       }
 
-      const stories = await response.json();
-      console.log('[Overview] Live News: got', stories.length, 'stories');
+      const data = await response.json();
+      const mediaItems = (data.media || []).slice(0, 3);
+      const reliefItems = (data.reliefweb || []).slice(0, 3);
+      console.log('[Overview] Live News: got', mediaItems.length, 'media +', reliefItems.length, 'reliefweb');
 
-      if (!stories || stories.length === 0) {
+      // Interleave: media, reliefweb, media, reliefweb, ...
+      const mixed = [];
+      for (let i = 0; i < 3; i++) {
+        if (mediaItems[i]) mixed.push(mediaItems[i]);
+        if (reliefItems[i]) mixed.push(reliefItems[i]);
+      }
+
+      if (mixed.length === 0) {
         container.innerHTML = '<div class="loading-placeholder">No news stories available</div>';
         return;
       }
 
-      // Take top 6 stories for the grid
-      const topStories = stories.slice(0, 6);
-
-      container.innerHTML = topStories.map(story => {
-        const regionBadge = story.region && story.region !== 'Global'
-          ? `<span class="news-region-badge">${story.region}</span>`
+      container.innerHTML = mixed.map(item => {
+        const regionBadge = item.region && item.region !== 'Global'
+          ? `<span class="news-region-badge">${item.region}</span>`
           : '';
-        const topicBadge = story.topicTags && story.topicTags.length > 0
-          ? `<span class="news-topic-badge">${story.topicTags[0]}</span>`
+        const topicBadge = item.topics && item.topics.length > 0
+          ? `<span class="news-topic-badge">${item.topics[0]}</span>`
           : '';
-        const sourcesText = story.sources && story.sources.length > 0
-          ? story.sources.slice(0, 2).join(', ')
-          : 'Multiple sources';
-        const countryText = story.countryNames && story.countryNames.length > 0
-          ? story.countryNames[0]
-          : '';
+        const sourceText = item.source || item.sourceType || 'Unknown';
+        const countryText = item.countryName || '';
 
         return `
-          <div class="live-news-card" data-story-id="${story.id || ''}">
+          <div class="live-news-card"${item.url ? ` data-url="${item.url}"` : ''}>
             <div class="live-news-badges">
               ${regionBadge}
               ${topicBadge}
             </div>
-            <div class="live-news-title">${story.title || 'Untitled'}</div>
+            <div class="live-news-title">${item.title || 'Untitled'}</div>
             <div class="live-news-meta">
               ${countryText ? `<span class="live-news-country">${countryText}</span>` : ''}
-              <span class="live-news-sources">${sourcesText}</span>
-              <span class="live-news-volume">${story.volume24h || 1} articles</span>
+              <span class="live-news-sources">${sourceText}</span>
+              ${item.timeAgo ? `<span class="live-news-volume">${item.timeAgo}</span>` : ''}
             </div>
           </div>
         `;
@@ -2114,8 +2117,12 @@ const OverviewManager = {
   setupLiveNewsClicks() {
     document.querySelectorAll('.live-news-card').forEach(card => {
       card.addEventListener('click', () => {
-        // Navigate to News Feed section
-        SidebarManager.switchSection('news-feed');
+        const url = card.getAttribute('data-url');
+        if (url) {
+          window.open(url, '_blank', 'noopener');
+        } else {
+          SidebarManager.switchSection('news-feed');
+        }
       });
     });
   },
@@ -2674,7 +2681,6 @@ const FocusAdvisor = {
 // AI ANALYSIS MANAGER
 // ============================================
 const AIAnalysisManager = {
-  currentType: 'global',
   isLoading: false,
   lastAnalysisTime: 0,
   cooldownMs: 5000, // 5 second cooldown between analyses
@@ -2685,10 +2691,8 @@ const AIAnalysisManager = {
     const modal = document.getElementById('ai-modal');
     const backdrop = modal?.querySelector('.ai-modal-backdrop');
     const closeBtn = document.getElementById('ai-modal-close');
-    const typeBtns = document.querySelectorAll('.ai-type-btn');
-    const analyzeBtn = document.getElementById('analyze-btn');
-    const askBtn = document.getElementById('ask-btn');
-    const questionInput = document.getElementById('question-input');
+    const briefingBtn = document.getElementById('briefing-btn');
+    const countrySelect = document.getElementById('country-select');
 
     if (!modal) return;
 
@@ -2702,11 +2706,6 @@ const AIAnalysisManager = {
     aiBriefBtn?.addEventListener('click', () => {
       modal.classList.remove('hidden');
       Haptics.medium();
-      // Auto-trigger global analysis if results not shown
-      const resultsContainer = document.getElementById('ai-results');
-      if (resultsContainer?.classList.contains('hidden')) {
-        this.analyze();
-      }
     });
 
     // Load priority watch on page load
@@ -2723,27 +2722,17 @@ const AIAnalysisManager = {
       }
     });
 
-    // Type selector
-    typeBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        typeBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        this.currentType = btn.dataset.type;
-        this.updateUI();
-        Haptics.light();
-      });
+    // Country select enables/disables briefing button
+    countrySelect?.addEventListener('change', () => {
+      if (briefingBtn) {
+        const selected = countrySelect.value;
+        briefingBtn.disabled = !selected;
+        briefingBtn.textContent = selected ? 'Get Briefing' : 'Select a country above';
+      }
     });
 
-    // Analyze button
-    analyzeBtn?.addEventListener('click', () => this.analyze());
-
-    // Ask button (for custom questions)
-    askBtn?.addEventListener('click', () => this.analyze());
-
-    // Enter key for custom question
-    questionInput?.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') this.analyze();
-    });
+    // Briefing button
+    briefingBtn?.addEventListener('click', () => this.analyze());
   },
 
   closeModal() {
@@ -2751,30 +2740,6 @@ const AIAnalysisManager = {
     modal?.classList.add('hidden');
     // Reset results
     document.getElementById('ai-results')?.classList.add('hidden');
-  },
-
-  updateUI() {
-    const countrySelector = document.getElementById('country-selector');
-    const customQuestion = document.getElementById('custom-question');
-    const analyzeBtn = document.getElementById('analyze-btn');
-
-    // Hide all
-    countrySelector?.classList.add('hidden');
-    customQuestion?.classList.add('hidden');
-
-    // Show based on type
-    switch (this.currentType) {
-      case 'country':
-        countrySelector?.classList.remove('hidden');
-        analyzeBtn.querySelector('.btn-text').textContent = 'Analyze Country';
-        break;
-      case 'custom':
-        customQuestion?.classList.remove('hidden');
-        analyzeBtn.querySelector('.btn-text').textContent = 'Ask Question';
-        break;
-      default:
-        analyzeBtn.querySelector('.btn-text').textContent = 'Analyze Global';
-    }
   },
 
   async analyze() {
@@ -2789,47 +2754,32 @@ const AIAnalysisManager = {
       return;
     }
 
-    const analyzeBtn = document.getElementById('analyze-btn');
-    const btnText = analyzeBtn.querySelector('.btn-text');
-    const btnLoading = analyzeBtn.querySelector('.btn-loading');
+    const briefingBtn = document.getElementById('briefing-btn');
+    const countrySelect = document.getElementById('country-select');
     const resultsContainer = document.getElementById('ai-results');
+    const countryCode = countrySelect?.value || '';
 
-    // Validate inputs
-    if (this.currentType === 'country') {
-      const countrySelect = document.getElementById('country-select');
-      if (!countrySelect.value) {
-        alert('Please select a country');
-        return;
-      }
-    }
-
-    if (this.currentType === 'custom') {
-      const questionInput = document.getElementById('question-input');
-      if (!questionInput.value.trim()) {
-        alert('Please enter a question');
-        return;
-      }
+    if (!countryCode) {
+      Toast.info('Select a country first');
+      return;
     }
 
     // Show loading state
     this.isLoading = true;
-    btnText.classList.add('hidden');
-    btnLoading.classList.remove('hidden');
-    analyzeBtn.disabled = true;
+    briefingBtn.disabled = true;
+    briefingBtn.textContent = 'Generating briefing...';
 
     // Show loading overlay in results area
     if (resultsContainer) {
-      // Remove any existing loading overlay
       const existingOverlay = resultsContainer.querySelector('.ai-loading-overlay');
       if (existingOverlay) existingOverlay.remove();
 
-      // Add loading overlay
       const loadingOverlay = document.createElement('div');
       loadingOverlay.className = 'ai-loading-overlay';
       loadingOverlay.innerHTML = `
         <div class="loading-spinner"></div>
         <div style="margin-top: 12px; color: var(--text-secondary);">
-          Analyzing with Claude AI...
+          Fetching latest news &amp; generating briefing...
         </div>
       `;
       loadingOverlay.style.cssText = `
@@ -2844,32 +2794,13 @@ const AIAnalysisManager = {
     }
 
     try {
-      let data;
-      let response;
-
-      switch (this.currentType) {
-        case 'global':
-          response = await fetch('/api/analysis/global');
-          break;
-        case 'country':
-          const countryCode = document.getElementById('country-select').value;
-          response = await fetch(`/api/analysis/country?iso3=${countryCode}`);
-          break;
-        case 'custom':
-          const question = document.getElementById('question-input').value;
-          response = await fetch('/api/analysis/custom', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question })
-          });
-          break;
-      }
+      const response = await fetch(`/api/analysis/country?iso3=${countryCode}`);
 
       if (!response.ok) {
         throw new Error(`Server error: ${response.status}`);
       }
 
-      data = await response.json();
+      const data = await response.json();
       this.renderResults(data);
 
     } catch (error) {
@@ -2877,10 +2808,9 @@ const AIAnalysisManager = {
       this.renderError(error.message);
     } finally {
       this.isLoading = false;
-      this.lastAnalysisTime = Date.now(); // Rate limiting timestamp
-      btnText.classList.remove('hidden');
-      btnLoading.classList.add('hidden');
-      analyzeBtn.disabled = false;
+      this.lastAnalysisTime = Date.now();
+      briefingBtn.disabled = false;
+      briefingBtn.textContent = 'Get Briefing';
     }
   },
 
@@ -4774,6 +4704,7 @@ const NewsFeedManager = {
     if (regionFilter) {
       regionFilter.addEventListener('change', () => {
         this.currentRegion = regionFilter.value;
+        regionFilter.classList.toggle('filter-active', regionFilter.value !== '');
         this.loadFeed();
       });
     }
@@ -4781,6 +4712,7 @@ const NewsFeedManager = {
     if (topicFilter) {
       topicFilter.addEventListener('change', () => {
         this.currentTopic = topicFilter.value;
+        topicFilter.classList.toggle('filter-active', topicFilter.value !== '');
         this.loadFeed();
       });
     }

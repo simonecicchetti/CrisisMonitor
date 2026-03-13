@@ -40,7 +40,23 @@ public class FewsNetService {
             Map.entry("HT", "Haiti"),
             Map.entry("MM", "Myanmar"),
             Map.entry("PK", "Pakistan"),
-            Map.entry("BD", "Bangladesh")
+            Map.entry("BD", "Bangladesh"),
+            Map.entry("KE", "Kenya"),
+            Map.entry("UG", "Uganda"),
+            Map.entry("CM", "Cameroon"),
+            Map.entry("RW", "Rwanda"),
+            Map.entry("BI", "Burundi"),
+            Map.entry("LB", "Lebanon"),
+            Map.entry("SY", "Syria"),
+            Map.entry("IQ", "Iraq"),
+            Map.entry("GT", "Guatemala"),
+            Map.entry("HN", "Honduras"),
+            Map.entry("NI", "Nicaragua"),
+            Map.entry("SV", "El Salvador"),
+            Map.entry("CO", "Colombia"),
+            Map.entry("VE", "Venezuela"),
+            Map.entry("LY", "Libya"),
+            Map.entry("UA", "Ukraine")
     );
 
     // Pre-defined IPC data (FEWS NET verified data, updated periodically)
@@ -63,7 +79,17 @@ public class FewsNetService {
             Map.entry("MM", new Double[]{3.0, 2026.04}),  // Myanmar - Crisis
             Map.entry("MZ", new Double[]{3.0, 2026.04}),  // Mozambique - Crisis
             Map.entry("PK", new Double[]{2.0, 2026.03}),  // Pakistan - Stressed
-            Map.entry("BD", new Double[]{2.0, 2026.03})   // Bangladesh - Stressed
+            Map.entry("BD", new Double[]{2.0, 2026.03}),  // Bangladesh - Stressed
+            Map.entry("KE", new Double[]{3.0, 2026.05}),  // Kenya - Crisis (arid/semi-arid)
+            Map.entry("UG", new Double[]{2.0, 2026.04}),  // Uganda - Stressed
+            Map.entry("CM", new Double[]{3.0, 2026.05}),  // Cameroon - Crisis (Far North)
+            Map.entry("GT", new Double[]{3.0, 2026.05}),  // Guatemala - Crisis (Dry Corridor)
+            Map.entry("HN", new Double[]{3.0, 2026.05}),  // Honduras - Crisis (Dry Corridor)
+            Map.entry("NI", new Double[]{2.0, 2026.04}),  // Nicaragua - Stressed
+            Map.entry("SV", new Double[]{2.0, 2026.04}),  // El Salvador - Stressed
+            Map.entry("LB", new Double[]{3.0, 2026.05}),  // Lebanon - Crisis (economic collapse)
+            Map.entry("SY", new Double[]{3.0, 2026.05}),  // Syria - Crisis
+            Map.entry("UA", new Double[]{2.0, 2026.04})   // Ukraine - Stressed (conflict zones)
     );
 
     /**

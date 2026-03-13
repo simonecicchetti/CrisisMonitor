@@ -121,7 +121,6 @@ public class CacheConfig {
         cacheConfigs.put("aiAnalysisGlobal", aiConfig);
         cacheConfigs.put("aiAnalysisCountry", aiConfig);
         cacheConfigs.put("aiAnalysisRegion", aiConfig);
-        cacheConfigs.put("aiAnalysisCustom", aiConfig);
 
         // Topic Intelligence: 30 min TTL (aggregates GDELT + ReliefWeb)
         cacheConfigs.put("topicIntelligence", defaultConfig);
@@ -150,6 +149,9 @@ public class CacheConfig {
 
         // Country Profile (aggregated): 1 hour TTL (combines multiple data sources)
         cacheConfigs.put("countryProfileAggregated", oneHourConfig);
+
+        // Country Data Pack for AI analysis: 1 hour TTL (risk profile + news + reports)
+        cacheConfigs.put("countryDataPack", oneHourConfig);
 
         // Region Detail drill-down: 1 hour TTL
         cacheConfigs.put("regionDetail", oneHourConfig);
