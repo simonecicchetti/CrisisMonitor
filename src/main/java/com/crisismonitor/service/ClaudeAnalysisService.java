@@ -436,17 +436,39 @@ public class ClaudeAnalysisService {
     }
 
     private String getIso3FromIso2(String iso2) {
-        // Simple mapping for common crisis countries
-        Map<String, String> mapping = Map.ofEntries(
-                Map.entry("SD", "SDN"), Map.entry("SS", "SSD"), Map.entry("SO", "SOM"),
-                Map.entry("ET", "ETH"), Map.entry("YE", "YEM"), Map.entry("AF", "AFG"),
-                Map.entry("CD", "COD"), Map.entry("HT", "HTI"), Map.entry("CF", "CAF"),
-                Map.entry("NG", "NGA"), Map.entry("ML", "MLI"), Map.entry("NE", "NER"),
-                Map.entry("BF", "BFA"), Map.entry("TD", "TCD"), Map.entry("MZ", "MOZ"),
-                Map.entry("MM", "MMR"), Map.entry("SY", "SYR"), Map.entry("UA", "UKR"),
-                Map.entry("LB", "LBN"), Map.entry("VE", "VEN"), Map.entry("ZW", "ZWE")
-        );
-        return mapping.getOrDefault(iso2, iso2);
+        return ISO2_TO_ISO3_MAP.getOrDefault(iso2, iso2);
+    }
+
+    private String getIso2FromIso3(String iso3) {
+        return ISO3_TO_ISO2_MAP.get(iso3);
+    }
+
+    // Static ISO mappings (covers all monitored countries)
+    private static final Map<String, String> ISO2_TO_ISO3_MAP = Map.ofEntries(
+            Map.entry("SD", "SDN"), Map.entry("SS", "SSD"), Map.entry("SO", "SOM"),
+            Map.entry("ET", "ETH"), Map.entry("YE", "YEM"), Map.entry("AF", "AFG"),
+            Map.entry("CD", "COD"), Map.entry("HT", "HTI"), Map.entry("CF", "CAF"),
+            Map.entry("NG", "NGA"), Map.entry("ML", "MLI"), Map.entry("NE", "NER"),
+            Map.entry("BF", "BFA"), Map.entry("TD", "TCD"), Map.entry("MZ", "MOZ"),
+            Map.entry("MM", "MMR"), Map.entry("SY", "SYR"), Map.entry("UA", "UKR"),
+            Map.entry("LB", "LBN"), Map.entry("VE", "VEN"), Map.entry("ZW", "ZWE"),
+            Map.entry("KE", "KEN"), Map.entry("UG", "UGA"), Map.entry("IQ", "IRQ"),
+            Map.entry("IR", "IRN"), Map.entry("PK", "PAK"), Map.entry("BD", "BGD"),
+            Map.entry("IN", "IND"), Map.entry("PH", "PHL"), Map.entry("ID", "IDN"),
+            Map.entry("VN", "VNM"), Map.entry("PE", "PER"), Map.entry("CO", "COL"),
+            Map.entry("EC", "ECU"), Map.entry("GT", "GTM"), Map.entry("HN", "HND"),
+            Map.entry("PS", "PSE"), Map.entry("LY", "LBY"), Map.entry("SV", "SLV"),
+            Map.entry("NI", "NIC"), Map.entry("MX", "MEX"), Map.entry("CU", "CUB"),
+            Map.entry("PA", "PAN"), Map.entry("US", "USA"), Map.entry("CA", "CAN"),
+            Map.entry("RW", "RWA"), Map.entry("BI", "BDI"), Map.entry("CM", "CMR"),
+            Map.entry("JO", "JOR"), Map.entry("NP", "NPL"), Map.entry("BO", "BOL")
+    );
+
+    private static final Map<String, String> ISO3_TO_ISO2_MAP;
+    static {
+        Map<String, String> reverse = new HashMap<>();
+        ISO2_TO_ISO3_MAP.forEach((iso2, iso3) -> reverse.put(iso3, iso2));
+        ISO3_TO_ISO2_MAP = Collections.unmodifiableMap(reverse);
     }
 
     /**
@@ -486,11 +508,9 @@ public class ClaudeAnalysisService {
      * GDELT headlines inside are individually cached (4h) by GDELTService.
      */
     private String buildCountryDataPack(String iso3) {
-        List<RiskScore> scores = riskScoreService.getAllRiskScores();
-        RiskScore country = scores.stream()
-                .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
-                .findFirst()
-                .orElse(null);
+        // Get single country risk score (cached per-country, never blocks on full warmup)
+        String iso2 = getIso2FromIso3(iso3);
+        RiskScore country = (iso2 != null) ? riskScoreService.calculateRiskScore(iso2) : null;
 
         if (country == null) return null;
 
@@ -544,17 +564,19 @@ public class ClaudeAnalysisService {
             log.debug("Google News fetch failed for {}: {}", iso3, e.getMessage());
         }
 
-        // 2. GDELT conflict headlines (from cached spikes — zero cost)
-        List<MediaSpike> spikes = gdeltService.getAllConflictSpikes();
-        spikes.stream()
-                .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
-                .findFirst()
-                .ifPresent(s -> {
-                    if (s.getTopHeadlines() != null && !s.getTopHeadlines().isEmpty()) {
-                        pack.append("Conflict/security media:\n");
-                        s.getTopHeadlines().stream().limit(3).forEach(h -> pack.append("- ").append(h).append("\n"));
-                    }
-                });
+        // 2. GDELT conflict headlines (non-blocking: only if already cached)
+        try {
+            org.springframework.cache.Cache spikeCache = cacheManager.getCache("gdeltSpikeIndex");
+            if (spikeCache != null) {
+                MediaSpike spike = spikeCache.get(iso3, MediaSpike.class);
+                if (spike != null && spike.getTopHeadlines() != null && !spike.getTopHeadlines().isEmpty()) {
+                    pack.append("Conflict/security media:\n");
+                    spike.getTopHeadlines().stream().limit(3).forEach(h -> pack.append("- ").append(h).append("\n"));
+                }
+            }
+        } catch (Exception e) {
+            log.debug("GDELT cache not ready for {}: {}", iso3, e.getMessage());
+        }
 
         // 3. ReliefWeb humanitarian reports (last 7 days)
         try {
@@ -568,20 +590,26 @@ public class ClaudeAnalysisService {
             log.debug("ReliefWeb reports failed for {}: {}", iso3, e.getMessage());
         }
 
-        // Compare to regional peers
-        pack.append("\n### REGIONAL CONTEXT\n");
-        String region = getRegion(iso3);
-        List<RiskScore> peers = scores.stream()
-                .filter(s -> region.equals(getRegion(s.getIso3())))
-                .filter(s -> !iso3.equalsIgnoreCase(s.getIso3()))
-                .sorted((a, b) -> b.getScore() - a.getScore())
-                .limit(3)
-                .toList();
-
-        pack.append("Regional peers: ");
-        pack.append(peers.stream()
-                .map(s -> String.format("%s(%d)", s.getCountryName(), s.getScore()))
-                .collect(Collectors.joining(", ")));
+        // Compare to regional peers (non-blocking: read from cache only)
+        try {
+            org.springframework.cache.Cache riskCache = cacheManager.getCache("allRiskScores");
+            @SuppressWarnings("unchecked")
+            List<RiskScore> allScores = riskCache != null ? riskCache.get("SimpleKey []", List.class) : null;
+            if (allScores != null && !allScores.isEmpty()) {
+                pack.append("\n### REGIONAL CONTEXT\n");
+                String region = getRegion(iso3);
+                String peersStr = allScores.stream()
+                        .filter(s -> region.equals(getRegion(s.getIso3())))
+                        .filter(s -> !iso3.equalsIgnoreCase(s.getIso3()))
+                        .sorted((a, b) -> b.getScore() - a.getScore())
+                        .limit(3)
+                        .map(s -> String.format("%s(%d)", s.getCountryName(), s.getScore()))
+                        .collect(Collectors.joining(", "));
+                pack.append("Regional peers: ").append(peersStr);
+            }
+        } catch (Exception e) {
+            log.debug("Regional peers cache not ready: {}", e.getMessage());
+        }
 
         return pack.toString();
     }
