@@ -86,17 +86,17 @@ public class CacheWarmupService {
         // Evict all Redis caches on startup to force fresh data with updated country lists
         evictAllCaches();
 
-        // Phase 1a: Data APIs first (climate is 276+ calls, needs dedicated bandwidth)
-        // NDVI data must be ready BEFORE risk scores (used for climate calibration)
+        // Phase 1a: Fast data APIs (NDVI from static fallback, Currency, Food Security)
+        // NDVI must be ready BEFORE risk scores (used for climate calibration)
+        // Climate (precipitation anomalies, 276+ OpenMeteo calls) is SLOW — runs in background
         CompletableFuture<Void> ndviFuture = warmupNDVI();
-        CompletableFuture<Void> climateFuture = warmupClimate();
         CompletableFuture<Void> currencyFuture = warmupCurrency();
         CompletableFuture<Void> foodSecurityFuture = warmupFoodSecurity();
 
-        // Phase 1b: Web/RSS sources AFTER data APIs (avoids network congestion)
-        CompletableFuture.allOf(ndviFuture, climateFuture, currencyFuture, foodSecurityFuture)
+        // Phase 1b: Web/RSS sources + Risk Scores once fast APIs complete
+        CompletableFuture.allOf(ndviFuture, currencyFuture, foodSecurityFuture)
                 .thenCompose(v -> {
-                    log.info("Phase 1a (data APIs) complete, starting Phase 1b (web sources)...");
+                    log.info("Phase 1a (fast data APIs) complete, starting Phase 1b (web sources)...");
                     CompletableFuture<Void> whoFuture = warmupWHO();
                     CompletableFuture<Void> briefingFuture = CompletableFuture.runAsync(this::warmupDailyBriefing);
                     return CompletableFuture.allOf(whoFuture, briefingFuture);
@@ -114,6 +114,22 @@ public class CacheWarmupService {
                     warmupComplete.set(true);
                     return null;
                 });
+
+        // Phase 1.5: Climate (precipitation anomalies) in background — slow, recalculates risk scores when done
+        CompletableFuture.runAsync(() -> {
+            try {
+                warmupClimate().join();
+                log.info("Climate warmup complete, recalculating risk scores with precipitation data...");
+                evictCache("allRiskScores");
+                evictCache("riskScore");
+                memoryFallback.remove("allRiskScores");
+                warmupRiskScores();
+                evictCache("regionalPulseV2");
+                memoryFallback.remove("regionalPulse");
+            } catch (Exception e) {
+                log.error("Climate background warmup failed: {}", e.getMessage());
+            }
+        });
 
         // Phase 2: GDELT in background (slow, 15s rate limit per call)
         CompletableFuture.runAsync(() -> {
