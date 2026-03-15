@@ -77,18 +77,26 @@ public class RegionService {
         // Priority order — most critical first
         List<String> hierarchy = List.of("Conflict", "Food Security", "Economic", "Climate");
 
-        // Collect all drivers from top hotspot countries (already sorted by score, limited to 2)
+        // Collect drivers from top hotspot countries AND high-scoring countries
         Set<String> topDrivers = new java.util.HashSet<>();
         for (var country : topCountries) {
             if (country.getDrivers() != null) {
                 topDrivers.addAll(country.getDrivers());
             }
         }
-
-        // Also include drivers from any country scoring >= 50 in the region
         for (var country : allRegionScores) {
             if (country.getScore() >= 50 && country.getDrivers() != null) {
                 topDrivers.addAll(country.getDrivers());
+            }
+        }
+
+        // Also check raw component scores — a country may have elevated conflict
+        // but it gets cut from its top-3 drivers by higher-scoring components.
+        // If ANY country in the region has conflictScore >= 20, "Conflict" is a valid regional driver.
+        for (var country : allRegionScores) {
+            if (country.getConflictScore() >= 20) {
+                topDrivers.add("Conflict");
+                break;
             }
         }
 
