@@ -1,5 +1,6 @@
 package com.crisismonitor.service;
 
+import com.crisismonitor.model.MediaSpike;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -79,12 +80,14 @@ public class CacheWarmupService {
         log.info("=== Starting cache warmup ===");
         long startTime = System.currentTimeMillis();
 
-        memoryFallback.clear();
-        cacheStatus.clear();
         warmupComplete.set(false);
 
-        // Evict all Redis caches on startup to force fresh data with updated country lists
-        evictAllCaches();
+        // Preserve expensive GDELT data across deploys (takes hours to rebuild).
+        // Preload from Redis into memoryFallback so conflict scores work immediately.
+        preloadExpensiveDataFromRedis();
+
+        // Evict cheap-to-rebuild caches (everything except GDELT + trend history)
+        evictCheapCaches();
 
         // Phase 1a: Fast data APIs (NDVI from static fallback, Currency, Food Security)
         // NDVI must be ready BEFORE risk scores (used for climate calibration)
@@ -434,8 +437,39 @@ public class CacheWarmupService {
             "trendHistory"
     );
 
-    private void evictAllCaches() {
-        log.info("Evicting all Redis caches for fresh startup...");
+    /**
+     * Preload expensive-to-rebuild data from Redis into memoryFallback.
+     * GDELT takes hours to fetch — preserving it across deploys means
+     * conflict scores are non-zero from the very first risk score calculation.
+     */
+    @SuppressWarnings("unchecked")
+    private void preloadExpensiveDataFromRedis() {
+        // GDELT conflict spikes
+        try {
+            Cache gdeltCache = cacheManager.getCache("gdeltAllSpikes");
+            if (gdeltCache != null) {
+                Cache.ValueWrapper wrapper = gdeltCache.get(org.springframework.cache.interceptor.SimpleKey.EMPTY);
+                if (wrapper != null && wrapper.get() != null) {
+                    var data = (java.util.List<MediaSpike>) wrapper.get();
+                    if (!data.isEmpty()) {
+                        memoryFallback.put("gdeltAllSpikes", data);
+                        cacheStatus.put("conflict", true);
+                        log.info("Preloaded {} GDELT entries from Redis (preserved across deploy)", data.size());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("No existing GDELT data in Redis: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Evict cheap-to-rebuild caches but preserve expensive ones (GDELT, trend history).
+     * GDELT data takes hours to rebuild — Phase 2 will replace it with fresh data.
+     * Trend history tracks changes over time and should never be wiped.
+     */
+    private void evictCheapCaches() {
+        log.info("Evicting cheap-to-rebuild caches (preserving GDELT + trends)...");
         // Quick test: try one cache first. If Redis is down, skip all eviction.
         try {
             Cache testCache = cacheManager.getCache("riskScore");
@@ -443,15 +477,26 @@ public class CacheWarmupService {
                 testCache.clear();
             }
         } catch (Exception e) {
-            log.warn("Redis unavailable, skipping cache eviction (using in-memory fallback): {}", e.getMessage());
+            log.warn("Redis unavailable, skipping cache eviction: {}", e.getMessage());
             return;
         }
-        // Redis is reachable — evict ALL known caches by name (not cacheManager.getCacheNames()
-        // which only returns caches created in this JVM instance)
+
+        // Expensive caches to preserve across deploys
+        var preservedCaches = java.util.Set.of(
+                "gdeltAllSpikes", "gdeltSpikeIndex", "gdeltConflictCount",
+                "gdeltHeadlines", "gdeltHeadlinesWithUrl", "gdeltTone",
+                "gdeltGeoEvents", "gdeltCrisisVolume", "gdeltRegionHeadlines",
+                "trendHistory"
+        );
+
+        int evicted = 0;
         for (String cacheName : ALL_KNOWN_CACHES) {
-            evictCache(cacheName);
+            if (!preservedCaches.contains(cacheName)) {
+                evictCache(cacheName);
+                evicted++;
+            }
         }
-        log.info("All {} caches evicted", ALL_KNOWN_CACHES.size());
+        log.info("Evicted {} caches, preserved {} expensive caches", evicted, preservedCaches.size());
     }
 
     private void evictCache(String cacheName) {

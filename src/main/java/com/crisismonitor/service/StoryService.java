@@ -103,6 +103,8 @@ public class StoryService {
             "football", "soccer", "cricket", "tennis", "basketball", "rugby",
             "olympic", "olympics", "fifa", "uefa", "match", "vs ",
             "goal scored", "hat-trick", "penalty kick", "red card",
+            "finalissima", "advertising deal", "real madrid", "barcelona",
+            "manchester", "liverpool", "arsenal", "chelsea",
             // Entertainment
             "movie", "film festival", "box office", "celebrity", "grammy",
             "oscar", "emmy", "netflix", "spotify", "album release",
