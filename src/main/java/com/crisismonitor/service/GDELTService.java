@@ -55,7 +55,7 @@ public class GDELTService {
 
     // Global rate limiter - GDELT requires significant gaps between requests
     // Cloud Run IPs get 429 at 15s intervals; 30s more reliable based on prod logs
-    private static final long RATE_LIMIT_MS = 30000; // 30 seconds between requests
+    private static final long RATE_LIMIT_MS = 45000; // 45 seconds between requests (30s gets 429 on Cloud Run)
     private static final AtomicLong lastRequestTime = new AtomicLong(0);
 
     // Baseline cache: stores 30d article counts with timestamps to avoid re-fetching
@@ -160,6 +160,71 @@ public class GDELTService {
     }
 
     /**
+     * Call GDELT API with automatic rate limiting and 429 retry.
+     * Retries once with 90s backoff on 429, then gives up.
+     */
+    private String callGdeltApi(String url) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            acquireRateLimit();
+            try {
+                String response = gdeltClient.get()
+                        .uri(url)
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+                return response;
+            } catch (org.springframework.web.reactive.function.client.WebClientResponseException.TooManyRequests e) {
+                log.warn("GDELT 429, attempt {}/2 — backing off 90s", attempt + 1);
+                // Don't count this as a real request for rate limiting purposes
+            } catch (Exception e) {
+                throw e;
+            } finally {
+                releaseRateLimit();
+            }
+
+            // Extra backoff on 429 (on top of the 45s rate limit wait on next acquire)
+            try {
+                Thread.sleep(90000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Call GDELT API returning JsonNode, with rate limiting and 429 retry.
+     */
+    private JsonNode callGdeltApiJson(String url) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            acquireRateLimit();
+            try {
+                JsonNode response = gdeltClient.get()
+                        .uri(url)
+                        .retrieve()
+                        .bodyToMono(JsonNode.class)
+                        .block();
+                return response;
+            } catch (org.springframework.web.reactive.function.client.WebClientResponseException.TooManyRequests e) {
+                log.warn("GDELT 429, attempt {}/2 — backing off 90s", attempt + 1);
+            } catch (Exception e) {
+                throw e;
+            } finally {
+                releaseRateLimit();
+            }
+
+            try {
+                Thread.sleep(90000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Get conflict article count for a country over specified days.
      * Uses simple "country" + "conflict" query to avoid hitting the 250 maxrecords cap
      * (broader alias queries return 250 for almost every country, making z-scores identical).
@@ -187,17 +252,7 @@ public class GDELTService {
                     .toUriString();
 
             // Rate limit: hold lock across entire HTTP request so 30s gap is from response-to-request
-            acquireRateLimit();
-            String responseStr;
-            try {
-                responseStr = gdeltClient.get()
-                        .uri(url)
-                        .retrieve()
-                        .bodyToMono(String.class)
-                        .block();
-            } finally {
-                releaseRateLimit();
-            }
+            String responseStr = callGdeltApi(url);
 
             if (responseStr == null || responseStr.isBlank()) {
                 log.debug("GDELT: Empty response for {}", countryName);
@@ -348,17 +403,7 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            acquireRateLimit();
-            String responseStr;
-            try {
-                responseStr = gdeltClient.get()
-                        .uri(url)
-                        .retrieve()
-                        .bodyToMono(String.class)
-                        .block();
-            } finally {
-                releaseRateLimit();
-            }
+            String responseStr = callGdeltApi(url);
 
             if (responseStr == null || responseStr.isBlank()) {
                 return Collections.emptyList();
@@ -447,17 +492,7 @@ public class GDELTService {
                     .toUriString();
 
             // Rate limit before API call
-            acquireRateLimit();
-            String responseStr;
-            try {
-                responseStr = gdeltClient.get()
-                        .uri(url)
-                        .retrieve()
-                        .bodyToMono(String.class)
-                        .block();
-            } finally {
-                releaseRateLimit();
-            }
+            String responseStr = callGdeltApi(url);
 
             if (responseStr == null || responseStr.isBlank()) {
                 return Collections.emptyList();
@@ -537,17 +572,7 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            acquireRateLimit();
-            JsonNode response;
-            try {
-                response = gdeltClient.get()
-                        .uri(url)
-                        .retrieve()
-                        .bodyToMono(JsonNode.class)
-                        .block();
-            } finally {
-                releaseRateLimit();
-            }
+            JsonNode response = callGdeltApiJson(url);
 
             if (response != null && response.has("tonechart")) {
                 JsonNode toneData = response.get("tonechart");
@@ -649,17 +674,7 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            acquireRateLimit();
-            JsonNode response;
-            try {
-                response = gdeltClient.get()
-                        .uri(url)
-                        .retrieve()
-                        .bodyToMono(JsonNode.class)
-                        .block();
-            } finally {
-                releaseRateLimit();
-            }
+            JsonNode response = callGdeltApiJson(url);
 
             List<ConflictEvent> events = new ArrayList<>();
 
@@ -717,17 +732,7 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            acquireRateLimit();
-            JsonNode response;
-            try {
-                response = gdeltClient.get()
-                        .uri(url)
-                        .retrieve()
-                        .bodyToMono(JsonNode.class)
-                        .block();
-            } finally {
-                releaseRateLimit();
-            }
+            JsonNode response = callGdeltApiJson(url);
 
             Map<String, Integer> trend = new LinkedHashMap<>();
 
@@ -800,17 +805,7 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            acquireRateLimit();
-            String responseStr;
-            try {
-                responseStr = gdeltClient.get()
-                        .uri(url)
-                        .retrieve()
-                        .bodyToMono(String.class)
-                        .block();
-            } finally {
-                releaseRateLimit();
-            }
+            String responseStr = callGdeltApi(url);
 
             if (responseStr == null || responseStr.isBlank()) {
                 return Collections.emptyList();
