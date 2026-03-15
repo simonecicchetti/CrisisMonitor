@@ -6,9 +6,12 @@
     <meta name="theme-color" content="#0f0f0f">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="description" content="Real-time Global Humanitarian Crisis Dashboard - Monitor food security, climate, migration and economic indicators worldwide">
+    <meta name="description" content="Global risk intelligence platform — real-time monitoring of humanitarian crises, conflict, food security and climate indicators worldwide.">
+    <meta property="og:title" content="Notamy — Global Risk Intelligence">
+    <meta property="og:description" content="Real-time risk intelligence for humanitarian organizations, NGOs and governments.">
+    <meta property="og:type" content="website">
 
-    <title>Crisis Monitor</title>
+    <title>Notamy — Global Risk Intelligence</title>
 
     <!-- PWA Manifest -->
     <link rel="manifest" href="/manifest.json">
@@ -20,7 +23,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
     <!-- Custom CSS -->
-    <link rel="stylesheet" th:href="@{/css/style.css(v=64)}"/>
+    <link rel="stylesheet" th:href="@{/css/style.css(v=79)}"/>
 
     <!-- Preconnect for performance -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -38,23 +41,8 @@
     <div class="navbar-content">
         <a href="/" class="navbar-brand">
             <span class="status-indicator"></span>
-            <span>Crisis Monitor</span>
+            <span>Notamy</span>
         </a>
-        <!-- Stat Chips: Severity Snapshot -->
-        <div class="navbar-stats" th:if="${stats != null}">
-            <span class="stat-chip critical pulse-glow">
-                <span class="chip-value" th:text="${stats.criticalCountries ?: 0}">0</span>
-                <span class="chip-label">Critical</span>
-            </span>
-            <span class="stat-chip high">
-                <span class="chip-value" th:text="${stats.highRiskCountries ?: 0}">0</span>
-                <span class="chip-label">High</span>
-            </span>
-            <span class="stat-chip" id="navbar-new-alerts">
-                <span class="chip-value" th:text="${stats.totalAlerts ?: 0}">0</span>
-                <span class="chip-label">Alerts</span>
-            </span>
-        </div>
         <div class="navbar-actions">
             <span id="last-updated" class="last-updated">Live</span>
             <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
@@ -97,10 +85,6 @@
                 <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>
                 <span class="sidebar-label">Drivers</span>
             </button>
-            <button class="sidebar-item" data-section="situational">
-                <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
-                <span class="sidebar-label">Situations</span>
-            </button>
             <button class="sidebar-item" data-section="intelligence">
                 <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg></span>
                 <span class="sidebar-label">Intelligence</span>
@@ -108,8 +92,6 @@
             </nav>
         <div class="sidebar-footer">
             <div class="sidebar-brand">
-                <span class="sidebar-version">v2.0</span>
-                <span class="sidebar-tagline">Early Warning Platform</span>
             </div>
         </div>
     </aside>
@@ -120,10 +102,10 @@
         <!-- ==================== SECTION: OVERVIEW ==================== -->
         <section class="content-section active" data-section="overview">
 
-            <!-- BLOCK 1: LIVE NEWS (GDELT + RSS) -->
+            <!-- BLOCK 1: LATEST NEWS (Media RSS only) -->
             <div class="overview-brief">
                 <div class="brief-header">
-                    <h2>What's Happening Now</h2>
+                    <h2>Latest</h2>
                     <div class="brief-header-right">
                         <button id="overview-refresh-btn" class="refresh-btn" title="Refresh data">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -133,10 +115,8 @@
                         <a href="#" class="block-link" data-nav="news-feed">View all</a>
                     </div>
                 </div>
-
-                <!-- Live news headlines grid -->
                 <div class="live-news-grid" id="live-news-grid">
-                    <div class="loading-placeholder">Loading live news...</div>
+                    <div class="loading-placeholder">Loading latest news...</div>
                 </div>
             </div>
 
@@ -151,14 +131,14 @@
                 </div>
             </div>
 
-            <!-- BLOCK 3: CONTEXT HEADLINES -->
-            <div class="overview-block">
+            <!-- BLOCK 3: HUMANITARIAN UPDATES (ReliefWeb) -->
+            <div class="overview-block humanitarian-updates-block">
                 <div class="block-header">
-                    <h3>Context</h3>
-                    <a href="#" class="block-link" data-nav="news-feed">View all sources</a>
+                    <h3>Humanitarian Updates</h3>
+                    <a href="#" class="block-link" data-nav="news-feed">View all</a>
                 </div>
-                <div class="context-headlines-list" id="context-headlines">
-                    <div class="loading-placeholder">Loading headlines...</div>
+                <div class="humanitarian-updates-list" id="humanitarian-updates-list">
+                    <div class="loading-placeholder">Loading humanitarian reports...</div>
                 </div>
             </div>
 
@@ -205,30 +185,48 @@
                 <div class="countries-cards-panel">
                     <div class="cards-panel-header">
                         <h3>Top Countries</h3>
-                        <span class="badge critical">IPC 3+</span>
+                        <span class="badge critical">Risk Score</span>
                     </div>
                     <div class="risk-cards-list" id="risk-cards-list">
-                        <div th:each="country, iter : ${rankedCountries}" th:if="${iter.index < 10}"
+                        <div th:each="rs, iter : ${riskScores}" th:if="${iter.index < 10}"
                              class="risk-card"
-                             th:data-iso3="${country.iso3}"
-                             th:data-country="${country.name}"
-                             th:classappend="${country.alertLevel == 'CRITICAL' ? 'critical' : (country.alertLevel == 'HIGH' ? 'high' : 'medium')}"
+                             th:data-iso3="${rs.iso3}"
+                             th:data-country="${rs.countryName}"
+                             th:classappend="${rs.riskClass}"
                              style="cursor: pointer;"
                              title="Click for details">
                             <div class="risk-card-rank" th:text="${iter.index + 1}">1</div>
                             <div class="risk-card-content">
                                 <div class="risk-card-header">
-                                    <span class="risk-card-country" th:text="${country.name}">Country</span>
+                                    <span class="risk-card-country" th:text="${rs.countryName}">Country</span>
                                     <span class="risk-card-level"
-                                          th:classappend="${country.alertLevel == 'CRITICAL' ? 'critical' : (country.alertLevel == 'HIGH' ? 'high' : 'medium')}"
-                                          th:text="${country.alertLevel}">CRITICAL</span>
+                                          th:classappend="${rs.riskClass}"
+                                          th:text="${rs.riskLevel}">CRITICAL</span>
                                 </div>
                                 <div class="risk-card-metric">
-                                    <span class="risk-card-value" th:text="${#numbers.formatDecimal(country.peoplePhase3to5 / 1000000.0, 1, 1)}">0</span>
-                                    <span class="risk-card-unit">M people</span>
+                                    <span class="risk-card-value" th:text="${rs.score}">0</span>
+                                    <span class="risk-card-unit">/100</span>
+                                    <span th:if="${rs.scoreDelta != null && rs.scoreDelta != 0}"
+                                          class="risk-card-trend"
+                                          th:classappend="${rs.scoreDelta > 0 ? 'rising' : 'falling'}"
+                                          th:text="${rs.trendIcon + ' ' + (rs.scoreDelta > 0 ? '+' : '') + rs.scoreDelta}">→ 0</span>
                                 </div>
-                                <div class="risk-card-tag">
-                                    <span th:text="${country.percentPhase3to5 != null ? #numbers.formatDecimal(country.percentPhase3to5, 0, 0) + '% in crisis' : 'Food insecurity'}">Food</span>
+                                <div class="risk-card-drivers">
+                                    <span class="rc-driver rc-driver-food" th:title="'Food ' + rs.foodSecurityScore">
+                                        <span class="rc-driver-bar" th:style="'width:' + rs.foodSecurityScore + '%'"></span>
+                                    </span>
+                                    <span class="rc-driver rc-driver-climate" th:title="'Climate ' + rs.climateScore">
+                                        <span class="rc-driver-bar" th:style="'width:' + rs.climateScore + '%'"></span>
+                                    </span>
+                                    <span class="rc-driver rc-driver-conflict" th:title="'Conflict ' + rs.conflictScore">
+                                        <span class="rc-driver-bar" th:style="'width:' + rs.conflictScore + '%'"></span>
+                                    </span>
+                                    <span class="rc-driver rc-driver-econ" th:title="'Economic ' + rs.economicScore">
+                                        <span class="rc-driver-bar" th:style="'width:' + rs.economicScore + '%'"></span>
+                                    </span>
+                                </div>
+                                <div class="risk-card-tag" th:if="${rs.drivers != null && !rs.drivers.isEmpty()}">
+                                    <span th:text="${rs.drivers[0]}">CLIMATE</span>
                                 </div>
                             </div>
                         </div>
@@ -249,21 +247,29 @@
                         <thead>
                             <tr>
                                 <th>Country</th>
-                                <th>% Crisis</th>
-                                <th>People</th>
-                                <th>FCS Poor</th>
-                                <th>rCSI Crisis</th>
+                                <th>Score</th>
+                                <th>Level</th>
+                                <th>Food</th>
+                                <th>Climate</th>
+                                <th>Conflict</th>
+                                <th>Econ</th>
+                                <th>Trend</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <tr th:each="fs : ${foodSecurity}"
-                                th:class="${fs.fcsPrevalence != null && fs.fcsPrevalence * 100 >= 30 ? 'critical-row' : (fs.fcsPrevalence != null && fs.fcsPrevalence * 100 >= 15 ? 'high-row' : '')}">
-                                <td th:text="${fs.name}">Country</td>
-                                <td class="value-cell" th:classappend="${fs.fcsPrevalence != null && fs.fcsPrevalence * 100 >= 30 ? 'text-critical' : ''}"
-                                    th:text="${fs.fcsPrevalence != null ? #numbers.formatDecimal(fs.fcsPrevalence * 100, 1, 1) + '%' : '-'}">-</td>
-                                <td class="value-cell" th:text="${fs.fcsPeople != null ? #numbers.formatInteger(fs.fcsPeople / 1000, 1, 'COMMA') + 'K' : '-'}">-</td>
-                                <td class="value-cell" th:text="${fs.fcsPeople != null ? #numbers.formatInteger(fs.fcsPeople / 1000, 1, 'COMMA') + 'K' : '-'}">-</td>
-                                <td class="value-cell" th:text="${fs.rcsiPeople != null ? #numbers.formatInteger(fs.rcsiPeople / 1000, 1, 'COMMA') + 'K' : '-'}">-</td>
+                            <tr th:each="rs : ${riskScores}"
+                                th:class="${rs.score >= 86 ? 'critical-row' : (rs.score >= 71 ? 'high-row' : '')}">
+                                <td th:text="${rs.countryName}">Country</td>
+                                <td class="value-cell" th:classappend="${rs.score >= 86 ? 'text-critical' : (rs.score >= 71 ? 'text-high' : '')}"
+                                    th:text="${rs.score}">0</td>
+                                <td class="value-cell">
+                                    <span class="badge-sm" th:classappend="${rs.riskClass}" th:text="${rs.riskLevel}">STABLE</span>
+                                </td>
+                                <td class="value-cell" th:text="${rs.foodSecurityScore}">0</td>
+                                <td class="value-cell" th:text="${rs.climateScore}">0</td>
+                                <td class="value-cell" th:text="${rs.conflictScore}">0</td>
+                                <td class="value-cell" th:text="${rs.economicScore}">0</td>
+                                <td class="value-cell" th:text="${rs.trendIcon != null ? rs.trendIcon + ' ' + (rs.scoreDelta != null ? rs.scoreDelta : '') : '—'}">—</td>
                             </tr>
                         </tbody>
                     </table>
@@ -302,129 +308,98 @@
         <!-- ==================== SECTION: EARLY WARNING ==================== -->
         <section class="content-section" data-section="early-warning">
 
-            <!-- Prediction Summary Hero -->
+            <!-- Hero: Prediction Summary with clickable counters -->
             <div class="ew-hero">
                 <div class="ew-hero-title">
                     <h2>Predictive Early Warning</h2>
                     <span class="badge critical">30-day horizon</span>
                 </div>
                 <div class="ew-hero-stats" id="ew-hero-stats">
-                    <div class="ew-stat">
-                        <span class="ew-stat-value" id="ew-critical-count">2</span>
+                    <div class="ew-stat ew-stat-clickable" data-level="CRITICAL">
+                        <span class="ew-stat-value" id="ew-critical-count">0</span>
                         <span class="ew-stat-label">CRITICAL</span>
                     </div>
-                    <div class="ew-stat">
-                        <span class="ew-stat-value" id="ew-alert-count">3</span>
+                    <div class="ew-stat ew-stat-clickable" data-level="ALERT">
+                        <span class="ew-stat-value" id="ew-alert-count">0</span>
                         <span class="ew-stat-label">ALERT</span>
                     </div>
-                    <div class="ew-stat">
-                        <span class="ew-stat-value" id="ew-warning-count">8</span>
+                    <div class="ew-stat ew-stat-clickable" data-level="WARNING">
+                        <span class="ew-stat-value" id="ew-warning-count">0</span>
                         <span class="ew-stat-label">WARNING</span>
                     </div>
                 </div>
             </div>
 
-            <!-- CURRENT FOCUS: Top Risk + Deep Analysis (moved from Overview) -->
-            <div class="ew-focus-section">
-                <div class="ew-section-header">
-                    <h3>Current Focus</h3>
-                    <span class="badge high">Priority Watch</span>
-                </div>
-                <div class="brief-grid">
-                    <!-- Left: Top Deterioration -->
-                    <div class="focus-now-card" id="focus-now-card">
-                        <div class="focus-loading">Loading top risk...</div>
-                    </div>
-
-                    <!-- Right: Deep Analysis -->
-                    <div class="deep-analysis-card">
-                        <div class="deep-analysis-trigger">
-                            <button id="deep-analysis-btn" class="deep-analysis-btn">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
-                                    <circle cx="7.5" cy="14.5" r="1.5"/>
-                                    <circle cx="16.5" cy="14.5" r="1.5"/>
-                                </svg>
-                                <span>Deep Analysis</span>
-                            </button>
-                            <span class="deep-analysis-hint">Claude contextual scoring</span>
-                        </div>
-                        <!-- Results appear here when loaded -->
-                        <div id="deep-analysis-results" class="deep-analysis-results hidden"></div>
-                    </div>
-                </div>
-                <!-- What Changed (dynamic bullets) -->
-                <div class="brief-bullets" id="brief-bullets">
-                    <div class="brief-bullet">Analyzing changes...</div>
-                </div>
-            </div>
-
-            <!-- FORECAST CARDS: Next Deterioration -->
-            <div class="ew-forecast-section">
-                <div class="ew-forecast-header">
-                    <h3>Next Deterioration</h3>
-                    <span class="text-muted">30–90 day forecast</span>
-                </div>
-                <div id="ew-forecast-cards" class="ew-forecast-cards">
-                    <div class="loading-placeholder">Analyzing trajectories...</div>
-                </div>
-            </div>
-
-            <!-- Inline Legend Strip -->
-            <div class="ew-legend-strip">
-                <span class="ew-legend-item"><span class="badge critical">86-100</span> Critical</span>
-                <span class="ew-legend-item"><span class="badge high">71-85</span> Alert</span>
-                <span class="ew-legend-item"><span class="badge medium">51-70</span> Warning</span>
-                <span class="ew-legend-item"><span class="badge">31-50</span> Watch</span>
-                <span class="ew-legend-item"><span class="badge stable">0-30</span> Stable</span>
-                <span class="ew-legend-info">2-of-3 Rule: triggers when 2+ drivers elevated</span>
-            </div>
-
-            <!-- Risk Scores Table (Full Width) -->
-            <div class="ew-scores-panel">
-                <div class="ew-scores-header">
-                    <h3>All Risk Scores</h3>
-                    <span class="text-muted">Weights: Food 30% | Climate 25% | Conflict 25% | Economic 20%</span>
-                </div>
-                <div id="risk-scores-container" class="ew-scores-table">
-                    <div class="loading-placeholder">Calculating risk scores...</div>
-                </div>
-            </div>
-
-            <!-- Regional Convergence (Compact) -->
-            <div class="ew-section">
-                <div class="ew-section-header">
-                    <h3>Cluster Risk</h3>
-                    <span class="badge medium">Synchronized Deterioration</span>
-                </div>
+            <!-- ZONA 1: NOW — Cluster banner (conditional) + IPC Extreme Conditions -->
+            <div id="ew-cluster-banner" class="ew-cluster-banner" style="display: none;">
                 <div id="cluster-alerts-full" class="ew-clusters"></div>
             </div>
 
-            <!-- Current Extreme Conditions (was IPC Alerts) -->
-            <div class="ew-section">
-                <div class="ew-section-header">
-                    <h3>Current Extreme Conditions</h3>
-                    <div class="ew-ipc-legend">
-                        <span class="badge famine">P5 Famine</span>
-                        <span class="badge critical">P4 Emergency</span>
-                        <span class="badge high">P3 Crisis</span>
+            <div class="ew-zona" id="ew-zona-now">
+                <div class="ew-zona-label">Current Crises</div>
+                <div class="ew-ipc-section">
+                    <div class="ew-section-header">
+                        <h3>Extreme Conditions</h3>
+                        <div class="ew-ipc-legend">
+                            <span class="badge famine">P5</span>
+                            <span class="badge critical">P4</span>
+                            <span class="badge high">P3</span>
+                        </div>
                     </div>
-                </div>
-                <div id="ipc-alerts-container" class="ew-ipc-table">
-                    <div class="loading-placeholder">Loading food security data...</div>
+                    <div id="ipc-alerts-container" class="ew-ipc-table">
+                        <div class="loading-placeholder">Loading food security data...</div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Top Risk Spotlight -->
-            <div class="ew-section">
-                <div class="ew-section-header">
-                    <h3>Top Risk Spotlight</h3>
-                    <span class="badge">Auto-updated</span>
+            <!-- ZONA 2: FORECAST — Split panel: country list + detail -->
+            <div class="ew-zona">
+                <div class="ew-zona-label">Deterioration Forecast</div>
+                <div class="ew-split-panel">
+                    <div class="ew-split-left">
+                        <div class="ew-split-header">
+                            <h3>Risk Scores</h3>
+                            <div class="ew-list-controls">
+                                <button class="ew-filter-toggle active" id="ew-filter-warning" data-filter="warning">WARNING+</button>
+                                <button class="ew-filter-toggle" id="ew-filter-all" data-filter="all">All</button>
+                            </div>
+                        </div>
+                        <div id="ew-country-list" class="ew-country-list">
+                            <div class="loading-placeholder">Loading risk scores...</div>
+                        </div>
+                    </div>
+                    <div class="ew-split-right">
+                        <div id="ew-country-detail" class="ew-country-detail">
+                            <div class="ew-detail-placeholder">Select a country to view details</div>
+                        </div>
+                    </div>
                 </div>
-                <div id="intelligence-signal-content" class="ew-spotlight-content">
-                    <div class="loading-placeholder">Loading intelligence data...</div>
-                </div>
+                <!-- Hidden container for hero count updates -->
+                <div id="risk-scores-container" style="display:none;"></div>
             </div>
+
+            <!-- Active Situations (collapsible, auto-open if CRITICAL) -->
+            <details class="ew-collapsible" id="ew-situations-details">
+                <summary class="ew-collapsible-summary">
+                    <h3>Active Situations</h3>
+                    <span class="badge" id="ew-situations-count">Loading...</span>
+                </summary>
+                <div class="ew-collapsible-content">
+                    <div class="situation-filter-strip" id="ew-situation-filter-strip" style="margin-bottom: var(--space-sm);">
+                        <button class="situation-filter-chip active" data-filter="critical,high">
+                            <span class="filter-label">Critical + High</span>
+                            <span class="filter-count" id="ew-count-critical-high">-</span>
+                        </button>
+                        <button class="situation-filter-chip" data-filter="all">
+                            <span class="filter-label">All</span>
+                            <span class="filter-count" id="ew-count-all">-</span>
+                        </button>
+                    </div>
+                    <div class="situations-list" id="ew-situations-list">
+                        <div class="loading-placeholder">Detecting active situations...</div>
+                    </div>
+                </div>
+            </details>
 
         </section>
 
@@ -436,59 +411,40 @@
                 <span class="badge">Live</span>
             </div>
 
-            <p class="section-description">Humanitarian reports and media coverage. Filter by region or topic.</p>
+            <p class="section-description">Multi-source news from humanitarian agencies, media outlets and conflict monitoring.</p>
 
             <!-- Filters -->
-            <div class="news-filters" style="display: flex; gap: var(--space-md); margin-bottom: var(--space-lg); flex-wrap: wrap; align-items: center;">
-                <select id="news-region-filter" class="form-select" style="min-width: 150px;">
-                    <option value="">All Regions</option>
-                    <option value="africa">Africa</option>
-                    <option value="lac">Latin America</option>
-                    <option value="mena">Middle East</option>
-                    <option value="asia">Asia Pacific</option>
-                    <option value="europe">Europe</option>
-                    <option value="north america">North America</option>
-                </select>
-                <select id="news-topic-filter" class="form-select" style="min-width: 150px;">
-                    <option value="">All Topics</option>
-                    <option value="conflict">Conflict & Violence</option>
-                    <option value="migration">Migration & Displacement</option>
-                    <option value="food">Food Security</option>
-                    <option value="climate">Climate & Disasters</option>
-                    <option value="health">Health & Outbreaks</option>
-                    <option value="humanitarian">Humanitarian Response</option>
-                </select>
-                <button id="news-refresh-btn" class="btn btn-secondary" style="padding: 8px 16px;">
-                    Refresh
-                </button>
+            <div class="news-filters-bar">
+                <div class="news-source-tabs" id="news-source-tabs">
+                    <button class="news-source-tab active" data-source="all">All</button>
+                    <button class="news-source-tab" data-source="RELIEFWEB">ReliefWeb</button>
+                    <button class="news-source-tab" data-source="RSS">Media</button>
+                </div>
+                <div class="news-dropdowns">
+                    <select id="news-region-filter" class="form-select">
+                        <option value="">All Regions</option>
+                        <option value="africa">Africa</option>
+                        <option value="lac">Latin America</option>
+                        <option value="mena">Middle East</option>
+                        <option value="asia">Asia Pacific</option>
+                        <option value="europe">Europe</option>
+                        <option value="north america">North America</option>
+                    </select>
+                    <select id="news-topic-filter" class="form-select">
+                        <option value="">All Topics</option>
+                        <option value="conflict">Conflict</option>
+                        <option value="migration">Migration</option>
+                        <option value="food">Food Security</option>
+                        <option value="climate">Climate</option>
+                        <option value="health">Health</option>
+                        <option value="humanitarian">Humanitarian</option>
+                    </select>
+                </div>
             </div>
 
-            <!-- Two-Column News Feed Grid -->
-            <div class="news-feed-two-col">
-                <!-- Column 1: ReliefWeb -->
-                <div class="news-col">
-                    <div class="news-col-header">
-                        <h3>ReliefWeb</h3>
-                        <span class="news-col-badge reliefweb">Humanitarian</span>
-                    </div>
-                    <div class="news-items-list" id="news-col-reliefweb">
-                        <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-                            Loading...
-                        </div>
-                    </div>
-                </div>
-                <!-- Column 2: GDELT + RSS -->
-                <div class="news-col">
-                    <div class="news-col-header">
-                        <h3>Media & RSS</h3>
-                        <span class="news-col-badge media">GDELT + News</span>
-                    </div>
-                    <div class="news-items-list" id="news-col-media">
-                        <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-                            Loading...
-                        </div>
-                    </div>
-                </div>
+            <!-- News Cards Grid -->
+            <div class="news-cards-grid" id="news-cards-grid">
+                <div class="news-empty-state">Loading news...</div>
             </div>
 
         </section>
@@ -614,35 +570,7 @@
 
                 <!-- Economy Tab -->
                 <div id="tab-driver-economy" class="tab-pane">
-                    <div class="grid grid-cols-2" style="gap: var(--space-lg);">
-                        <div class="glass-card">
-                            <div class="card-header">
-                                <h3>High Inflation</h3>
-                                <span class="badge critical">&gt;15%</span>
-                            </div>
-                            <div class="card-body no-padding">
-                                <div class="data-table-container" style="max-height: 300px;">
-                                    <table class="data-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Country</th>
-                                                <th>Rate</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <tr th:each="indicator : ${highInflation}"
-                                                th:class="${indicator.value >= 100 ? 'critical-row' : (indicator.value >= 25 ? 'high-row' : '')}">
-                                                <td th:text="${indicator.countryName}">Country</td>
-                                                <td class="value-cell text-critical" th:text="${#numbers.formatDecimal(indicator.value, 1, 1)} + '%'">0%</td>
-                                            </tr>
-                                            <tr th:if="${#lists.isEmpty(highInflation)}">
-                                                <td colspan="2" class="text-muted text-center">No data</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
+                    <div style="max-width: 800px;">
                         <div class="glass-card">
                             <div class="card-header">
                                 <h3>Currency Devaluation</h3>
@@ -813,65 +741,89 @@
 
             <div class="section-header-bar">
                 <h2>Intelligence</h2>
-                <span class="badge">Analysis Mode</span>
+                <span class="badge" style="background: var(--accent);">AI Analysis</span>
             </div>
 
-            <p class="section-description">Generate topic-based intelligence reports from GDELT media monitoring and ReliefWeb operational reports.</p>
+            <p class="section-description">AI-powered analysis with citations from humanitarian agencies, media outlets and conflict monitoring sources.</p>
 
-            <!-- Topic Report Generator -->
-            <div class="topic-report-generator glass-card">
+            <!-- Ask AI (Perplexity-style Q&A) — PRIMARY FEATURE -->
+            <div class="glass-card qa-card">
                 <div class="card-header">
-                    <h3>Topic Report Generator</h3>
-                    <span class="badge" id="report-status">Ready</span>
+                    <h3>Ask AI</h3>
+                    <span class="badge" style="background: var(--accent);">Powered by Claude</span>
                 </div>
                 <div class="card-body">
-                    <!-- Topic Selection -->
-                    <div class="report-controls">
-                        <div class="control-group">
-                            <label class="control-label">Topic</label>
-                            <div class="topic-chips" id="report-topic-chips">
-                                <button class="topic-chip active" data-topic="migration">Migration</button>
-                                <button class="topic-chip" data-topic="food-crisis">Food Crisis</button>
-                                <button class="topic-chip" data-topic="conflict">Conflict</button>
-                                <button class="topic-chip" data-topic="political">Political</button>
-                                <button class="topic-chip" data-topic="climate">Climate</button>
-                                <button class="topic-chip" data-topic="health">Health</button>
-                                <button class="topic-chip" data-topic="economic">Economic</button>
-                            </div>
-                        </div>
-                        <div class="control-row">
+                    <div class="qa-input-row">
+                        <input type="text" id="qa-input" class="qa-input"
+                               placeholder="Ask anything about current crises..."
+                               maxlength="500" autocomplete="off">
+                        <button id="qa-submit" class="qa-submit-btn" disabled>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="qa-suggestions" class="qa-suggestions"></div>
+                    <div id="qa-response" class="qa-response hidden"></div>
+                </div>
+            </div>
+
+            <!-- Topic Report Generator (collapsible) -->
+            <details class="topic-report-details" style="margin-top: var(--space-lg);">
+                <summary class="topic-report-summary glass-card">
+                    <div class="card-header" style="cursor: pointer;">
+                        <h3>Topic Report Generator</h3>
+                        <span class="badge" id="report-status">Ready</span>
+                    </div>
+                </summary>
+                <div class="topic-report-generator glass-card" style="border-top: none; border-radius: 0 0 var(--radius-lg) var(--radius-lg);">
+                    <div class="card-body">
+                        <div class="report-controls">
                             <div class="control-group">
-                                <label class="control-label">Region</label>
-                                <select id="report-region-select" class="form-select">
-                                    <option value="">All Regions</option>
-                                    <option value="lac">LAC (Latin America & Caribbean)</option>
-                                    <option value="mena">MENA (Middle East & North Africa)</option>
-                                    <option value="east-africa">East Africa</option>
-                                    <option value="west-africa">West Africa</option>
-                                    <option value="asia">Asia Pacific</option>
-                                    <option value="europe">Europe</option>
-                                </select>
+                                <label class="control-label">Topic</label>
+                                <div class="topic-chips" id="report-topic-chips">
+                                    <button class="topic-chip active" data-topic="migration">Migration</button>
+                                    <button class="topic-chip" data-topic="food-crisis">Food Crisis</button>
+                                    <button class="topic-chip" data-topic="conflict">Conflict</button>
+                                    <button class="topic-chip" data-topic="political">Political</button>
+                                    <button class="topic-chip" data-topic="climate">Climate</button>
+                                    <button class="topic-chip" data-topic="health">Health</button>
+                                    <button class="topic-chip" data-topic="economic">Economic</button>
+                                </div>
                             </div>
-                            <div class="control-group">
-                                <label class="control-label">Period</label>
-                                <select id="report-period-select" class="form-select">
-                                    <option value="7">Last 7 days</option>
-                                    <option value="14">Last 14 days</option>
-                                    <option value="30">Last 30 days</option>
-                                </select>
+                            <div class="control-row">
+                                <div class="control-group">
+                                    <label class="control-label">Region</label>
+                                    <select id="report-region-select" class="form-select">
+                                        <option value="">All Regions</option>
+                                        <option value="lac">LAC (Latin America & Caribbean)</option>
+                                        <option value="mena">MENA (Middle East & North Africa)</option>
+                                        <option value="east-africa">East Africa</option>
+                                        <option value="west-africa">West Africa</option>
+                                        <option value="asia">Asia Pacific</option>
+                                        <option value="europe">Europe</option>
+                                    </select>
+                                </div>
+                                <div class="control-group">
+                                    <label class="control-label">Period</label>
+                                    <select id="report-period-select" class="form-select">
+                                        <option value="7">Last 7 days</option>
+                                        <option value="14">Last 14 days</option>
+                                        <option value="30">Last 30 days</option>
+                                    </select>
+                                </div>
+                                <button class="btn-generate-report" id="btn-generate-report">
+                                    <span class="btn-text">Generate Report</span>
+                                    <span class="btn-loading" style="display:none;">Generating...</span>
+                                </button>
                             </div>
-                            <button class="btn-generate-report" id="btn-generate-report">
-                                <span class="btn-text">Generate Report</span>
-                                <span class="btn-loading" style="display:none;">Generating...</span>
-                            </button>
                         </div>
                     </div>
                 </div>
-            </div>
+            </details>
 
             <!-- Generated Report Output -->
-            <div id="topic-report-output" class="topic-report-output glass-card" style="display: none;">
-                <!-- Report Header with Trend -->
+            <div id="topic-report-output" class="topic-report-output glass-card" style="display: none; margin-top: var(--space-md);">
                 <div class="report-header">
                     <div class="report-title-row">
                         <h3 id="report-title">Migration Report - LAC</h3>
@@ -892,24 +844,14 @@
                         </button>
                     </div>
                 </div>
-
-                <!-- Regional Stats -->
-                <div class="report-stats" id="report-stats">
-                    <!-- Populated by JS: IDPs, Refugees totals -->
-                </div>
-
-                <!-- Key Developments (AI-generated) -->
+                <div class="report-stats" id="report-stats"></div>
                 <div class="report-section">
                     <h4 class="report-section-title">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
                         Key Developments
                     </h4>
-                    <ul class="report-developments" id="report-developments">
-                        <!-- Populated by JS -->
-                    </ul>
+                    <ul class="report-developments" id="report-developments"></ul>
                 </div>
-
-                <!-- Country Matrix -->
                 <div class="report-section">
                     <h4 class="report-section-title">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
@@ -917,75 +859,18 @@
                     </h4>
                     <div class="country-matrix-wrapper">
                         <table class="country-matrix" id="report-country-matrix">
-                            <thead>
-                                <tr>
-                                    <th>Country</th>
-                                    <th>Signal</th>
-                                    <th>Stock</th>
-                                    <th>Flow Δ</th>
-                                    <th>Trend</th>
-                                    <th>Conf.</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <!-- Populated by JS -->
-                            </tbody>
+                            <thead><tr><th>Country</th><th>Signal</th><th>Stock</th><th>Flow Δ</th><th>Trend</th><th>Conf.</th></tr></thead>
+                            <tbody></tbody>
                         </table>
                     </div>
                 </div>
-
-                <!-- Sources -->
                 <div class="report-section collapsible">
                     <h4 class="report-section-title section-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
                         Sources
                         <span class="toggle-icon">▼</span>
                     </h4>
-                    <div class="report-sources" id="report-sources">
-                        <!-- Populated by JS -->
-                    </div>
-                </div>
-            </div>
-
-            <!-- Daily Intelligence Briefing -->
-            <div class="glass-card daily-briefing-card" style="margin-top: var(--space-lg);">
-                <div class="card-header">
-                    <h3>Daily Intelligence Briefing</h3>
-                    <span class="badge" id="briefing-date">Loading...</span>
-                </div>
-                <div class="card-body">
-                    <div class="briefing-headlines" id="briefing-top-headlines">
-                        <div class="loading-placeholder" style="padding: var(--space-md); text-align: center; color: var(--text-secondary);">
-                            Loading briefing...
-                        </div>
-                    </div>
-                    <div class="briefing-regions">
-                        <div class="region-tabs" id="briefing-region-tabs">
-                            <button class="region-tab active" data-region="all">All</button>
-                            <button class="region-tab" data-region="LAC">Americas</button>
-                            <button class="region-tab" data-region="MENA">Middle East</button>
-                            <button class="region-tab" data-region="AFRICA_EAST">East Africa</button>
-                            <button class="region-tab" data-region="AFRICA_WEST">West Africa</button>
-                            <button class="region-tab" data-region="ASIA">Asia</button>
-                            <button class="region-tab" data-region="EUROPE">Europe</button>
-                        </div>
-                        <div class="region-content" id="briefing-region-content">
-                            <!-- Populated by JS -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ReliefWeb Latest Reports -->
-            <div class="glass-card" style="margin-top: var(--space-lg);">
-                <div class="card-header">
-                    <h3>ReliefWeb: Official Reports</h3>
-                    <span class="badge" style="background: rgba(100, 210, 255, 0.15); color: var(--accent-teal);">UN/NGO Sources</span>
-                </div>
-                <div class="card-body" id="reliefweb-reports-list">
-                    <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-                        Loading humanitarian reports...
-                    </div>
+                    <div class="report-sources" id="report-sources"></div>
                 </div>
             </div>
 
@@ -998,21 +883,6 @@
                 <div class="card-body" id="who-outbreaks-container">
                     <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
                         Loading WHO data...
-                    </div>
-                </div>
-            </div>
-
-            <!-- GDELT Media Coverage -->
-            <div class="glass-card" style="margin-top: var(--space-lg);">
-                <div class="card-header">
-                    <h3>GDELT Media Coverage</h3>
-                    <span class="badge">Real-time</span>
-                </div>
-                <div class="card-body no-padding">
-                    <div id="gdelt-media-container" class="data-table-container" style="max-height: 400px;">
-                        <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-                            Loading media data...
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1047,52 +917,60 @@
             <div id="country-selector" class="ai-country-selector">
                 <select id="country-select">
                     <option value="">All countries (global)</option>
-                    <!-- Africa -->
-                    <option value="BFA">Burkina Faso</option>
-                    <option value="BDI">Burundi</option>
-                    <option value="CMR">Cameroon</option>
-                    <option value="CAF">Central African Republic</option>
-                    <option value="TCD">Chad</option>
-                    <option value="COD">DR Congo</option>
-                    <option value="ETH">Ethiopia</option>
-                    <option value="KEN">Kenya</option>
-                    <option value="LBY">Libya</option>
-                    <option value="MLI">Mali</option>
-                    <option value="MOZ">Mozambique</option>
-                    <option value="NER">Niger</option>
-                    <option value="NGA">Nigeria</option>
-                    <option value="RWA">Rwanda</option>
-                    <option value="SOM">Somalia</option>
-                    <option value="SSD">South Sudan</option>
-                    <option value="SDN">Sudan</option>
-                    <option value="UGA">Uganda</option>
-                    <!-- MENA -->
-                    <option value="IRN">Iran</option>
-                    <option value="IRQ">Iraq</option>
-                    <option value="LBN">Lebanon</option>
-                    <option value="PSE">Palestine</option>
-                    <option value="SYR">Syria</option>
-                    <option value="YEM">Yemen</option>
-                    <!-- Asia -->
-                    <option value="AFG">Afghanistan</option>
-                    <option value="BGD">Bangladesh</option>
-                    <option value="MMR">Myanmar</option>
-                    <option value="PAK">Pakistan</option>
-                    <!-- LAC -->
-                    <option value="COL">Colombia</option>
-                    <option value="CUB">Cuba</option>
-                    <option value="ECU">Ecuador</option>
-                    <option value="SLV">El Salvador</option>
-                    <option value="GTM">Guatemala</option>
-                    <option value="HTI">Haiti</option>
-                    <option value="HND">Honduras</option>
-                    <option value="MEX">Mexico</option>
-                    <option value="NIC">Nicaragua</option>
-                    <option value="PAN">Panama</option>
-                    <option value="PER">Peru</option>
-                    <option value="VEN">Venezuela</option>
-                    <!-- Europe -->
-                    <option value="UKR">Ukraine</option>
+                    <optgroup label="Africa">
+                        <option value="BFA">Burkina Faso</option>
+                        <option value="BDI">Burundi</option>
+                        <option value="CMR">Cameroon</option>
+                        <option value="CAF">Central African Republic</option>
+                        <option value="TCD">Chad</option>
+                        <option value="COD">DR Congo</option>
+                        <option value="ETH">Ethiopia</option>
+                        <option value="KEN">Kenya</option>
+                        <option value="LBY">Libya</option>
+                        <option value="MLI">Mali</option>
+                        <option value="MOZ">Mozambique</option>
+                        <option value="NER">Niger</option>
+                        <option value="NGA">Nigeria</option>
+                        <option value="RWA">Rwanda</option>
+                        <option value="SOM">Somalia</option>
+                        <option value="SSD">South Sudan</option>
+                        <option value="SDN">Sudan</option>
+                        <option value="UGA">Uganda</option>
+                    </optgroup>
+                    <optgroup label="Middle East &amp; North Africa">
+                        <option value="IRN">Iran</option>
+                        <option value="IRQ">Iraq</option>
+                        <option value="ISR">Israel</option>
+                        <option value="LBN">Lebanon</option>
+                        <option value="PSE">Palestine</option>
+                        <option value="SYR">Syria</option>
+                        <option value="YEM">Yemen</option>
+                    </optgroup>
+                    <optgroup label="Asia Pacific">
+                        <option value="AFG">Afghanistan</option>
+                        <option value="BGD">Bangladesh</option>
+                        <option value="MMR">Myanmar</option>
+                        <option value="PAK">Pakistan</option>
+                        <option value="PHL">Philippines</option>
+                        <option value="VNM">Vietnam</option>
+                    </optgroup>
+                    <optgroup label="Latin America &amp; Caribbean">
+                        <option value="COL">Colombia</option>
+                        <option value="CUB">Cuba</option>
+                        <option value="ECU">Ecuador</option>
+                        <option value="SLV">El Salvador</option>
+                        <option value="GTM">Guatemala</option>
+                        <option value="HTI">Haiti</option>
+                        <option value="HND">Honduras</option>
+                        <option value="MEX">Mexico</option>
+                        <option value="NIC">Nicaragua</option>
+                        <option value="PAN">Panama</option>
+                        <option value="PER">Peru</option>
+                        <option value="VEN">Venezuela</option>
+                    </optgroup>
+                    <optgroup label="Europe">
+                        <option value="UKR">Ukraine</option>
+                    </optgroup>
                 </select>
             </div>
 
@@ -1143,17 +1021,16 @@
     </div>
 </div>
 
-<!-- Footer (compact) -->
+<!-- Footer -->
 <footer class="app-footer">
-    <div class="footer-sources">
-        <span class="footer-source">HungerMap LIVE (WFP)</span>
-        <span class="footer-source">FEWS NET</span>
-        <span class="footer-source">Open-Meteo</span>
-        <span class="footer-source">GDELT Project</span>
-        <span class="footer-source">World Bank</span>
-        <span class="footer-source">UNHCR</span>
-        <span class="footer-source">IOM DTM</span>
-        <span class="footer-source">ReliefWeb</span>
+    <div class="footer-main">
+        <div class="footer-contact">
+            <a href="mailto:admin@notamy.app" class="footer-email">admin@notamy.app</a>
+            <span class="footer-tagline">Global Risk Intelligence Platform &mdash; v2.1</span>
+        </div>
+        <div class="footer-legal">
+            <span>&copy; 2026 Notamy Ltd. All rights reserved.</span>
+        </div>
     </div>
 </footer>
 
@@ -1161,7 +1038,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <!-- App Scripts -->
-<script th:src="@{/js/app.js(v=226)}"></script>
+<script th:src="@{/js/app.js(v=243)}"></script>
 <script th:src="@{/js/map.js(v=10)}"></script>
 
 </body>

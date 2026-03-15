@@ -35,8 +35,15 @@ public class WHODiseaseOutbreakService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public WHODiseaseOutbreakService() {
+        // WHO API returns large HTTP headers (cookies/tracking) — increase Netty limit
+        reactor.netty.http.client.HttpClient httpClient = reactor.netty.http.client.HttpClient.create()
+                .responseTimeout(Duration.ofSeconds(15))
+                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 10000)
+                .httpResponseDecoder(spec -> spec.maxHeaderSize(16384));
+
         this.webClient = WebClient.builder()
                 .baseUrl(BASE_URL)
+                .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(httpClient))
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(5 * 1024 * 1024))
                 .build();
     }
@@ -49,8 +56,11 @@ public class WHODiseaseOutbreakService {
         log.info("Fetching WHO Disease Outbreak News...");
         try {
             String response = webClient.get()
-                    .uri("?$top=30&$orderby=PublicationDate%20desc" +
-                         "&$select=Id,DonId,Title,PublicationDate,Summary")
+                    .uri(uriBuilder -> uriBuilder
+                            .queryParam("$top", 30)
+                            .queryParam("$orderby", "PublicationDate desc")
+                            .queryParam("$select", "Id,DonId,Title,PublicationDate,Summary")
+                            .build())
                     .retrieve()
                     .bodyToMono(String.class)
                     .timeout(Duration.ofSeconds(15))

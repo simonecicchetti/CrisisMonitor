@@ -69,6 +69,45 @@ public class RegionService {
     }
 
     /**
+     * Find the most critical driver across top countries in a region.
+     * Uses severity hierarchy: Conflict > Food Security > Economic > Climate.
+     * Looks at top hotspots first, then falls back to all high-scoring countries.
+     */
+    private String findMostCriticalDriver(List<RiskScore> topCountries, List<RiskScore> allRegionScores) {
+        // Priority order — most critical first
+        List<String> hierarchy = List.of("Conflict", "Food Security", "Economic", "Climate");
+
+        // Collect all drivers from top hotspot countries (already sorted by score, limited to 2)
+        Set<String> topDrivers = new java.util.HashSet<>();
+        for (var country : topCountries) {
+            if (country.getDrivers() != null) {
+                topDrivers.addAll(country.getDrivers());
+            }
+        }
+
+        // Also include drivers from any country scoring >= 50 in the region
+        for (var country : allRegionScores) {
+            if (country.getScore() >= 50 && country.getDrivers() != null) {
+                topDrivers.addAll(country.getDrivers());
+            }
+        }
+
+        // Return the highest-priority driver found
+        for (String driver : hierarchy) {
+            if (topDrivers.contains(driver)) {
+                return driver;
+            }
+        }
+
+        // Fallback: first driver from top country
+        if (!topCountries.isEmpty() && topCountries.get(0).getDrivers() != null
+                && !topCountries.get(0).getDrivers().isEmpty()) {
+            return topCountries.get(0).getDrivers().get(0);
+        }
+        return null;
+    }
+
+    /**
      * Get Regional Pulse data for Overview
      */
     @Cacheable(value = "regionalPulseV2", unless = "#result == null")
@@ -122,16 +161,9 @@ public class RegionService {
                 card.setHotspot1Score(top.getScore());
                 card.setHotspot1Level(top.getRiskLevel());
 
-                // Calculate dominant driver across ALL countries in region (not just top)
-                Map<String, Long> driverCounts = scores.stream()
-                    .filter(s -> s.getDrivers() != null)
-                    .flatMap(s -> s.getDrivers().stream())
-                    .collect(Collectors.groupingBy(d -> d, Collectors.counting()));
-
-                String dominantDriver = driverCounts.entrySet().stream()
-                    .max(Map.Entry.comparingByValue())
-                    .map(Map.Entry::getKey)
-                    .orElse(null);
+                // Dominant driver: pick the most critical driver type across top countries
+                // Severity hierarchy: Conflict > Food Security > Economic > Climate
+                String dominantDriver = findMostCriticalDriver(sorted, scores);
 
                 card.setDominantDriver(dominantDriver);
             }

@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -41,6 +42,7 @@ public class CacheWarmupService {
     private final SituationDetectionService situationDetectionService;
     private final WHODiseaseOutbreakService whoDiseaseOutbreakService;
     private final ReliefWebService reliefWebService;
+    private final ClimateService climateService;
 
     // Track warmup status
     private final AtomicBoolean warmupComplete = new AtomicBoolean(false);
@@ -85,12 +87,14 @@ public class CacheWarmupService {
         evictAllCaches();
 
         // Phase 1a: Data APIs first (climate is 276+ calls, needs dedicated bandwidth)
+        // NDVI data must be ready BEFORE risk scores (used for climate calibration)
+        CompletableFuture<Void> ndviFuture = warmupNDVI();
         CompletableFuture<Void> climateFuture = warmupClimate();
         CompletableFuture<Void> currencyFuture = warmupCurrency();
         CompletableFuture<Void> foodSecurityFuture = warmupFoodSecurity();
 
         // Phase 1b: Web/RSS sources AFTER data APIs (avoids network congestion)
-        CompletableFuture.allOf(climateFuture, currencyFuture, foodSecurityFuture)
+        CompletableFuture.allOf(ndviFuture, climateFuture, currencyFuture, foodSecurityFuture)
                 .thenCompose(v -> {
                     log.info("Phase 1a (data APIs) complete, starting Phase 1b (web sources)...");
                     CompletableFuture<Void> whoFuture = warmupWHO();
@@ -145,10 +149,14 @@ public class CacheWarmupService {
             try {
                 log.info("Warming up climate cache...");
                 var data = openMeteoService.getAllPrecipitationAnomalies();
-                memoryFallback.put("allPrecipAnomalies", data);
-                cacheStatus.put("climate", true);
-                lastRefresh.put("climate", LocalDateTime.now());
-                log.info("Climate cache warmed: {} entries", data != null ? data.size() : 0);
+                if (data != null && !data.isEmpty()) {
+                    memoryFallback.put("allPrecipAnomalies", data);
+                    cacheStatus.put("climate", true);
+                    lastRefresh.put("climate", LocalDateTime.now());
+                    log.info("Climate cache warmed: {} entries", data.size());
+                } else {
+                    log.warn("Climate returned empty data, keeping previous fallback");
+                }
             } catch (Exception e) {
                 log.error("Climate warmup failed: {}", e.getMessage());
                 cacheStatus.put("climate", false);
@@ -220,6 +228,28 @@ public class CacheWarmupService {
             } catch (Exception e) {
                 log.error("WHO warmup failed: {}", e.getMessage());
                 cacheStatus.put("who", false);
+            }
+        });
+    }
+
+    @Async
+    public CompletableFuture<Void> warmupNDVI() {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                log.info("Warming up NDVI climate data...");
+                var data = climateService.getClimateAnomalies();
+                if (data != null && !data.isEmpty()) {
+                    memoryFallback.put("ndviClimateData", data);
+                    cacheStatus.put("ndvi", true);
+                    lastRefresh.put("ndvi", LocalDateTime.now());
+                    log.info("NDVI cache warmed: {} entries", data.size());
+                } else {
+                    log.warn("NDVI returned empty data, keeping previous fallback ({} entries)",
+                            memoryFallback.containsKey("ndviClimateData") ? ((java.util.Collection<?>) memoryFallback.get("ndviClimateData")).size() : 0);
+                }
+            } catch (Exception e) {
+                log.error("NDVI warmup failed: {}", e.getMessage());
+                cacheStatus.put("ndvi", false);
             }
         });
     }
@@ -316,28 +346,32 @@ public class CacheWarmupService {
 
     @Scheduled(fixedRate = 55 * 60 * 1000, initialDelay = 55 * 60 * 1000)
     public void refreshLongTtlCaches() {
-        log.info("Scheduled refresh for long-TTL caches (climate, currency, risk)...");
+        log.info("Scheduled refresh for long-TTL caches (climate, currency, NDVI, risk)...");
         evictCache("allPrecipAnomalies");
         evictCache("precipAnomaly");
+        evictCache("climateData");
         evictCache("allCurrencyData");
         evictCache("currencyData");
         evictCache("exchangeRates");
         evictCache("allRiskScores");
 
+        CompletableFuture<Void> ndviFuture = warmupNDVI();
         CompletableFuture<Void> climateFuture = warmupClimate();
         CompletableFuture<Void> currencyFuture = warmupCurrency();
 
-        CompletableFuture.allOf(climateFuture, currencyFuture)
+        CompletableFuture.allOf(ndviFuture, climateFuture, currencyFuture)
                 .thenRun(this::warmupRiskScores);
     }
 
     @Scheduled(fixedRate = 45 * 60 * 1000, initialDelay = 45 * 60 * 1000)
     public void refreshIntelligenceAndBriefing() {
-        log.info("Scheduled refresh for Intelligence, Situations, and Briefing...");
+        log.info("Scheduled refresh for Intelligence, Situations, Briefing, and News...");
         evictCache("intelligenceFeed");
         evictCache("activeSituationsV2");
         evictCache("dailyBriefing");
         evictCache("whoDiseaseOutbreaks");
+        evictCache("newsFeed");
+        evictCache("storiesV16");
         warmupIntelligenceFeed();
         warmupActiveSituations();
         warmupDailyBriefing();
@@ -350,12 +384,52 @@ public class CacheWarmupService {
         });
     }
 
+    // Explicit list of ALL known cache names — cacheManager.getCacheNames() only returns
+    // caches created in THIS JVM instance, so old Redis keys from previous deploys survive.
+    // This list ensures every deploy starts with a completely clean Redis state.
+    private static final List<String> ALL_KNOWN_CACHES = List.of(
+            // Risk scores
+            "riskScore", "allRiskScores",
+            // Climate & weather
+            "allPrecipAnomalies", "precipAnomaly", "climateData",
+            // GDELT
+            "gdeltAllSpikes", "gdeltSpikeIndex", "gdeltConflictCount",
+            "gdeltHeadlines", "gdeltHeadlinesWithUrl", "gdeltTone",
+            "gdeltGeoEvents", "gdeltCrisisVolume", "gdeltRegionHeadlines",
+            // Currency
+            "allCurrencyData", "currencyData", "exchangeRates",
+            // Food security
+            "fewsAllIPC", "fewsIPC", "foodSecurityMetrics",
+            // Intelligence & situations
+            "intelligenceFeed", "activeSituationsV2", "dailyBriefing",
+            // Regional
+            "regionalPulseV2", "regionContext", "overviewContext", "regionDetail",
+            // WHO & ReliefWeb
+            "whoDiseaseOutbreaks", "reliefWebReports",
+            // News feed & stories
+            "newsFeed", "storiesV16",
+            // Trend tracking
+            "trendHistory"
+    );
+
     private void evictAllCaches() {
         log.info("Evicting all Redis caches for fresh startup...");
-        for (String cacheName : cacheManager.getCacheNames()) {
+        // Quick test: try one cache first. If Redis is down, skip all eviction.
+        try {
+            Cache testCache = cacheManager.getCache("riskScore");
+            if (testCache != null) {
+                testCache.clear();
+            }
+        } catch (Exception e) {
+            log.warn("Redis unavailable, skipping cache eviction (using in-memory fallback): {}", e.getMessage());
+            return;
+        }
+        // Redis is reachable — evict ALL known caches by name (not cacheManager.getCacheNames()
+        // which only returns caches created in this JVM instance)
+        for (String cacheName : ALL_KNOWN_CACHES) {
             evictCache(cacheName);
         }
-        log.info("All caches evicted");
+        log.info("All {} caches evicted", ALL_KNOWN_CACHES.size());
     }
 
     private void evictCache(String cacheName) {

@@ -23,6 +23,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /**
@@ -47,6 +48,8 @@ public class ClaudeAnalysisService {
     private final RegionalClusterService regionalClusterService;
     private final ReliefWebService reliefWebService;
     private final UNHCRService unhcrService;
+    private final StoryService storyService;
+    private final CacheWarmupService cacheWarmupService;
     private final ObjectMapper objectMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     private final org.springframework.cache.CacheManager cacheManager;
@@ -64,7 +67,8 @@ public class ClaudeAnalysisService {
     // General-purpose WebClient for RSS/external fetches
     private final WebClient rssClient = WebClient.builder()
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
-            .defaultHeader("User-Agent", "CrisisMonitor/1.0 (humanitarian monitoring)")
+            .defaultHeader("User-Agent", "Mozilla/5.0 (compatible; CrisisMonitor/1.0; +https://crisis-monitor.app)")
+            .defaultHeader("Accept", "application/rss+xml, application/xml, text/xml, */*")
             .build();
 
     // Per-country lock to prevent duplicate builds under concurrent load
@@ -95,14 +99,14 @@ public class ClaudeAnalysisService {
     }
 
     /**
-     * Country-specific deep-dive analysis
+     * Country-specific narrative analysis with citations.
      */
     @Cacheable(value = "aiAnalysisCountry", key = "#iso3 + ':' + #dataVersion")
     public AIAnalysis analyzeCountry(String iso3, String dataVersion) {
         log.info("Generating country AI analysis for {} (cache miss)", iso3);
 
-        String dataPack = getCountryDataPack(iso3);
-        if (dataPack == null) {
+        CountryDataPackResult packResult = buildCountryDataPackWithSources(iso3);
+        if (packResult == null) {
             return AIAnalysis.builder()
                     .scope("country")
                     .countryIso3(iso3)
@@ -116,13 +120,24 @@ public class ClaudeAnalysisService {
         }
 
         String countryName = getCountryName(iso3);
-        String prompt = buildCountryPrompt(dataPack, countryName);
+        String prompt = buildCountryNarrativePrompt(packResult.dataPack, countryName, packResult.riskLevel, packResult.riskScore);
 
-        AIAnalysis analysis = callClaude(prompt, "country", iso3, countryName);
+        // Call Claude for narrative response
+        AIAnalysis analysis = callClaudeNarrative(prompt, iso3, countryName, packResult.sources);
         analysis.setDataVersion(dataVersion);
         analysis.setFromCache(false);
+        analysis.setRiskLevel(packResult.riskLevel);
+        analysis.setRiskScore(packResult.riskScore);
 
         return analysis;
+    }
+
+    /** Intermediate result holding data pack text + numbered sources */
+    private static class CountryDataPackResult {
+        String dataPack;
+        List<QASource> sources;
+        String riskLevel;
+        int riskScore;
     }
 
     /**
@@ -250,14 +265,14 @@ public class ClaudeAnalysisService {
             }
         }
 
-        // ===== INFLATION (World Bank) =====
+        // ===== INFLATION (IMF WEO) =====
         pack.append("\n## INFLATION\n");
         try {
             List<EconomicIndicator> highInflation = worldBankService.getHighInflationCountries();
             if (highInflation != null && !highInflation.isEmpty()) {
                 for (EconomicIndicator e : highInflation.stream().limit(10).toList()) {
-                    pack.append(String.format("- %s: Inflation %.1f%%\n",
-                            e.getCountryName(), e.getValue()));
+                    pack.append(String.format("- %s: Inflation %.1f%% (%d)\n",
+                            e.getCountryName(), e.getValue(), e.getYear()));
                 }
             } else {
                 pack.append("(No high inflation data available)\n");
@@ -508,9 +523,23 @@ public class ClaudeAnalysisService {
      * GDELT headlines inside are individually cached (4h) by GDELTService.
      */
     private String buildCountryDataPack(String iso3) {
-        // Get single country risk score (cached per-country, never blocks on full warmup)
+        // Read risk score from cache ONLY — never trigger GDELT API calls during briefing
         String iso2 = getIso2FromIso3(iso3);
-        RiskScore country = (iso2 != null) ? riskScoreService.calculateRiskScore(iso2) : null;
+        RiskScore country = null;
+        if (iso2 != null) {
+            try {
+                org.springframework.cache.Cache riskCache = cacheManager.getCache("riskScore");
+                if (riskCache != null) {
+                    country = riskCache.get(iso2, RiskScore.class);
+                }
+            } catch (Exception e) {
+                log.debug("Risk score cache read failed for {}: {}", iso2, e.getMessage());
+            }
+            // Fallback: calculate only if cache miss (this may block on GDELT, but only on first request)
+            if (country == null) {
+                country = riskScoreService.calculateRiskScore(iso2);
+            }
+        }
 
         if (country == null) return null;
 
@@ -549,19 +578,46 @@ public class ClaudeAnalysisService {
             }
         }
 
-        // === RECENT NEWS (multiple sources for reliability) ===
+        // === RECENT NEWS (multiple sources, fetched in parallel) ===
         pack.append("\n### RECENT NEWS\n");
 
-        // 1. Google News RSS — most reliable for fresh general news
+        String countryName = MonitoredCountries.getName(iso3);
+
+        // Launch Google News + ReliefWeb in parallel
+        CompletableFuture<List<Headline>> googleNewsFuture = CompletableFuture.supplyAsync(() -> {
+            try {
+                return fetchGoogleNewsHeadlines(countryName, 10);
+            } catch (Exception e) {
+                log.debug("Google News fetch failed for {}: {}", iso3, e.getMessage());
+                return Collections.<Headline>emptyList();
+            }
+        });
+
+        CompletableFuture<List<Headline>> reliefWebFuture = CompletableFuture.supplyAsync(() -> {
+            try {
+                return reliefWebService.getLatestReportsAsHeadlines(iso3, 5, 7);
+            } catch (Exception e) {
+                log.debug("ReliefWeb reports failed for {}: {}", iso3, e.getMessage());
+                return Collections.<Headline>emptyList();
+            }
+        });
+
         try {
-            String countryName = MonitoredCountries.getName(iso3);
-            List<String> googleNews = fetchGoogleNews(countryName, 10);
+            CompletableFuture.allOf(googleNewsFuture, reliefWebFuture).join();
+        } catch (Exception e) {
+            log.debug("Parallel news fetch error: {}", e.getMessage());
+        }
+
+        // 1. Google News RSS
+        try {
+            List<Headline> googleNews = googleNewsFuture.join();
             if (!googleNews.isEmpty()) {
                 pack.append("Latest news headlines:\n");
-                googleNews.forEach(h -> pack.append("- ").append(h).append("\n"));
+                googleNews.forEach(h -> pack.append("- ").append(h.getTitle())
+                        .append(h.getSource() != null ? " [" + h.getSource() + "]" : "").append("\n"));
             }
         } catch (Exception e) {
-            log.debug("Google News fetch failed for {}: {}", iso3, e.getMessage());
+            log.debug("Google News result failed for {}: {}", iso3, e.getMessage());
         }
 
         // 2. GDELT conflict headlines (non-blocking: only if already cached)
@@ -580,14 +636,14 @@ public class ClaudeAnalysisService {
 
         // 3. ReliefWeb humanitarian reports (last 7 days)
         try {
-            List<Headline> reports = reliefWebService.getLatestReportsAsHeadlines(iso3, 5, 7);
+            List<Headline> reports = reliefWebFuture.join();
             if (reports != null && !reports.isEmpty()) {
                 pack.append("Humanitarian reports:\n");
                 reports.forEach(r -> pack.append("- ").append(r.getTitle())
                         .append(r.getSource() != null ? " [" + r.getSource() + "]" : "").append("\n"));
             }
         } catch (Exception e) {
-            log.debug("ReliefWeb reports failed for {}: {}", iso3, e.getMessage());
+            log.debug("ReliefWeb result failed for {}: {}", iso3, e.getMessage());
         }
 
         // Compare to regional peers (non-blocking: read from cache only)
@@ -615,13 +671,204 @@ public class ClaudeAnalysisService {
     }
 
     /**
-     * Fetch recent news headlines from Google News RSS for a country.
-     * Free, no API key, always up-to-date. Returns plain titles.
+     * Build country data pack WITH numbered sources for narrative analysis.
+     * Returns both the data pack text and a list of citable sources with URLs.
      */
-    private List<String> fetchGoogleNews(String countryName, int limit) {
+    private CountryDataPackResult buildCountryDataPackWithSources(String iso3) {
+        // Get risk score from memory fallback (avoids Redis sync=true blocking)
+        String iso2 = getIso2FromIso3(iso3);
+        RiskScore country = null;
+        if (iso2 != null) {
+            // Try memory fallback first (populated by cache warmup)
+            try {
+                @SuppressWarnings("unchecked")
+                List<RiskScore> allScores = (List<RiskScore>) cacheWarmupService.getFallback("allRiskScores");
+                if (allScores != null) {
+                    country = allScores.stream()
+                            .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
+                            .findFirst().orElse(null);
+                }
+            } catch (Exception e) {
+                log.debug("Memory fallback unavailable for risk scores: {}", e.getMessage());
+            }
+            // Fallback: calculate directly (only if warmup hasn't run yet)
+            if (country == null) {
+                try {
+                    country = riskScoreService.calculateRiskScore(iso2);
+                } catch (Exception e) {
+                    log.warn("Risk score calculation failed for {}: {}", iso2, e.getMessage());
+                }
+            }
+        }
+        if (country == null) return null;
+
+        CountryDataPackResult result = new CountryDataPackResult();
+        result.riskLevel = country.getRiskLevel();
+        result.riskScore = country.getScore();
+
+        StringBuilder pack = new StringBuilder();
+        List<QASource> sources = new ArrayList<>();
+        int sourceIdx = 0;
+
+        // === RISK PROFILE (same as buildCountryDataPack) ===
+        pack.append("## ").append(country.getCountryName().toUpperCase()).append(" RISK PROFILE\n");
+        pack.append(String.format("Overall Score: %d/100 (%s)\n", country.getScore(), country.getRiskLevel()));
+        pack.append(String.format("Confidence: %.0f%%\n", country.getConfidence() * 100));
+        pack.append(String.format("Horizon: %s - %s\n\n", country.getHorizon(), country.getHorizonReason()));
+
+        pack.append("### INDICATOR BREAKDOWN\n");
+        pack.append(String.format("- Climate: %d/100 (Precip anomaly: %.1f%%)\n",
+                country.getClimateScore(),
+                country.getPrecipitationAnomaly() != null ? country.getPrecipitationAnomaly() : 0));
+        pack.append(String.format("- Conflict: %d/100 (GDELT z-score: %.1f)\n",
+                country.getConflictScore(),
+                country.getGdeltZScore() != null ? country.getGdeltZScore() : 0));
+        pack.append(String.format("- Economic: %d/100 (Currency 30d: %.1f%%)\n",
+                country.getEconomicScore(),
+                country.getCurrencyChange30d() != null ? country.getCurrencyChange30d() : 0));
+        pack.append(String.format("- Food Security: %d/100 (IPC Phase: %.0f)\n",
+                country.getFoodSecurityScore(),
+                country.getIpcPhase() != null ? country.getIpcPhase() : 0));
+
+        pack.append("\n### ELEVATED INDICATORS\n");
+        if (country.isClimateElevated()) pack.append("- Climate: ELEVATED\n");
+        if (country.isConflictElevated()) pack.append("- Conflict: ELEVATED\n");
+        if (country.isEconomicElevated()) pack.append("- Economic: ELEVATED\n");
+        pack.append(String.format("Confirmation: %d/3 elevated\n", country.getElevatedCount()));
+
+        pack.append("\n### PRIMARY DRIVERS\n");
+        if (country.getDrivers() != null) {
+            for (String driver : country.getDrivers()) {
+                pack.append("- ").append(driver).append("\n");
+            }
+        }
+
+        // === REGIONAL PEERS ===
+        try {
+            @SuppressWarnings("unchecked")
+            List<RiskScore> allScores = (List<RiskScore>) cacheWarmupService.getFallback("allRiskScores");
+            if (allScores != null && !allScores.isEmpty()) {
+                pack.append("\n### REGIONAL CONTEXT\n");
+                String region = getRegion(iso3);
+                String peersStr = allScores.stream()
+                        .filter(s -> region.equals(getRegion(s.getIso3())))
+                        .filter(s -> !iso3.equalsIgnoreCase(s.getIso3()))
+                        .sorted((a, b) -> b.getScore() - a.getScore())
+                        .limit(3)
+                        .map(s -> String.format("%s(%d)", s.getCountryName(), s.getScore()))
+                        .collect(Collectors.joining(", "));
+                pack.append("Regional peers: ").append(peersStr).append("\n");
+            }
+        } catch (Exception e) {
+            log.debug("Regional peers cache not ready: {}", e.getMessage());
+        }
+
+        // === NUMBERED SOURCES (for narrative citations) ===
+        pack.append("\n### SOURCES\n");
+
+        String countryName = MonitoredCountries.getName(iso3);
+
+        // Fetch Google News + ReliefWeb in parallel
+        CompletableFuture<List<Headline>> googleNewsFuture = CompletableFuture.supplyAsync(() -> {
+            try { return fetchGoogleNewsHeadlines(countryName, 5); }
+            catch (Exception e) { return Collections.<Headline>emptyList(); }
+        });
+        CompletableFuture<List<Headline>> reliefWebFuture = CompletableFuture.supplyAsync(() -> {
+            try { return reliefWebService.getLatestReportsAsHeadlines(iso3, 5, 7); }
+            catch (Exception e) { return Collections.<Headline>emptyList(); }
+        });
+
+        try {
+            CompletableFuture.allOf(googleNewsFuture, reliefWebFuture).join();
+        } catch (Exception e) {
+            log.debug("Parallel news fetch error: {}", e.getMessage());
+        }
+
+        // 1. Google News (top 3 fresh articles)
+        try {
+            List<Headline> googleNews = googleNewsFuture.join();
+            for (Headline h : googleNews) {
+                if (sourceIdx >= 3) break;  // Max 3 from Google News
+                sourceIdx++;
+                sources.add(QASource.builder()
+                        .index(sourceIdx)
+                        .title(h.getTitle())
+                        .url(h.getUrl())
+                        .source(h.getSource())
+                        .sourceType("NEWS")
+                        .build());
+                pack.append(String.format("[%d] %s — %s\n", sourceIdx, h.getTitle(),
+                        h.getSource() != null ? h.getSource() : "Google News"));
+            }
+        } catch (Exception e) {
+            log.debug("Google News result error: {}", e.getMessage());
+        }
+
+        // 2. ReliefWeb humanitarian reports (top 3)
+        try {
+            List<Headline> reports = reliefWebFuture.join();
+            if (reports != null) {
+                for (Headline r : reports) {
+                    if (sourceIdx >= 8) break;  // Max 8 total sources
+                    sourceIdx++;
+                    sources.add(QASource.builder()
+                            .index(sourceIdx)
+                            .title(r.getTitle())
+                            .url(r.getUrl())
+                            .source(r.getSource() != null ? r.getSource() : "ReliefWeb")
+                            .sourceType("RELIEFWEB")
+                            .build());
+                    pack.append(String.format("[%d] %s — %s\n", sourceIdx, r.getTitle(),
+                            r.getSource() != null ? r.getSource() : "ReliefWeb"));
+                }
+            }
+        } catch (Exception e) {
+            log.debug("ReliefWeb result error: {}", e.getMessage());
+        }
+
+        // 3. News feed cache (GDELT + RSS items for this country)
+        try {
+            StoryService.NewsFeedData feed = storyService.getNewsFeed(null, null);
+            if (feed != null) {
+                List<NewsItem> countryItems = new ArrayList<>();
+                if (feed.getMedia() != null) {
+                    feed.getMedia().stream()
+                            .filter(item -> iso3.equalsIgnoreCase(item.getCountry()))
+                            .limit(3)
+                            .forEach(countryItems::add);
+                }
+                for (NewsItem item : countryItems) {
+                    if (sourceIdx >= 10) break;
+                    sourceIdx++;
+                    sources.add(QASource.builder()
+                            .index(sourceIdx)
+                            .title(item.getTitle())
+                            .url(item.getUrl())
+                            .source(item.getSource())
+                            .sourceType(item.getSourceType())
+                            .timeAgo(item.getTimeAgo())
+                            .build());
+                    pack.append(String.format("[%d] %s — %s\n", sourceIdx, item.getTitle(),
+                            item.getSource() != null ? item.getSource() : item.getSourceType()));
+                }
+            }
+        } catch (Exception e) {
+            log.debug("News feed cache error for {}: {}", iso3, e.getMessage());
+        }
+
+        result.dataPack = pack.toString();
+        result.sources = sources;
+        return result;
+    }
+
+    /**
+     * Fetch recent news headlines from Google News RSS for a country.
+     * Free, no API key, always up-to-date. Returns Headline objects with title, url, source.
+     */
+    private List<Headline> fetchGoogleNewsHeadlines(String countryName, int limit) {
         try {
             String query = URLEncoder.encode(countryName, StandardCharsets.UTF_8);
-            String url = "https://news.google.com/rss/search?q=" + query + "&hl=en&gl=US&ceid=US:en";
+            String url = "https://www.bing.com/news/search?q=" + query + "&format=rss&mkt=en-US";
 
             String xml = rssClient.get()
                     .uri(url)
@@ -630,7 +877,11 @@ public class ClaudeAnalysisService {
                     .timeout(Duration.ofSeconds(10))
                     .block();
 
-            if (xml == null || xml.isBlank()) return Collections.emptyList();
+            if (xml == null || xml.isBlank()) {
+                log.warn("Bing News RSS returned empty for {}", countryName);
+                return Collections.emptyList();
+            }
+            log.debug("Bing News RSS response length for {}: {} chars", countryName, xml.length());
 
             XmlMapper xmlMapper = new XmlMapper();
             xmlMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -641,30 +892,42 @@ public class ClaudeAnalysisService {
             }
 
             Set<String> seen = new HashSet<>();
-            List<String> headlines = new ArrayList<>();
+            List<Headline> headlines = new ArrayList<>();
 
             for (NewsAggregatorService.RssItem item : feed.getChannel().getItems()) {
                 if (headlines.size() >= limit) break;
                 String title = item.getTitle();
                 if (title == null || title.isBlank()) continue;
 
-                // Remove " - SourceName" suffix that Google News appends
-                int dashIdx = title.lastIndexOf(" - ");
-                String cleanTitle = dashIdx > 0 ? title.substring(0, dashIdx).trim() : title.trim();
+                // Bing News titles are clean (no " - Source" suffix like Google News)
+                String cleanTitle = title.trim();
+                String sourceName = "Bing News";
+
+                // Some Bing items may still have " - Source" suffix
+                int dashIdx = cleanTitle.lastIndexOf(" - ");
+                if (dashIdx > 0 && dashIdx > cleanTitle.length() - 40) {
+                    sourceName = cleanTitle.substring(dashIdx + 3).trim();
+                    cleanTitle = cleanTitle.substring(0, dashIdx).trim();
+                }
                 if (cleanTitle.length() > 120) cleanTitle = cleanTitle.substring(0, 117) + "...";
 
                 // Dedup by first 40 chars
                 String key = cleanTitle.substring(0, Math.min(40, cleanTitle.length())).toLowerCase();
                 if (seen.add(key)) {
-                    headlines.add(cleanTitle);
+                    headlines.add(Headline.builder()
+                            .title(cleanTitle)
+                            .url(item.getLink())
+                            .source(sourceName)
+                            .date(item.getPubDate())
+                            .build());
                 }
             }
 
-            log.info("Fetched {} Google News headlines for {}", headlines.size(), countryName);
+            log.info("Fetched {} Bing News headlines for {}", headlines.size(), countryName);
             return headlines;
 
         } catch (Exception e) {
-            log.warn("Google News RSS failed for {}: {}", countryName, e.getMessage());
+            log.warn("Bing News RSS failed for {}: {}", countryName, e.getMessage());
             return Collections.emptyList();
         }
     }
@@ -824,6 +1087,7 @@ public class ClaudeAnalysisService {
                     .bodyValue(requestBody.toString())
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(30))
                     .block();
 
             if (response == null) {
@@ -966,6 +1230,115 @@ public class ClaudeAnalysisService {
             """.formatted(dataPack, newsContext);
     }
 
+    /**
+     * Narrative prompt for country analysis with inline citations.
+     * Scales output length by severity: STABLE=short, CRITICAL=detailed.
+     */
+    private String buildCountryNarrativePrompt(String dataPack, String countryName, String riskLevel, int riskScore) {
+        String lengthGuidance;
+        if (riskScore >= 70) {
+            lengthGuidance = "HIGH SEVERITY — provide detailed analysis in each section.";
+        } else if (riskScore >= 40) {
+            lengthGuidance = "MODERATE RISK — keep analysis focused on key drivers and trajectory.";
+        } else {
+            lengthGuidance = "LOW RISK — keep each section concise, 1-2 sentences per section.";
+        }
+
+        return String.format("""
+            Produce a country risk brief for %s. %s
+
+            Use ONLY the data below. Cite sources as [1], [2], etc. Institutional tone. No markdown, no bullet points, no numbered lists. Never start with "Based on the data".
+
+            DATA:
+            %s
+
+            YOUR OUTPUT MUST USE EXACTLY THIS FORMAT with these 4 section headers. Each header must appear on its own line, followed by a colon and space, then the content. Do not omit or rename any section.
+
+            BOTTOM LINE: One to two sentences — the single most critical takeaway for a decision-maker.
+
+            CURRENT SITUATION: What is happening on the ground. Integrate the risk score, key drivers, recent developments with citations [N]. Compare to regional peers.
+
+            KEY RISKS: The 2-3 most critical risk factors woven into analytical prose. Connect to evidence and explain cascading effects.
+
+            OUTLOOK: 30-day forward assessment. Most likely trajectory, escalation/de-escalation triggers, what to monitor.""",
+                countryName, lengthGuidance, dataPack);
+    }
+
+    /**
+     * Call Claude for narrative country analysis.
+     * Returns AIAnalysis with narrative field populated instead of keyFindings/drivers/watchList.
+     */
+    private AIAnalysis callClaudeNarrative(String prompt, String iso3, String countryName, List<QASource> sources) {
+        if (apiKey == null || apiKey.isBlank()) {
+            return AIAnalysis.builder()
+                    .scope("country")
+                    .countryIso3(iso3)
+                    .countryName(countryName)
+                    .narrative("AI analysis is not configured. Set anthropic.api.key to enable narrative briefings.")
+                    .sources(sources)
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+        }
+
+        try {
+            String systemMsg = "You are a senior intelligence analyst. Structure every response with exactly 4 sections: BOTTOM LINE:, CURRENT SITUATION:, KEY RISKS:, OUTLOOK:. Each header on its own line followed by content.";
+
+            // Prefill assistant response to force structured format
+            Map<String, Object> request = Map.of(
+                    "model", model,
+                    "max_tokens", 1500,
+                    "system", systemMsg,
+                    "messages", List.of(
+                            Map.of("role", "user", "content", prompt),
+                            Map.of("role", "assistant", "content", "BOTTOM LINE:")
+                    )
+            );
+
+            String response = webClient.post()
+                    .uri("/messages")
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(45))
+                    .block();
+
+            JsonNode root = objectMapper.readTree(response);
+            String rawNarrative = root.path("content").get(0).path("text").asText();
+            // Prepend "BOTTOM LINE:" since it was the prefilled assistant content (not in response)
+            String narrative = "BOTTOM LINE:" + rawNarrative;
+
+            return AIAnalysis.builder()
+                    .scope("country")
+                    .countryIso3(iso3)
+                    .countryName(countryName)
+                    .narrative(narrative)
+                    .sources(sources)
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Claude narrative call failed for {}: {}", iso3, e.getMessage());
+            return AIAnalysis.builder()
+                    .scope("country")
+                    .countryIso3(iso3)
+                    .countryName(countryName)
+                    .narrative("Unable to generate analysis. Please try again.")
+                    .sources(sources)
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .fromCache(false)
+                    .build();
+        }
+    }
+
+    /** Legacy country prompt — kept for deep analysis backward compatibility */
     private String buildCountryPrompt(String dataPack, String countryName) {
         return """
             You are a senior humanitarian crisis analyst. Analyze %s using ONLY the data below.
@@ -1024,6 +1397,7 @@ public class ClaudeAnalysisService {
                     .bodyValue(request)
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(30))
                     .block();
 
             return parseClaudeResponse(response, scope, iso3, countryName, newsSignal);
@@ -1193,6 +1567,7 @@ public class ClaudeAnalysisService {
                     .bodyValue(request)
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(30))
                     .block();
 
             DeepAnalysisResult result = parseDeepAnalysisResponse(response, iso3);
@@ -1342,7 +1717,7 @@ public class ClaudeAnalysisService {
             inflation.stream()
                 .filter(i -> iso3.equalsIgnoreCase(i.getIso3()))
                 .findFirst()
-                .ifPresent(i -> pack.append(String.format("Inflation baseline: %.1f%% (2024)\n", i.getValue())));
+                .ifPresent(i -> pack.append(String.format("Inflation: %.1f%% (%d, IMF WEO)\n", i.getValue(), i.getYear())));
         } catch (Exception e) { /* skip */ }
 
         // === SECTION 5: COMPUTED SCORES & TRENDS ===
@@ -1604,6 +1979,7 @@ Weights must sum to 100. Consider cascade effects and non-linear amplification.
                     .bodyValue(request)
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(45))
                     .block();
 
             SituationDetectionResult result = parseSituationDetectionResponse(response);
@@ -1963,5 +2339,286 @@ Be precise. Only report situations with clear evidence. Empty array is valid if 
         private LocalDateTime generatedAt;
         private String model;
         private long durationMs;
+    }
+
+    // ========== Q&A WITH CITATIONS ==========
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class QAResponse {
+        private String question;
+        private String answer;
+        private List<QASource> sources;
+        private LocalDateTime generatedAt;
+        private String model;
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class QASource {
+        private int index;
+        private String title;
+        private String url;
+        private String source;
+        private String sourceType;
+        private String country;
+        private String timeAgo;
+    }
+
+    /**
+     * Answer a question using cached news items as context.
+     * Returns a response with inline [1], [2], [3] citations referencing source articles.
+     */
+    public QAResponse answerQuestion(String question) {
+        if (apiKey == null || apiKey.isBlank()) {
+            return QAResponse.builder()
+                    .question(question)
+                    .answer("AI analysis is not configured. Set anthropic.api.key to enable Q&A.")
+                    .sources(List.of())
+                    .generatedAt(LocalDateTime.now())
+                    .build();
+        }
+
+        long start = System.currentTimeMillis();
+
+        // 1. Gather cached news items + targeted Bing News search for the question
+        List<NewsItem> allItems = gatherNewsItemsWithBingSearch(question);
+
+        if (allItems.isEmpty()) {
+            return QAResponse.builder()
+                    .question(question)
+                    .answer("No news data available yet. Please wait for the cache to warm up.")
+                    .sources(List.of())
+                    .generatedAt(LocalDateTime.now())
+                    .build();
+        }
+
+        // 2. Search for relevant items using keyword matching
+        List<NewsItem> relevant = searchRelevantItems(allItems, question);
+
+        // Cap at 20 sources for prompt size
+        if (relevant.size() > 20) {
+            relevant = relevant.subList(0, 20);
+        }
+
+        // 3. Build numbered source list
+        List<QASource> sources = new ArrayList<>();
+        StringBuilder sourceContext = new StringBuilder();
+        for (int i = 0; i < relevant.size(); i++) {
+            NewsItem item = relevant.get(i);
+            int idx = i + 1;
+            sources.add(QASource.builder()
+                    .index(idx)
+                    .title(item.getTitle())
+                    .url(item.getUrl())
+                    .source(item.getSource())
+                    .sourceType(item.getSourceType())
+                    .country(item.getCountryName() != null ? item.getCountryName() : item.getCountry())
+                    .timeAgo(item.getTimeAgo())
+                    .build());
+            sourceContext.append(String.format("[%d] %s — %s (%s) %s\n",
+                    idx, item.getTitle(),
+                    item.getSource() != null ? item.getSource() : item.getSourceType(),
+                    item.getCountryName() != null ? item.getCountryName() : (item.getCountry() != null ? item.getCountry() : ""),
+                    item.getTimeAgo() != null ? item.getTimeAgo() : ""));
+        }
+
+        // 4. Build prompt
+        String prompt = buildQAPrompt(question, sourceContext.toString(), sources.size());
+
+        // 5. Call Claude
+        try {
+            Map<String, Object> request = Map.of(
+                    "model", model,
+                    "max_tokens", 1024,
+                    "messages", List.of(Map.of("role", "user", "content", prompt))
+            );
+
+            String response = webClient.post()
+                    .uri("/messages")
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(30))
+                    .block();
+
+            JsonNode root = objectMapper.readTree(response);
+            String answer = root.path("content").get(0).path("text").asText();
+
+            long duration = System.currentTimeMillis() - start;
+            log.info("Q&A answered in {}ms, {} sources, question: {}", duration, sources.size(),
+                    question.length() > 80 ? question.substring(0, 80) + "..." : question);
+
+            return QAResponse.builder()
+                    .question(question)
+                    .answer(answer)
+                    .sources(sources)
+                    .generatedAt(LocalDateTime.now())
+                    .model(model)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Q&A Claude call failed: {}", e.getMessage());
+            return QAResponse.builder()
+                    .question(question)
+                    .answer("Unable to generate answer. Please try again in a moment.")
+                    .sources(sources)
+                    .generatedAt(LocalDateTime.now())
+                    .build();
+        }
+    }
+
+    private List<NewsItem> gatherNewsItems() {
+        List<NewsItem> all = new ArrayList<>();
+        try {
+            // Get the default (all regions, all topics) news feed
+            StoryService.NewsFeedData feed = storyService.getNewsFeed(null, null);
+            if (feed != null) {
+                if (feed.getReliefweb() != null) all.addAll(feed.getReliefweb());
+                if (feed.getMedia() != null) all.addAll(feed.getMedia());
+            }
+        } catch (Exception e) {
+            log.warn("Could not gather news items for Q&A: {}", e.getMessage());
+        }
+        return all;
+    }
+
+    /**
+     * Gather news items from cached feed + targeted Bing News search based on the question.
+     * This ensures Ask AI can find relevant sources even for countries/topics not in the cached feed.
+     */
+    private List<NewsItem> gatherNewsItemsWithBingSearch(String question) {
+        List<NewsItem> all = gatherNewsItems();
+
+        // Extract search query from question (remove stop words, keep meaningful terms)
+        Set<String> stopWords = Set.of("what", "is", "the", "in", "a", "an", "and", "or", "of", "to",
+                "for", "with", "on", "at", "by", "from", "about", "how", "why", "when", "where",
+                "are", "was", "were", "been", "being", "have", "has", "had", "do", "does", "did",
+                "will", "would", "could", "should", "can", "may", "might", "shall", "that", "this",
+                "there", "their", "they", "it", "its", "but", "not", "no", "so", "if", "than",
+                "happening", "going", "latest", "current", "situation", "tell", "me", "update");
+        String[] words = question.toLowerCase().replaceAll("[^a-z0-9\\s]", " ").split("\\s+");
+        List<String> keywords = new ArrayList<>();
+        for (String w : words) {
+            if (w.length() >= 2 && !stopWords.contains(w)) {
+                keywords.add(w);
+            }
+        }
+
+        if (keywords.isEmpty()) {
+            return all;
+        }
+
+        // Build Bing News search query from keywords
+        String searchQuery = String.join(" ", keywords);
+        try {
+            List<Headline> bingHeadlines = fetchGoogleNewsHeadlines(searchQuery, 10);
+            log.info("Bing News Q&A search for '{}': {} results", searchQuery, bingHeadlines.size());
+
+            // Convert Headline -> NewsItem and add to pool
+            for (Headline h : bingHeadlines) {
+                all.add(NewsItem.builder()
+                        .title(h.getTitle())
+                        .url(h.getUrl())
+                        .source(h.getSource())
+                        .sourceType("BING_NEWS")
+                        .timeAgo(h.getDate() != null ? h.getDate() : "Recent")
+                        .build());
+            }
+        } catch (Exception e) {
+            log.warn("Bing News search failed for Q&A query '{}': {}", searchQuery, e.getMessage());
+        }
+
+        return all;
+    }
+
+    private List<NewsItem> searchRelevantItems(List<NewsItem> items, String question) {
+        // Tokenize question into keywords (lowercase, skip stop words)
+        Set<String> stopWords = Set.of("what", "is", "the", "in", "a", "an", "and", "or", "of", "to",
+                "for", "with", "on", "at", "by", "from", "about", "how", "why", "when", "where",
+                "are", "was", "were", "been", "being", "have", "has", "had", "do", "does", "did",
+                "will", "would", "could", "should", "can", "may", "might", "shall", "that", "this",
+                "there", "their", "they", "it", "its", "but", "not", "no", "so", "if", "than",
+                "happening", "going", "latest", "current", "situation", "tell", "me", "update");
+        String[] words = question.toLowerCase().replaceAll("[^a-z0-9\\s]", " ").split("\\s+");
+        Set<String> keywords = new LinkedHashSet<>();
+        for (String w : words) {
+            if (w.length() >= 2 && !stopWords.contains(w)) {
+                keywords.add(w);
+            }
+        }
+
+        if (keywords.isEmpty()) {
+            // No meaningful keywords — return most recent items
+            return items.stream().limit(15).collect(Collectors.toList());
+        }
+
+        // Score each item by keyword match count
+        List<Map.Entry<NewsItem, Integer>> scored = new ArrayList<>();
+        for (NewsItem item : items) {
+            String text = ((item.getTitle() != null ? item.getTitle() : "") + " " +
+                    (item.getCountryName() != null ? item.getCountryName() : "") + " " +
+                    (item.getCountry() != null ? item.getCountry() : "") + " " +
+                    (item.getSource() != null ? item.getSource() : "") + " " +
+                    (item.getTopics() != null ? String.join(" ", item.getTopics()) : ""))
+                    .toLowerCase();
+
+            int score = 0;
+            for (String kw : keywords) {
+                if (text.contains(kw)) score++;
+            }
+            if (score > 0) {
+                scored.add(Map.entry(item, score));
+            }
+        }
+
+        // Sort by score descending
+        scored.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+
+        // Return top matches (at least 5 if available)
+        List<NewsItem> result = scored.stream()
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+
+        // If few matches, add some recent items for broader context
+        if (result.size() < 5) {
+            for (NewsItem item : items) {
+                if (!result.contains(item)) {
+                    result.add(item);
+                    if (result.size() >= 10) break;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private String buildQAPrompt(String question, String sourceContext, int sourceCount) {
+        return String.format("""
+                You are a humanitarian crisis analyst. Answer the user's question based ONLY on the news sources provided below.
+
+                RULES:
+                - Use inline citations like [1], [2], [3] referencing the source numbers
+                - Every factual claim MUST have at least one citation
+                - If the sources don't contain enough information to answer, say so honestly
+                - Be concise but thorough — aim for 2-4 paragraphs
+                - Use a neutral, analytical tone
+                - Do NOT invent information not in the sources
+                - Do NOT use markdown headers — write flowing prose with citations
+
+                SOURCES (%d articles):
+                %s
+
+                QUESTION: %s
+
+                Answer with inline citations:""",
+                sourceCount, sourceContext, question);
     }
 }

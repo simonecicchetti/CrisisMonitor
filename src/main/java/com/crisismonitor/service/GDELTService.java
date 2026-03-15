@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -52,10 +53,21 @@ public class GDELTService {
         "(crisis OR emergency OR disaster OR humanitarian OR famine OR drought OR " +
         "displacement OR refugees OR epidemic OR outbreak)";
 
-    // Global rate limiter - GDELT requires at least 15 seconds between requests
-    // (stricter than documented 5 seconds based on 429 errors, IP may be flagged)
-    private static final long RATE_LIMIT_MS = 15000; // 15 seconds to be safe
+    // Global rate limiter - GDELT requires significant gaps between requests
+    // Cloud Run IPs get 429 at 15s intervals; 30s more reliable based on prod logs
+    private static final long RATE_LIMIT_MS = 30000; // 30 seconds between requests
     private static final AtomicLong lastRequestTime = new AtomicLong(0);
+
+    // Baseline cache: stores 30d article counts with timestamps to avoid re-fetching
+    // 30d window changes slowly — refreshing every 4 hours saves ~40% of API calls
+    private static final long BASELINE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+    private static final ConcurrentHashMap<String, CachedBaseline> baselineCache = new ConcurrentHashMap<>();
+
+    private record CachedBaseline(int count30d, long timestamp) {
+        boolean isValid() {
+            return System.currentTimeMillis() - timestamp < BASELINE_TTL_MS;
+        }
+    }
 
     public GDELTService() {
         this.gdeltClient = WebClient.builder()
@@ -65,8 +77,57 @@ public class GDELTService {
                 .build();
     }
 
+    // Geopolitical keywords that capture military/sanctions tensions beyond generic "conflict"
+    private static final String GEOPOLITICAL_KEYWORDS =
+        "(conflict OR military OR attack OR bombing OR missile OR sanctions OR strike OR naval OR nuclear OR airstrike OR war)";
+
     // Lock object for thread-safe rate limiting
     private static final Object RATE_LIMIT_LOCK = new Object();
+
+    /**
+     * Build a GDELT query using country aliases for broader conflict coverage.
+     * Instead of just "iran" conflict, uses ("iran" OR "irgc" OR "strait of hormuz") + geopolitical keywords.
+     * This captures military tensions, sanctions pressure, and proxy conflicts.
+     */
+    private String buildCountryConflictQuery(String iso3, String countryName) {
+        List<String> aliases = MonitoredCountries.COUNTRY_ALIASES.get(iso3);
+
+        if (aliases == null || aliases.size() <= 1) {
+            // Simple case: no useful aliases
+            // Don't quote short single-word terms (GDELT rejects quoted phrases < 5 chars)
+            String term = countryName.contains(" ") || countryName.length() >= 5
+                    ? "(\"" + countryName + "\")"
+                    : "(" + countryName + ")";
+            return String.format("%s %s", term, GEOPOLITICAL_KEYWORDS);
+        }
+
+        // Pick the most useful aliases (max 4 to keep query manageable)
+        // Skip pure demonyms (e.g., "iranian") as they add noise
+        List<String> queryTerms = new ArrayList<>();
+        // Don't quote short single-word terms (GDELT rejects quoted phrases < 5 chars)
+        if (countryName.contains(" ") || countryName.length() >= 5) {
+            queryTerms.add("\"" + countryName + "\"");
+        } else {
+            queryTerms.add(countryName);
+        }
+
+        int added = 0;
+        for (String alias : aliases) {
+            if (added >= 3) break;
+            // Skip the country name itself (already added) and short demonyms
+            if (alias.equals(countryName) || alias.endsWith("an") && alias.length() < 8) continue;
+            // Don't quote short aliases (GDELT rejects < 5 chars)
+            if (alias.contains(" ") || alias.length() >= 5) {
+                queryTerms.add("\"" + alias + "\"");
+            } else {
+                queryTerms.add(alias);
+            }
+            added++;
+        }
+
+        String countryPart = "(" + String.join(" OR ", queryTerms) + ")";
+        return countryPart + " " + GEOPOLITICAL_KEYWORDS;
+    }
 
     /**
      * Rate limiter - ensures minimum 15 seconds between any GDELT API call.
@@ -93,8 +154,10 @@ public class GDELTService {
     }
 
     /**
-     * Get conflict article count for a country over specified days
-     * Used for trend calculation and spike detection
+     * Get conflict article count for a country over specified days.
+     * Uses simple "country" + "conflict" query to avoid hitting the 250 maxrecords cap
+     * (broader alias queries return 250 for almost every country, making z-scores identical).
+     * Country aliases are used separately in multi-signal scoring.
      */
     @Cacheable(value = "gdeltConflictCount", key = "#iso3 + '-' + #days")
     public int getConflictArticleCount(String iso3, int days) {
@@ -102,9 +165,11 @@ public class GDELTService {
         log.info("Fetching GDELT conflict count for {} ({} days)", countryName, days);
 
         try {
-            // GDELT query: simple country + conflict query
-            // Keep it simple - GDELT's OR syntax is finicky
-            String query = String.format("\"%s\" conflict", countryName);
+            // Simple focused query — avoids saturating the 250 maxrecords cap
+            // Don't quote short single-word terms (GDELT rejects quoted phrases < 5 chars)
+            String query = countryName.contains(" ") || countryName.length() >= 5
+                    ? String.format("\"%s\" conflict", countryName)
+                    : String.format("%s conflict", countryName);
 
             String url = UriComponentsBuilder.fromHttpUrl(GDELT_DOC_API)
                     .queryParam("query", query)
@@ -166,29 +231,56 @@ public class GDELTService {
         log.info("Calculating GDELT spike index for {}", iso3);
 
         try {
-            // Get article counts for different periods
             int count7d = getConflictArticleCount(iso3, 7);
-            int count30d = getConflictArticleCount(iso3, 30);
 
-            // Calculate daily averages
+            // Use cached 30d baseline when available (saves an API call per country)
+            int count30d;
+            CachedBaseline cached = baselineCache.get(iso3);
+            if (cached != null && cached.isValid()) {
+                count30d = cached.count30d();
+                log.debug("Using cached 30d baseline for {}: {} articles", iso3, count30d);
+            } else {
+                count30d = getConflictArticleCount(iso3, 30);
+                if (count30d > 0) {
+                    baselineCache.put(iso3, new CachedBaseline(count30d, System.currentTimeMillis()));
+                }
+            }
+
+            // Handle GDELT maxrecords=250 cap: when count hits 250, the real count is unknown (≥250).
+            // If both periods are capped, z-score is meaningless (all countries get the same score).
+            // Strategy: if 7d is capped, mark as high-volume conflict (skip z-score entirely).
+            boolean capped7d = count7d >= 250;
+            boolean capped30d = count30d >= 250;
+
             double avg7d = count7d / 7.0;
             double avg30d = count30d / 30.0;
-
-            // Calculate z-score (simplified - assumes baseline SD ~ 0.3 * mean)
-            double baselineStd = Math.max(avg30d * 0.3, 1.0); // Prevent division by zero
-            double zScore = (avg7d - avg30d) / baselineStd;
-
-            // Determine spike level
+            double zScore;
             String level;
-            if (zScore > 3.0) level = "CRITICAL";
-            else if (zScore > 2.0) level = "HIGH";
-            else if (zScore > 1.0) level = "ELEVATED";
-            else if (zScore > 0.5) level = "MODERATE";
-            else level = "NORMAL";
 
-            // Get top headlines for context (only for elevated spikes)
+            if (capped7d && capped30d) {
+                // Both periods saturated — this is a chronic high-coverage conflict zone
+                // Cannot calculate meaningful spike, but high absolute coverage = significant conflict
+                zScore = 1.5; // Mark as ELEVATED (confirmed active conflict, but no spike data)
+                level = "ELEVATED";
+            } else if (capped7d) {
+                // Recent period saturated but baseline wasn't — this IS a spike
+                zScore = 3.0;
+                level = "CRITICAL";
+            } else {
+                // Normal calculation — neither period is capped
+                double baselineStd = Math.max(avg30d * 0.3, 1.0);
+                zScore = (avg7d - avg30d) / baselineStd;
+
+                if (zScore > 3.0) level = "CRITICAL";
+                else if (zScore > 2.0) level = "HIGH";
+                else if (zScore > 1.0) level = "ELEVATED";
+                else if (zScore > 0.5) level = "MODERATE";
+                else level = "NORMAL";
+            }
+
+            // Get top headlines for context (only for notable activity)
             List<String> headlines = null;
-            if (zScore > 0.5) {
+            if (zScore > 0.5 || capped7d) {
                 headlines = getTopHeadlines(iso3, 3);
             }
 
@@ -234,7 +326,10 @@ public class GDELTService {
         try {
             // Query for English articles only with topic-specific keywords
             // Note: GDELT only allows parentheses around OR statements
-            String query = String.format("\"%s\" %s sourcelang:english", countryName, keywords);
+            // Don't quote short single-word terms (GDELT rejects quoted phrases < 5 chars)
+            String countryPart = countryName.contains(" ") || countryName.length() >= 5
+                    ? "\"" + countryName + "\"" : countryName;
+            String query = String.format("%s %s sourcelang:english", countryPart, keywords);
 
             String url = UriComponentsBuilder.fromHttpUrl(GDELT_DOC_API)
                     .queryParam("query", query)
@@ -325,7 +420,10 @@ public class GDELTService {
         try {
             // Build query with topic-specific keywords
             // Note: GDELT only allows parentheses around OR statements
-            String query = String.format("\"%s\" %s sourcelang:english", countryName, keywords);
+            // Don't quote short single-word terms (GDELT rejects quoted phrases < 5 chars)
+            String countryPart = countryName.contains(" ") || countryName.length() >= 5
+                    ? "\"" + countryName + "\"" : countryName;
+            String query = String.format("%s %s sourcelang:english", countryPart, keywords);
 
             String url = UriComponentsBuilder.fromHttpUrl(GDELT_DOC_API)
                     .queryParam("query", query)
@@ -482,14 +580,34 @@ public class GDELTService {
             }
         }
 
-        // Sort by z-score descending (highest spikes first)
-        spikes.sort((a, b) -> Double.compare(
-                b.getZScore() != null ? b.getZScore() : 0,
-                a.getZScore() != null ? a.getZScore() : 0
-        ));
+        // Sort by composite score: balances anomaly (z-score) with absolute volume
+        // This prevents low-volume countries from dominating the ranking
+        spikes.sort((a, b) -> {
+            double scoreA = compositeRank(a);
+            double scoreB = compositeRank(b);
+            return Double.compare(scoreB, scoreA);
+        });
 
         log.info("Calculated spike indices for {} countries", spikes.size());
         return spikes;
+    }
+
+    /**
+     * Composite ranking score for Media Spike alerts.
+     * Balances z-score anomaly (40%) with absolute article volume (60%).
+     * Prevents low-baseline countries from dominating with inflated z-scores.
+     */
+    private double compositeRank(MediaSpike spike) {
+        double z = spike.getZScore() != null ? spike.getZScore() : 0;
+        int articles = spike.getArticlesLast7Days() != null ? spike.getArticlesLast7Days() : 0;
+
+        // Normalize z-score: cap at 5.0 for ranking purposes (beyond 5 = all equally extreme)
+        double zNorm = Math.min(z, 5.0) / 5.0; // 0-1
+
+        // Normalize volume: 250 articles = 1.0 (max detectable)
+        double volNorm = Math.min(articles, 250.0) / 250.0; // 0-1
+
+        return zNorm * 40 + volNorm * 60;
     }
 
     /**

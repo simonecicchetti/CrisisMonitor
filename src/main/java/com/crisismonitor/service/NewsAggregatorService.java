@@ -95,7 +95,7 @@ public class NewsAggregatorService {
 
     // Topic keywords for categorization
     private static final Map<String, List<String>> TOPICS = Map.of(
-        "CONFLICT", Arrays.asList("conflict", "violence", "military", "armed", "attack", "airstrike", "war", "fighting", "troops"),
+        "CONFLICT", Arrays.asList("conflict", "violence", "military", "armed", "attack", "airstrike", "war", "fighting", "troops", "bomb", "bombing", "strike", "missile", "offensive", "killed", "casualties", "invasion", "siege", "shelling", "targeted", "combat", "battlefield"),
         "MIGRATION", Arrays.asList("migration", "migrant", "refugee", "displacement", "idp", "asylum", "border", "transit"),
         "FOOD_SECURITY", Arrays.asList("food", "hunger", "famine", "nutrition", "wfp", "food security", "malnutrition", "starvation"),
         "HEALTH", Arrays.asList("health", "disease", "outbreak", "cholera", "epidemic", "hospital", "medical", "vaccination"),

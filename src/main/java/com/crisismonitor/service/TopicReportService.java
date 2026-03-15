@@ -1,8 +1,11 @@
 package com.crisismonitor.service;
 
+import com.crisismonitor.model.MediaSpike;
 import com.crisismonitor.model.MobilityStock;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,6 +13,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -33,6 +39,7 @@ public class TopicReportService {
     private final ReliefWebService reliefWebService;
     private final DTMService dtmService;
     private final UNHCRService unhcrService;
+    private final CacheWarmupService cacheWarmupService;
     private final ObjectMapper objectMapper;
 
     @Value("${anthropic.api.key:}")
@@ -44,6 +51,8 @@ public class TopicReportService {
     private final WebClient claudeClient = WebClient.builder()
             .baseUrl("https://api.anthropic.com/v1")
             .build();
+
+    private final WebClient bingClient = WebClient.builder().build();
 
     // Topic to search keywords mapping
     private static final Map<String, List<String>> TOPIC_KEYWORDS = new LinkedHashMap<>();
@@ -289,10 +298,14 @@ public class TopicReportService {
         int maxReliefWebCountries = 12;  // Increased from 6
         boolean isDataLimited = false;
 
-        // Use cached GDELT spikes instead of making new API calls per country
-        // This avoids 15s × N rate-limited calls that cause the report to hang
+        // Use ONLY cached GDELT spikes — NEVER make live GDELT API calls from topic reports
+        // Live calls cause 15s × N rate-limited waits that hang the request
         try {
-            var cachedSpikes = gdeltService.getAllConflictSpikes();
+            @SuppressWarnings("unchecked")
+            List<MediaSpike> cachedSpikes = cacheWarmupService.getFallback("gdeltAllSpikes");
+            if (cachedSpikes == null && cacheWarmupService.isCacheReady("conflict")) {
+                cachedSpikes = gdeltService.getAllConflictSpikes();
+            }
             if (cachedSpikes != null) {
                 for (var spike : cachedSpikes) {
                     String iso3 = spike.getIso3();
@@ -301,7 +314,6 @@ public class TopicReportService {
                     CountryData cd = countryDataMap.computeIfAbsent(iso3, k -> new CountryData(iso3));
                     cd.mediaCount = spike.getArticlesLast7Days() != null ? spike.getArticlesLast7Days() : 0;
 
-                    // Use cached headline titles from spike data
                     if (spike.getTopHeadlines() != null) {
                         for (String headline : spike.getTopHeadlines()) {
                             if (matchesTopic(headline, keywords)) {
@@ -317,9 +329,31 @@ public class TopicReportService {
                         }
                     }
                 }
+            } else {
+                log.info("GDELT cache not ready, skipping GDELT data for topic report");
             }
         } catch (Exception e) {
             log.warn("Error reading cached GDELT data: {}", e.getMessage());
+        }
+
+        // Bing News: single fast query for topic + region (always works, <2s)
+        try {
+            String regionLabel = region != null ? region.replace("-", " ") : "";
+            String bingQuery = String.join(" ", keywords.subList(0, Math.min(3, keywords.size()))) + " " + regionLabel;
+            List<BingNewsItem> bingItems = fetchBingNews(bingQuery.trim(), 8);
+            log.info("Bing News for topic report '{}': {} results", bingQuery.trim(), bingItems.size());
+
+            for (BingNewsItem item : bingItems) {
+                allSources.add(new SourceItem(
+                    "Media",
+                    item.title,
+                    item.url,
+                    item.source,
+                    "Recent"
+                ));
+            }
+        } catch (Exception e) {
+            log.warn("Bing News failed for topic report: {}", e.getMessage());
         }
 
         // Fetch ReliefWeb reports with correct timeframe
@@ -668,6 +702,7 @@ public class TopicReportService {
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(String.class)
+                .timeout(Duration.ofSeconds(30))
                 .block();
 
             JsonNode root = objectMapper.readTree(response);
@@ -831,5 +866,64 @@ public class TopicReportService {
             this.publisher = publisher;
             this.date = date;
         }
+    }
+
+    // ========================================
+    // Bing News RSS (fast, no rate limit)
+    // ========================================
+
+    private static class BingNewsItem {
+        String title;
+        String url;
+        String source;
+    }
+
+    private List<BingNewsItem> fetchBingNews(String query, int limit) {
+        List<BingNewsItem> items = new ArrayList<>();
+        try {
+            String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
+            String url = "https://www.bing.com/news/search?q=" + encoded + "&format=rss&mkt=en-US";
+
+            String xml = bingClient.get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(8))
+                    .block();
+
+            if (xml == null || xml.isBlank()) return items;
+
+            XmlMapper xmlMapper = new XmlMapper();
+            xmlMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            NewsAggregatorService.RssFeed feed = xmlMapper.readValue(xml, NewsAggregatorService.RssFeed.class);
+
+            if (feed == null || feed.getChannel() == null || feed.getChannel().getItems() == null) return items;
+
+            Set<String> seen = new HashSet<>();
+            for (NewsAggregatorService.RssItem rssItem : feed.getChannel().getItems()) {
+                if (items.size() >= limit) break;
+                if (rssItem.getTitle() == null || rssItem.getTitle().isBlank()) continue;
+
+                String title = rssItem.getTitle().trim();
+                String sourceName = "Bing News";
+                int dashIdx = title.lastIndexOf(" - ");
+                if (dashIdx > 0 && dashIdx > title.length() - 40) {
+                    sourceName = title.substring(dashIdx + 3).trim();
+                    title = title.substring(0, dashIdx).trim();
+                }
+
+                String key = title.substring(0, Math.min(40, title.length())).toLowerCase();
+                if (seen.add(key)) {
+                    BingNewsItem item = new BingNewsItem();
+                    item.title = title.length() > 120 ? title.substring(0, 117) + "..." : title;
+                    item.url = rssItem.getLink();
+                    item.source = sourceName;
+                    items.add(item);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Bing News fetch failed for '{}': {}", query, e.getMessage());
+        }
+        return items;
     }
 }

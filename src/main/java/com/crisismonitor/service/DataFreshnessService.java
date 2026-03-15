@@ -24,6 +24,7 @@ public class DataFreshnessService {
     private final ClimateService climateService;
     private final GDELTService gdeltService;
     private final RiskScoreService riskScoreService;
+    private final CacheWarmupService cacheWarmupService;
 
     // Store last update times (in production, could use Redis)
     private final Map<String, LocalDateTime> lastUpdateTimes = new ConcurrentHashMap<>();
@@ -129,7 +130,9 @@ public class DataFreshnessService {
 
     private DataSourceStatus getIdpStatus() {
         try {
-            List<MobilityStock> data = dtmService.getCountryLevelIdps();
+            // Use memory fallback only — DTM downloads a large CSV that can cause OOM
+            @SuppressWarnings("unchecked")
+            List<MobilityStock> data = (List<MobilityStock>) cacheWarmupService.getFallback("dtmData");
             int count = data != null ? data.size() : 0;
 
             updateTracking("idps", count);
@@ -179,7 +182,9 @@ public class DataFreshnessService {
 
     private DataSourceStatus getConflictStatus() {
         try {
-            List<MediaSpike> data = gdeltService.getAllConflictSpikes();
+            // Use memory fallback only — never call GDELT live from profile thread (blocks with rate limiting)
+            @SuppressWarnings("unchecked")
+            List<MediaSpike> data = (List<MediaSpike>) cacheWarmupService.getFallback("gdeltAllSpikes");
             int count = data != null ? data.size() : 0;
 
             updateTracking("conflict", count);
@@ -204,7 +209,9 @@ public class DataFreshnessService {
 
     private DataSourceStatus getRiskScoreStatus() {
         try {
-            List<RiskScore> data = riskScoreService.getAllRiskScores();
+            // Use memory fallback only — getAllRiskScores is sync=true and can block
+            @SuppressWarnings("unchecked")
+            List<RiskScore> data = (List<RiskScore>) cacheWarmupService.getFallback("allRiskScores");
             int count = data != null ? data.size() : 0;
 
             LocalDateTime calcTime = null;

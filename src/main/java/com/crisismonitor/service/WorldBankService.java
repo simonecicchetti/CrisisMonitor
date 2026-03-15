@@ -3,11 +3,14 @@ package com.crisismonitor.service;
 import com.crisismonitor.model.CountryProfile;
 import com.crisismonitor.model.EconomicIndicator;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.time.Duration;
+import java.time.Year;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -16,6 +19,8 @@ import java.util.stream.Collectors;
 public class WorldBankService {
 
     private final WebClient worldBankClient;
+    private final WebClient imfClient;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     // Key indicators for crisis monitoring
     private static final String INFLATION = "FP.CPI.TOTL.ZG";      // Consumer price inflation %
@@ -23,12 +28,22 @@ public class WorldBankService {
     private static final String POPULATION = "SP.POP.TOTL";         // Total population
     private static final String POVERTY = "SI.POV.DDAY";            // Poverty headcount $2.15/day
 
+    // IMF DataMapper indicator for CPI % change (World Economic Outlook)
+    private static final String IMF_INFLATION = "PCPIPCH";
+
     public WorldBankService() {
         this.worldBankClient = WebClient.builder()
                 .baseUrl("https://api.worldbank.org/v2")
                 .codecs(configurer -> configurer
                         .defaultCodecs()
                         .maxInMemorySize(10 * 1024 * 1024))
+                .build();
+
+        this.imfClient = WebClient.builder()
+                .baseUrl("https://www.imf.org/external/datamapper/api/v1")
+                .codecs(configurer -> configurer
+                        .defaultCodecs()
+                        .maxInMemorySize(5 * 1024 * 1024))
                 .build();
     }
 
@@ -96,9 +111,86 @@ public class WorldBankService {
         }
     }
 
+    /**
+     * Get inflation data from IMF DataMapper (WEO projections, updated semi-annually).
+     * Falls back to World Bank if IMF is unavailable.
+     * IMF provides data up to current year + projections, vs World Bank's 1-2 year lag.
+     */
     @Cacheable("inflationData")
     public List<EconomicIndicator> getInflationData() {
+        List<EconomicIndicator> imfData = fetchImfInflation();
+        if (!imfData.isEmpty()) {
+            log.info("Using IMF WEO inflation data: {} records", imfData.size());
+            return imfData;
+        }
+        log.warn("IMF inflation unavailable, falling back to World Bank");
         return fetchIndicator(INFLATION, "Inflation");
+    }
+
+    /**
+     * Fetch inflation data from IMF DataMapper API.
+     * Returns annual CPI % change per country for recent actual years (no projections).
+     * Source: IMF World Economic Outlook (updated April & October each year).
+     * We request currentYear-3 to currentYear — IMF typically has actuals up to currentYear-1.
+     */
+    private List<EconomicIndicator> fetchImfInflation() {
+        int currentYear = Year.now().getValue();
+        // Only actuals: currentYear-3 to currentYear (currentYear may or may not have data yet)
+        String periods = (currentYear - 3) + "," + (currentYear - 2) + "," + (currentYear - 1) + "," + currentYear;
+
+        try {
+            String json = imfClient.get()
+                    .uri("/{indicator}?periods={periods}", IMF_INFLATION, periods)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(15))
+                    .block();
+
+            if (json == null || json.isBlank()) return Collections.emptyList();
+
+            JsonNode root = objectMapper.readTree(json);
+            JsonNode values = root.path("values").path(IMF_INFLATION);
+            if (values.isMissingNode() || !values.isObject()) return Collections.emptyList();
+
+            List<EconomicIndicator> result = new ArrayList<>();
+            var countryFields = values.fields();
+
+            while (countryFields.hasNext()) {
+                var countryEntry = countryFields.next();
+                String iso3 = countryEntry.getKey();
+
+                // Skip regional aggregates (length != 3 or contains digits)
+                if (iso3.length() != 3 || !iso3.matches("[A-Z]{3}")) continue;
+
+                var yearFields = countryEntry.getValue().fields();
+                while (yearFields.hasNext()) {
+                    var yearEntry = yearFields.next();
+                    try {
+                        int year = Integer.parseInt(yearEntry.getKey());
+                        double value = yearEntry.getValue().asDouble(Double.NaN);
+                        if (Double.isNaN(value)) continue;
+
+                        result.add(EconomicIndicator.builder()
+                                .iso3(iso3)
+                                .countryName(null)  // Will be enriched later if needed
+                                .indicatorCode(IMF_INFLATION)
+                                .indicatorName("Inflation, consumer prices (IMF WEO)")
+                                .year(year)
+                                .value(value)
+                                .build());
+                    } catch (NumberFormatException e) {
+                        // Skip non-numeric year keys
+                    }
+                }
+            }
+
+            log.info("Fetched {} IMF inflation records for periods {}", result.size(), periods);
+            return result;
+
+        } catch (Exception e) {
+            log.warn("IMF inflation fetch failed: {}", e.getMessage());
+            return Collections.emptyList();
+        }
     }
 
     @Cacheable("gdpData")
@@ -120,9 +212,11 @@ public class WorldBankService {
         log.info("Fetching {} data from World Bank API...", indicatorLabel);
 
         try {
-            // Fetch last 5 years of data for all countries
+            // Fetch recent years of data for all countries (dynamic range)
+            int currentYear = Year.now().getValue();
+            String dateRange = (currentYear - 4) + ":" + currentYear;
             JsonNode response = worldBankClient.get()
-                    .uri("/country/all/indicator/{indicator}?format=json&per_page=1500&date=2019:2024",
+                    .uri("/country/all/indicator/{indicator}?format=json&per_page=1500&date=" + dateRange,
                             indicatorCode)
                     .retrieve()
                     .bodyToMono(JsonNode.class)
@@ -180,12 +274,29 @@ public class WorldBankService {
     }
 
     /**
-     * Get countries with high inflation (>15%)
+     * Get countries with high inflation (>15%).
+     * Enriches country names from World Bank profiles if missing (IMF data has no names).
      */
     public List<EconomicIndicator> getHighInflationCountries() {
         Map<String, EconomicIndicator> latest = getLatestByCountry(getInflationData());
+
+        // Build ISO3→name lookup for enrichment (IMF data lacks country names)
+        Map<String, String> nameMap = new HashMap<>();
+        try {
+            for (var profile : getCountryProfiles()) {
+                nameMap.put(profile.getIso3(), profile.getName());
+            }
+        } catch (Exception e) {
+            log.debug("Could not load country names for enrichment: {}", e.getMessage());
+        }
+
         return latest.values().stream()
                 .filter(i -> i.getValue() != null && i.getValue() >= 15)
+                .peek(i -> {
+                    if (i.getCountryName() == null || i.getCountryName().isBlank()) {
+                        i.setCountryName(nameMap.getOrDefault(i.getIso3(), i.getIso3()));
+                    }
+                })
                 .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
                 .toList();
     }

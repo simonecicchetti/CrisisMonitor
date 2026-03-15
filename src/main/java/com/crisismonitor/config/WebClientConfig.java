@@ -19,6 +19,8 @@ public class WebClientConfig {
     public WebClient hungerMapClient(WebClient.Builder builder) {
         return builder.clone()
                 .baseUrl("https://api.hungermapdata.org")
+                .defaultHeader("User-Agent", "CrisisMonitor/2.1 (humanitarian-monitoring)")
+                .defaultHeader("Accept", "application/json")
                 .build();
     }
 

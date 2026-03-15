@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -135,6 +136,7 @@ public class ReliefWebService {
                     .uri(url)
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(10))
                     .block();
 
             if (responseStr == null || responseStr.isBlank()) {
@@ -210,6 +212,7 @@ public class ReliefWebService {
                     .uri(url)
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(10))
                     .block();
 
             if (responseStr == null || responseStr.isBlank()) {

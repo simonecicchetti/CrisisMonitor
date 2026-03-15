@@ -932,16 +932,20 @@ const ConflictMonitor = {
       const result = await response.json();
 
       if (result.status === 'LOADING') {
+        const minutes = Math.ceil((this.retryCount * 10) / 60);
         container.innerHTML = `
           <div style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
             <div class="loading-spinner"></div>
-            ${result.message || 'Loading conflict data...'}
+            GDELT data warming up — this can take 10-15 minutes after deploy.
+            <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 4px;">Auto-refreshing...</div>
           </div>
         `;
-        // Use exponential backoff for LOADING state
-        const delay = Utils.getBackoffDelay(this.retryCount, 5000, 30000);
+        // Use exponential backoff for LOADING state — extend retries for GDELT warmup
+        const delay = Utils.getBackoffDelay(this.retryCount, 10000, 60000);
         this.retryCount++;
-        setTimeout(() => { this.loaded = false; this.init(); }, delay);
+        if (this.retryCount <= 20) {
+          setTimeout(() => { this.loaded = false; this.init(); }, delay);
+        }
         return;
       }
 
@@ -1136,6 +1140,8 @@ const RiskScoreMonitor = {
   loaded: false,
   retryCount: 0,
   maxRetries: 5,
+  currentFilter: 'warning', // 'warning' = WARNING+ only, 'all' = show all 20
+  cachedScores: null,
 
   async init() {
     if (this.loaded) return;
@@ -1175,6 +1181,7 @@ const RiskScoreMonitor = {
       const scores = result.data || result;
       const isStale = result.status === 'STALE';
 
+      this.cachedScores = scores;
       this.render(container, scores, isStale);
       this.loaded = true;
       this.retryCount = 0;
@@ -1211,10 +1218,10 @@ const RiskScoreMonitor = {
     }
 
     // Update hero stats counts — only count from displayed countries (top 20)
-    const displayedScores = scores.slice(0, 20);
-    const criticalCount = displayedScores.filter(s => s.riskLevel === 'CRITICAL').length;
-    const alertCount = displayedScores.filter(s => s.riskLevel === 'ALERT').length;
-    const warningCount = displayedScores.filter(s => s.riskLevel === 'WARNING').length;
+    const allScores = scores.slice(0, 20);
+    const criticalCount = allScores.filter(s => s.riskLevel === 'CRITICAL').length;
+    const alertCount = allScores.filter(s => s.riskLevel === 'ALERT').length;
+    const warningCount = allScores.filter(s => s.riskLevel === 'WARNING').length;
 
     const criticalEl = document.getElementById('ew-critical-count');
     const alertEl = document.getElementById('ew-alert-count');
@@ -1224,8 +1231,10 @@ const RiskScoreMonitor = {
     if (alertEl) alertEl.textContent = alertCount;
     if (warningEl) warningEl.textContent = warningCount;
 
-    // Render forecast cards (top 3 at-risk countries)
-    this.renderForecastCards(scores);
+    // Apply filter: WARNING+ or all
+    const filteredScores = this.currentFilter === 'warning'
+      ? allScores.filter(s => ['CRITICAL', 'ALERT', 'WARNING'].includes(s.riskLevel))
+      : allScores;
 
     const staleIndicator = isStale ? `
       <div style="padding: 8px 16px; background: rgba(255, 159, 10, 0.1); border-radius: 8px; margin-bottom: 12px; font-size: 0.75rem; color: var(--warning);">
@@ -1233,7 +1242,16 @@ const RiskScoreMonitor = {
       </div>
     ` : '';
 
-    const rows = scores.slice(0, 20).map(score => {
+    if (filteredScores.length === 0) {
+      container.innerHTML = `
+        <div style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
+          No countries at WARNING level or above
+        </div>
+      `;
+      return;
+    }
+
+    const rows = filteredScores.map(score => {
       const rowClass = this.getRowClass(score.riskLevel);
       const badgeClass = this.getBadgeClass(score.riskLevel);
       const scoreClass = this.getScoreClass(score.riskLevel);
@@ -1329,6 +1347,25 @@ const RiskScoreMonitor = {
     }).join('');
 
     forecastContainer.innerHTML = cards;
+  },
+
+  initFilterToggle() {
+    const warningBtn = document.getElementById('ew-filter-warning');
+    const allBtn = document.getElementById('ew-filter-all');
+    if (!warningBtn || !allBtn) return;
+
+    const toggle = (filter) => {
+      this.currentFilter = filter;
+      warningBtn.classList.toggle('active', filter === 'warning');
+      allBtn.classList.toggle('active', filter === 'all');
+      const container = document.getElementById('risk-scores-container');
+      if (container && this.cachedScores) {
+        this.render(container, this.cachedScores, false);
+      }
+    };
+
+    warningBtn.addEventListener('click', () => toggle('warning'));
+    allBtn.addEventListener('click', () => toggle('all'));
   },
 
   getHorizonBadge(horizon) {
@@ -1653,6 +1690,7 @@ const IPCMonitor = {
       const alerts = result.data || result;
       this.render(container, alerts, result.status === 'STALE');
       this.loaded = true;
+
     } catch (error) {
       console.error('Error loading IPC alerts:', error);
       container.innerHTML = `
@@ -1759,13 +1797,14 @@ const OverviewManager = {
   async init() {
     console.log('[Overview] init called');
 
-    // Load all blocks in parallel (Focus card moved to Early Warning)
+    // Load all blocks in parallel
     try {
       await Promise.all([
         this.loadLiveNews(),
-        this.loadRegionalPulse(),
-        this.loadContextHeadlines()
+        this.loadRegionalPulse()
       ]);
+      // Render humanitarian updates after both are done (needs _reliefwebItems from loadLiveNews)
+      this.renderHumanitarianUpdates();
       console.log('[Overview] all blocks loaded');
     } catch (error) {
       console.error('OverviewManager init error:', error);
@@ -1872,8 +1911,8 @@ const OverviewManager = {
       const result = await response.json();
       console.log('[Overview] Focus Now: response status:', result.status, 'data type:', typeof result.data);
 
-      // Check if still warming up
-      if (result.status === 'WARMING_UP') {
+      // Check if still warming up or loading
+      if (result.status === 'WARMING_UP' || result.status === 'LOADING') {
         container.innerHTML = '<div class="focus-loading">Risk data warming up...</div>';
         setTimeout(() => this.loadFocusNow(), 10000);
         return;
@@ -1894,6 +1933,33 @@ const OverviewManager = {
         const drivers = (top.drivers || []).slice(0, 3);
         console.log('[Overview] Focus Now: top country:', top.countryName, 'score:', top.score);
 
+        // Build narrative explanation from data
+        const narrativeParts = [];
+        if (top.precipitationAnomaly != null && Math.abs(top.precipitationAnomaly) > 20) {
+          const dir = top.precipitationAnomaly < 0 ? 'deficit' : 'excess';
+          narrativeParts.push(`severe precipitation ${dir} (${top.precipitationAnomaly > 0 ? '+' : ''}${top.precipitationAnomaly.toFixed(0)}%)`);
+        }
+        if (top.ipcPhase != null && top.ipcPhase >= 3) {
+          const phaseLabel = top.ipcPhase >= 5 ? 'Famine' : top.ipcPhase >= 4 ? 'Emergency' : 'Crisis';
+          narrativeParts.push(`IPC Phase ${top.ipcPhase} (${phaseLabel})`);
+        }
+        if (top.foodSecurityScore != null && top.foodSecurityScore >= 40) {
+          narrativeParts.push(`food security stress (${top.foodSecurityScore}/100)`);
+        }
+        if (top.currencyChange30d != null && Math.abs(top.currencyChange30d) > 1) {
+          narrativeParts.push(`${top.currencyChange30d > 0 ? '' : ''}${top.currencyChange30d.toFixed(1)}% currency change (30d)`);
+        }
+        if (top.gdeltZScore != null && top.gdeltZScore > 2) {
+          narrativeParts.push(`elevated media coverage (z-score ${top.gdeltZScore.toFixed(1)})`);
+        }
+
+        const elevatedCount = (top.climateElevated ? 1 : 0) + (top.conflictElevated ? 1 : 0) + (top.economicElevated ? 1 : 0);
+        const ruleText = elevatedCount >= 2 ? `Triggers 2-of-3 rule (${elevatedCount}/3 elevated).` : '';
+
+        const narrative = narrativeParts.length > 0
+          ? `Driven by ${narrativeParts.join(', ')}. ${ruleText}`
+          : `${drivers.join(', ')} indicators elevated. ${ruleText}`;
+
         container.innerHTML = `
           <div class="focus-now-label">Top Deterioration Risk</div>
           <div class="focus-now-content">
@@ -1909,6 +1975,7 @@ const OverviewManager = {
             </div>
             <div class="focus-now-horizon">${top.horizon || '30-day'} horizon</div>
           </div>
+          <div class="focus-now-narrative">${narrative}</div>
         `;
       } else {
         console.log('[Overview] Focus Now: no scores in response');
@@ -2064,23 +2131,19 @@ const OverviewManager = {
       }
 
       const data = await response.json();
-      const mediaItems = (data.media || []).slice(0, 3);
-      const reliefItems = (data.reliefweb || []).slice(0, 3);
-      console.log('[Overview] Live News: got', mediaItems.length, 'media +', reliefItems.length, 'reliefweb');
+      // Only media RSS — breaking news from Al Jazeera, BBC, Guardian, etc.
+      const mediaItems = (data.media || []).slice(0, 6);
+      console.log('[Overview] Latest News: got', mediaItems.length, 'media items');
 
-      // Interleave: media, reliefweb, media, reliefweb, ...
-      const mixed = [];
-      for (let i = 0; i < 3; i++) {
-        if (mediaItems[i]) mixed.push(mediaItems[i]);
-        if (reliefItems[i]) mixed.push(reliefItems[i]);
-      }
+      // Store reliefweb data for Regional Pulse enrichment
+      this._reliefwebItems = data.reliefweb || [];
 
-      if (mixed.length === 0) {
+      if (mediaItems.length === 0) {
         container.innerHTML = '<div class="loading-placeholder">No news stories available</div>';
         return;
       }
 
-      container.innerHTML = mixed.map(item => {
+      container.innerHTML = mediaItems.map(item => {
         const regionBadge = item.region && item.region !== 'Global'
           ? `<span class="news-region-badge">${item.region}</span>`
           : '';
@@ -2173,14 +2236,6 @@ const OverviewManager = {
             ` : `
               <div class="pulse-no-data">Stable — no critical situations</div>
             `}
-            <div class="pulse-card-actions">
-              <button class="pulse-drilldown-btn" data-region="${region.regionCode}" title="View all countries in ${region.regionName}">
-                View all
-              </button>
-              <button class="pulse-brief-btn" data-region="${region.regionCode}" title="Get AI briefing for ${region.regionName}">
-                Brief me
-              </button>
-            </div>
           </div>
         `;
       }).join('');
@@ -2193,49 +2248,42 @@ const OverviewManager = {
     }
   },
 
-  async loadContextHeadlines(region = null) {
-    const container = document.getElementById('context-headlines');
-    if (!container) {
-      console.log('[Overview] Context Headlines: container not found');
+  renderHumanitarianUpdates() {
+    const container = document.getElementById('humanitarian-updates-list');
+    if (!container) return;
+
+    const items = (this._reliefwebItems || []).slice(0, 5);
+    if (items.length === 0) {
+      container.innerHTML = '<div class="loading-placeholder">No humanitarian reports available</div>';
       return;
     }
 
-    try {
-      // Fetch all or region-specific context
-      const url = region
-        ? `/api/regions/context?region=${encodeURIComponent(region)}`
-        : '/api/regions/context/all';
-      console.log('[Overview] Context: fetching', url);
-      const response = await fetch(url);
-      const headlines = await response.json();
-      console.log('[Overview] Context: got', headlines.length, 'headlines for', region || 'all');
+    container.innerHTML = items.map(item => {
+      const regionBadge = item.region
+        ? `<span class="hu-region">${Utils.escapeHtml(item.region)}</span>`
+        : '';
+      const title = Utils.escapeHtml(item.title || 'Untitled');
+      const source = Utils.escapeHtml(item.source || 'ReliefWeb');
+      const timeAgo = item.timeAgo ? Utils.escapeHtml(item.timeAgo) : '';
 
-      if (!headlines || headlines.length === 0) {
-        container.innerHTML = '<div class="loading-placeholder">Context signals loading...</div>';
-        return;
-      }
+      return `
+        <div class="hu-item"${item.url ? ` data-url="${Utils.sanitizeUrl(item.url)}"` : ''}>
+          ${regionBadge}
+          <span class="hu-title">${title}</span>
+          <span class="hu-meta">
+            <span class="hu-source">${source}</span>
+            ${timeAgo ? `<span class="hu-time">${timeAgo}</span>` : ''}
+          </span>
+        </div>
+      `;
+    }).join('');
 
-      container.innerHTML = headlines.map(item => {
-        // Sanitize URL: only allow http/https
-        const safeUrl = Utils.sanitizeUrl(item.url, null);
-        return `
-          <div class="context-item ${item.type === 'Humanitarian' ? 'humanitarian' : 'media'}">
-            <div class="context-meta">
-              <span class="context-source">${Utils.escapeHtml(item.source)}</span>
-              <span class="context-region">${Utils.escapeHtml(item.region)}</span>
-              ${item.timestamp ? `<span class="context-time">${Utils.escapeHtml(item.timestamp)}</span>` : ''}
-            </div>
-            ${safeUrl
-              ? `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="context-title">${Utils.escapeHtml(item.title)}</a>`
-              : `<span class="context-title">${Utils.escapeHtml(item.title)}</span>`
-            }
-          </div>
-        `;
-      }).join('');
-    } catch (error) {
-      console.error('[Overview] Context headlines error:', error);
-      container.innerHTML = '<div class="loading-placeholder">Context signals temporarily unavailable</div>';
-    }
+    // Click to open report
+    container.querySelectorAll('.hu-item[data-url]').forEach(item => {
+      item.addEventListener('click', () => {
+        window.open(item.dataset.url, '_blank', 'noopener');
+      });
+    });
   },
 
   setupNavLinks() {
@@ -2252,40 +2300,26 @@ const OverviewManager = {
   selectedRegion: null,
 
   setupRegionalPulseClicks() {
-    // Card click - open regional drill-down
+    // Card click - open regional detail
     document.querySelectorAll('.pulse-card').forEach(card => {
       card.addEventListener('click', (e) => {
-        // Don't trigger card click if clicking the brief button
-        if (e.target.classList.contains('pulse-brief-btn')) return;
+        // Don't trigger card click if clicking a link
+        if (e.target.closest('a')) return;
 
         const regionCode = card.dataset.region;
         if (!regionCode) return;
 
-        // Toggle selection for context headlines
+        // Toggle selection visual
         if (this.selectedRegion === regionCode) {
-          // Deselect - show all regions
           this.selectedRegion = null;
           document.querySelectorAll('.pulse-card').forEach(c => c.classList.remove('selected'));
-          this.loadContextHeadlines(); // Load all
         } else {
-          // Select this region
           this.selectedRegion = regionCode;
           document.querySelectorAll('.pulse-card').forEach(c => c.classList.remove('selected'));
           card.classList.add('selected');
-          this.loadContextHeadlines(regionCode); // Load region-specific
         }
 
         console.log('[Overview] Selected region:', this.selectedRegion);
-      });
-    });
-
-    // Brief button click - get AI regional briefing
-    document.querySelectorAll('.pulse-brief-btn').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const regionCode = btn.dataset.region;
-        if (!regionCode) return;
-        await this.getRegionalBrief(regionCode);
       });
     });
 
@@ -2593,7 +2627,10 @@ const FocusAdvisor = {
 
     try {
       // Use the global AI analysis endpoint
-      const response = await fetch('/api/analysis/global');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      const response = await fetch('/api/analysis/global', { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!response.ok) throw new Error('Analysis failed');
 
       const data = await response.json();
@@ -2615,7 +2652,7 @@ const FocusAdvisor = {
     const existing = document.getElementById('focus-advisor-popup');
     if (existing) existing.remove();
 
-    const watchlist = data.watchlist || [];
+    const watchlist = data.watchList || [];
     const topPriority = watchlist.slice(0, 3);
 
     if (topPriority.length === 0) {
@@ -2793,8 +2830,13 @@ const AIAnalysisManager = {
       resultsContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
+
     try {
-      const response = await fetch(`/api/analysis/country?iso3=${countryCode}`);
+      const response = await fetch(`/api/analysis/country?iso3=${countryCode}`, {
+        signal: controller.signal
+      });
 
       if (!response.ok) {
         throw new Error(`Server error: ${response.status}`);
@@ -2805,8 +2847,10 @@ const AIAnalysisManager = {
 
     } catch (error) {
       console.error('AI Analysis error:', error);
-      this.renderError(error.message);
+      const msg = error.name === 'AbortError' ? 'Request timed out — try again in a moment' : error.message;
+      this.renderError(msg);
     } finally {
+      clearTimeout(timeoutId);
       this.isLoading = false;
       this.lastAnalysisTime = Date.now();
       briefingBtn.disabled = false;
@@ -2834,49 +2878,126 @@ const AIAnalysisManager = {
     customAnswer.innerHTML = '';
     customAnswer.classList.add('hidden');
 
-    if (data.scope === 'custom' && data.customAnswer) {
+    // Remove any previous narrative container
+    const prevNarrative = resultsContainer.querySelector('.country-narrative-container');
+    if (prevNarrative) prevNarrative.remove();
+
+    if (data.scope === 'country' && data.narrative) {
+      // === NARRATIVE COUNTRY ANALYSIS ===
+      findingsList.parentElement.classList.add('hidden');
+      driversList.parentElement.classList.add('hidden');
+      watchlistList.parentElement.classList.add('hidden');
+
+      const narrativeContainer = document.createElement('div');
+      narrativeContainer.className = 'country-narrative-container';
+
+      // Risk badge header
+      const riskClass = (data.riskLevel || 'stable').toLowerCase();
+      const badgeClass = riskClass === 'critical' ? 'famine' : riskClass === 'alert' ? 'critical' : riskClass === 'warning' ? 'high' : 'medium';
+      const headerHtml = `
+        <div class="narrative-header">
+          <span class="narrative-country">${Utils.escapeHtml(data.countryName || data.countryIso3 || '')}</span>
+          <span class="badge ${badgeClass}">${Utils.escapeHtml(data.riskLevel || 'N/A')}</span>
+          ${data.riskScore != null ? `<span class="narrative-score">${data.riskScore}/100</span>` : ''}
+        </div>
+      `;
+
+      // Narrative prose with citation links
+      let narrativeHtml = Utils.escapeHtml(data.narrative);
+      // Convert [N] to clickable citation badges
+      if (data.sources && data.sources.length > 0) {
+        narrativeHtml = narrativeHtml.replace(/\[(\d+)\]/g, (match, num) => {
+          const idx = parseInt(num);
+          const src = data.sources.find(s => s.index === idx);
+          if (src && src.url) {
+            return `<a class="qa-cite" href="${Utils.sanitizeUrl(src.url)}" target="_blank" rel="noopener noreferrer" title="${Utils.escapeHtml(src.title || '')}">[${idx}]</a>`;
+          }
+          return `<span class="qa-cite">[${idx}]</span>`;
+        });
+      }
+      // Convert section headers (BOTTOM LINE:, CURRENT SITUATION:, KEY RISKS:, OUTLOOK:) to styled elements
+      narrativeHtml = narrativeHtml.replace(/(?:^|\n)(BOTTOM LINE|CURRENT SITUATION|KEY RISKS|OUTLOOK):\s*/g, '\n\n%%SECTION:$1%%');
+      // Convert double newlines to paragraphs
+      narrativeHtml = narrativeHtml.split('\n\n').filter(p => p.trim()).map(p => {
+        const sectionMatch = p.match(/^%%SECTION:(.+?)%%(.*)$/s);
+        if (sectionMatch) {
+          return `<div class="narrative-section"><span class="narrative-section-label">${sectionMatch[1]}</span><p>${sectionMatch[2].replace(/\n/g, ' ')}</p></div>`;
+        }
+        return `<p>${p.replace(/\n/g, ' ')}</p>`;
+      }).join('');
+      if (!narrativeHtml.includes('<p>')) narrativeHtml = `<p>${narrativeHtml}</p>`;
+
+      // Sources list
+      let sourcesHtml = '';
+      if (data.sources && data.sources.length > 0) {
+        sourcesHtml = `
+          <div class="qa-sources">
+            <div class="qa-sources-title">Sources (${data.sources.length})</div>
+            ${data.sources.map(s => `
+              <div class="qa-source-item">
+                <span class="qa-source-idx">[${s.index}]</span>
+                <a class="qa-source-link" href="${Utils.sanitizeUrl(s.url)}" target="_blank" rel="noopener noreferrer">${Utils.escapeHtml(s.title)}</a>
+                <span class="qa-source-meta">${Utils.escapeHtml(s.source || s.sourceType || '')}${s.timeAgo ? ' · ' + Utils.escapeHtml(s.timeAgo) : ''}</span>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      narrativeContainer.innerHTML = headerHtml + `<div class="qa-answer">${narrativeHtml}</div>` + sourcesHtml;
+
+      // Insert before meta info
+      const metaDiv = resultsContainer.querySelector('.ai-result-meta');
+      if (metaDiv) {
+        metaDiv.before(narrativeContainer);
+      } else {
+        resultsContainer.appendChild(narrativeContainer);
+      }
+
+    } else if (data.scope === 'custom' && data.customAnswer) {
       // Show custom answer
       customAnswer.textContent = data.customAnswer;
       customAnswer.classList.remove('hidden');
 
-      // Hide structured sections
       findingsList.parentElement.classList.add('hidden');
       driversList.parentElement.classList.add('hidden');
       watchlistList.parentElement.classList.add('hidden');
     } else {
-      // Show structured results
+      // Show structured results (global/region)
       findingsList.parentElement.classList.remove('hidden');
       driversList.parentElement.classList.remove('hidden');
       watchlistList.parentElement.classList.remove('hidden');
 
-      // Key Findings
       if (data.keyFindings && data.keyFindings.length > 0) {
         data.keyFindings.forEach(finding => {
           const li = document.createElement('li');
           li.textContent = finding;
           findingsList.appendChild(li);
         });
+      } else {
+        findingsList.innerHTML = '<li class="text-muted">No findings available</li>';
       }
 
-      // Drivers
       if (data.drivers && data.drivers.length > 0) {
         data.drivers.forEach(driver => {
           const li = document.createElement('li');
           li.textContent = driver;
           driversList.appendChild(li);
         });
+      } else {
+        driversList.innerHTML = '<li class="text-muted">No driver data available</li>';
       }
 
-      // Watch List
       if (data.watchList && data.watchList.length > 0) {
         data.watchList.forEach(item => {
           const li = document.createElement('li');
           li.textContent = item;
           watchlistList.appendChild(li);
         });
+      } else {
+        watchlistList.innerHTML = '<li class="text-muted">No outlook data available</li>';
       }
 
-      // News Signal Section (GDELT)
       this.renderNewsSignal(data.newsSignal);
     }
 
@@ -3308,9 +3429,13 @@ const SituationDetectionManager = {
 
     try {
       // Add cache-busting parameter to ensure fresh detection
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
       const response = await fetch(`/api/situations/detect?_=${Date.now()}`, {
-        cache: 'no-store'
+        cache: 'no-store',
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       console.log('[SituationDetection] Response status:', response.status);
 
       if (!response.ok) {
@@ -3513,14 +3638,18 @@ const CountryDetailManager = {
     `;
 
     try {
-      const res = await fetch(`/api/countries/${encodeURIComponent(iso3)}/profile`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20000);
+      const res = await fetch(`/api/countries/${encodeURIComponent(iso3)}/profile`, { signal: controller.signal });
+      clearTimeout(timeout);
       const profile = res.ok ? await res.json() : null;
       this.render(body, iso3, profile);
     } catch (error) {
       console.error('Error loading country profile:', error);
+      const msg = error.name === 'AbortError' ? 'Loading timed out — data sources may be warming up. Try again in a moment.' : 'Unable to load country data.';
       body.innerHTML = `
         <div style="text-align: center; padding: 40px; color: var(--text-tertiary);">
-          Unable to load country data.
+          ${msg}
           <br><br>
           <button onclick="CountryDetailManager.open('${Utils.escapeHtml(iso3)}', '${Utils.escapeHtml(countryName || '')}')" class="btn-secondary">Retry</button>
         </div>
@@ -3650,10 +3779,10 @@ const CountryDetailManager = {
         html += `<div class="metric"><span class="metric-label">People IPC 4-5</span><span class="metric-value" style="color:var(--status-critical)">${this._fmtNum(p.peoplePhase4to5)}${p.percentPhase4to5 ? ` (${p.percentPhase4to5.toFixed(0)}%)` : ''}</span></div>`;
       }
       if (p.fcsPrevalence) {
-        html += `<div class="metric"><span class="metric-label">Insufficient food (FCS)</span><span class="metric-value">${p.fcsPrevalence.toFixed(0)}%${p.fcsPeople ? ` (${this._fmtNum(p.fcsPeople)})` : ''}</span></div>`;
+        html += `<div class="metric"><span class="metric-label">Insufficient food (FCS)</span><span class="metric-value">${(p.fcsPrevalence * 100).toFixed(1)}%${p.fcsPeople ? ` (${this._fmtNum(p.fcsPeople)})` : ''}</span></div>`;
       }
       if (p.rcsiPrevalence) {
-        html += `<div class="metric"><span class="metric-label">Crisis coping (rCSI)</span><span class="metric-value">${p.rcsiPrevalence.toFixed(0)}%${p.rcsiPeople ? ` (${this._fmtNum(p.rcsiPeople)})` : ''}</span></div>`;
+        html += `<div class="metric"><span class="metric-label">Crisis coping (rCSI)</span><span class="metric-value">${(p.rcsiPrevalence * 100).toFixed(1)}%${p.rcsiPeople ? ` (${this._fmtNum(p.rcsiPeople)})` : ''}</span></div>`;
       }
       html += `</div></div>`;
     }
@@ -3905,10 +4034,8 @@ const SidebarManager = {
         RiskScoreMonitor.init();
         IPCMonitor.init();
         ClusterAlertMonitor.loadFull();
-        IntelligenceManager.init(); // Top Risk Spotlight
-        // Load Current Focus section (moved from Overview)
-        OverviewManager.loadFocusNow();
-        OverviewManager.loadBriefBullets();
+        EWSituationManager.init();
+        EWPanelManager.init();
         break;
       case 'news-feed':
         NewsFeedManager.init();
@@ -3922,9 +4049,10 @@ const SidebarManager = {
         SituationManager.init();
         break;
       case 'intelligence':
-        // Analysis Mode: Topic Reports, Daily Briefing
+        // AI Analysis: Ask AI + Topic Reports + WHO
+        QAManager.init();
         TopicReportGenerator.init();
-        DailyBriefingManager.init();
+        IntelligenceManager.loadWHOOutbreaks();
         break;
     }
 
@@ -4678,33 +4806,628 @@ const SituationManager = {
 };
 
 // ============================================
+// EW PANEL MANAGER — Split panel + hero clicks + cluster banner
+// ============================================
+const EWPanelManager = {
+  initialized: false,
+  selectedIso3: null,
+
+  init() {
+    if (!this.initialized) {
+      this.initialized = true;
+      this.setupHeroClicks();
+      this.setupClusterBanner();
+      this.initListFilter();
+    }
+    // Always refresh the country list when tab is entered
+    this.waitForScoresAndRenderList();
+  },
+
+  setupHeroClicks() {
+    document.querySelectorAll('.ew-stat-clickable').forEach(stat => {
+      stat.style.cursor = 'pointer';
+      stat.addEventListener('click', () => {
+        const level = stat.dataset.level;
+        // Switch to "All 20" filter and scroll to table
+        RiskScoreMonitor.currentFilter = 'all';
+        const warningBtn = document.getElementById('ew-filter-warning');
+        const allBtn = document.getElementById('ew-filter-all');
+        if (warningBtn) warningBtn.classList.remove('active');
+        if (allBtn) allBtn.classList.add('active');
+        const container = document.getElementById('risk-scores-container');
+        if (container && RiskScoreMonitor.cachedScores) {
+          RiskScoreMonitor.render(container, RiskScoreMonitor.cachedScores, false);
+          // Scroll to table
+          container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          // Highlight rows of this level
+          setTimeout(() => {
+            container.querySelectorAll('tr').forEach(row => {
+              if (row.classList.contains('row-' + level.toLowerCase())) {
+                row.style.outline = '2px solid var(--accent-blue)';
+                setTimeout(() => { row.style.outline = ''; }, 3000);
+              }
+            });
+          }, 300);
+        }
+      });
+    });
+  },
+
+  setupClusterBanner() {
+    // ClusterAlertMonitor.loadFull() populates #cluster-alerts-full
+    // We observe it and show/hide the banner based on content
+    const banner = document.getElementById('ew-cluster-banner');
+    const container = document.getElementById('cluster-alerts-full');
+    if (!banner || !container) return;
+
+    const observer = new MutationObserver(() => {
+      const hasContent = container.innerHTML.trim() !== '' && !container.innerHTML.includes('No regional');
+      banner.style.display = hasContent ? 'block' : 'none';
+    });
+    observer.observe(container, { childList: true, subtree: true });
+  },
+
+  waitForScoresAndRenderList() {
+    // Wait for RiskScoreMonitor to load, then render split panel list
+    let attempts = 0;
+    const check = () => {
+      if (RiskScoreMonitor.cachedScores && RiskScoreMonitor.cachedScores.length > 0) {
+        this.renderCountryList(RiskScoreMonitor.cachedScores);
+      } else if (attempts < 30) {
+        attempts++;
+        setTimeout(check, 1000);
+      }
+    };
+    check();
+  },
+
+  _listFilter: 'warning',
+
+  renderCountryList(scores) {
+    const container = document.getElementById('ew-country-list');
+    if (!container) return;
+
+    const allScores = scores.slice(0, 20);
+
+    // Apply filter
+    const filtered = this._listFilter === 'warning'
+      ? allScores.filter(s => ['CRITICAL', 'ALERT', 'WARNING'].includes(s.riskLevel))
+      : allScores;
+
+    if (filtered.length === 0) {
+      container.innerHTML = '<div class="ew-country-more">No countries at WARNING level or above</div>';
+      return;
+    }
+
+    container.innerHTML = filtered.map((s, i) => {
+      const levelClass = s.riskLevel === 'CRITICAL' ? 'critical' : s.riskLevel === 'ALERT' ? 'alert' : s.riskLevel === 'WARNING' ? 'warning' : 'watch';
+      const isFirst = i === 0 && !this.selectedIso3;
+      const isSelected = this.selectedIso3 === s.iso3;
+      return `
+        <div class="ew-country-item ${isFirst || isSelected ? 'active' : ''}" data-iso3="${s.iso3}" data-index="${i}">
+          <span class="ew-country-dot ew-dot-${levelClass}"></span>
+          <span class="ew-country-name">${Utils.escapeHtml(s.countryName)}</span>
+          <span class="ew-country-score">${s.score}</span>
+        </div>
+      `;
+    }).join('');
+
+    // Auto-select first country if none selected
+    const activeScore = this.selectedIso3 ? filtered.find(s => s.iso3 === this.selectedIso3) : null;
+    if (activeScore) {
+      this.showCountryDetail(activeScore);
+    } else if (filtered.length > 0) {
+      this.showCountryDetail(filtered[0]);
+    }
+
+    // Click handler (use event delegation, bind once)
+    if (!this._listClickBound) {
+      this._listClickBound = true;
+      container.addEventListener('click', (e) => {
+        const item = e.target.closest('.ew-country-item');
+        if (!item) return;
+        const idx = parseInt(item.dataset.index);
+        const currentFiltered = this._listFilter === 'warning'
+          ? this._currentScores.slice(0, 20).filter(s => ['CRITICAL', 'ALERT', 'WARNING'].includes(s.riskLevel))
+          : this._currentScores.slice(0, 20);
+        const score = currentFiltered[idx];
+        if (!score) return;
+
+        container.querySelectorAll('.ew-country-item').forEach(el => el.classList.remove('active'));
+        item.classList.add('active');
+        this.showCountryDetail(score);
+      });
+    }
+    this._currentScores = scores;
+  },
+
+  initListFilter() {
+    const warningBtn = document.getElementById('ew-filter-warning');
+    const allBtn = document.getElementById('ew-filter-all');
+    if (!warningBtn || !allBtn) return;
+
+    warningBtn.addEventListener('click', () => {
+      this._listFilter = 'warning';
+      warningBtn.classList.add('active');
+      allBtn.classList.remove('active');
+      if (this._currentScores) this.renderCountryList(this._currentScores);
+    });
+    allBtn.addEventListener('click', () => {
+      this._listFilter = 'all';
+      allBtn.classList.add('active');
+      warningBtn.classList.remove('active');
+      if (this._currentScores) this.renderCountryList(this._currentScores);
+    });
+  },
+
+  showCountryDetail(score) {
+    const container = document.getElementById('ew-country-detail');
+    if (!container) return;
+    this.selectedIso3 = score.iso3;
+
+    const levelClass = (score.riskLevel || 'WATCH').toLowerCase();
+    const badgeClass = score.riskLevel === 'CRITICAL' ? 'famine' : score.riskLevel === 'ALERT' ? 'critical' : score.riskLevel === 'WARNING' ? 'high' : 'medium';
+
+    const drivers = (score.drivers || []).slice(0, 4);
+    const elevatedCount = (score.climateElevated ? 1 : 0) + (score.conflictElevated ? 1 : 0) + (score.economicElevated ? 1 : 0);
+
+    // Build sub-scores display
+    const subScores = [];
+    if (score.foodSecurityScore != null) subScores.push({ label: 'Food', value: score.foodSecurityScore, weight: '30%' });
+    if (score.climateScore != null) subScores.push({ label: 'Climate', value: score.climateScore, weight: '25%' });
+    if (score.conflictScore != null) subScores.push({ label: 'Conflict', value: score.conflictScore, weight: '25%' });
+    if (score.economicScore != null) subScores.push({ label: 'Economic', value: score.economicScore, weight: '20%' });
+
+    const subScoresHtml = subScores.length > 0 ? `
+      <div class="ew-detail-subscores">
+        ${subScores.map(s => `
+          <div class="ew-subscore">
+            <div class="ew-subscore-bar ew-bar-${s.label.toLowerCase()}" style="width: ${Math.min(s.value, 100)}%"></div>
+            <span class="ew-subscore-label">${s.label} <span class="text-muted">${s.weight}</span></span>
+            <span class="ew-subscore-value">${s.value}</span>
+          </div>
+        `).join('')}
+      </div>
+    ` : '';
+
+    // Narrative from available data
+    const narrativeParts = [];
+    if (score.precipitationAnomaly != null && Math.abs(score.precipitationAnomaly) > 20) {
+      const dir = score.precipitationAnomaly < 0 ? 'deficit' : 'excess';
+      narrativeParts.push(`Precipitation ${dir}: ${score.precipitationAnomaly > 0 ? '+' : ''}${score.precipitationAnomaly.toFixed(0)}%`);
+    }
+    if (score.ipcPhase != null && score.ipcPhase >= 3) {
+      const label = score.ipcPhase >= 5 ? 'Famine' : score.ipcPhase >= 4 ? 'Emergency' : 'Crisis';
+      narrativeParts.push(`IPC Phase ${score.ipcPhase} (${label})`);
+    }
+    if (score.currencyChange30d != null && Math.abs(score.currencyChange30d) > 1) {
+      narrativeParts.push(`Currency: ${score.currencyChange30d > 0 ? '+' : ''}${score.currencyChange30d.toFixed(1)}% (30d)`);
+    }
+    if (score.gdeltZScore != null && score.gdeltZScore > 1.5) {
+      narrativeParts.push(`Media spike z=${score.gdeltZScore.toFixed(1)}`);
+    }
+
+    container.innerHTML = `
+      <div class="ew-detail-header">
+        <span class="ew-detail-country">${Utils.escapeHtml(score.countryName)}</span>
+        <span class="badge ${badgeClass}">${score.riskLevel}</span>
+        <span class="ew-detail-score">${score.score}/100</span>
+      </div>
+      <div class="ew-detail-horizon">${score.horizon || '30-day'} horizon${elevatedCount >= 2 ? ' · 2-of-3 rule triggered' : ''}</div>
+      <div class="ew-detail-drivers">
+        ${drivers.map(d => `<span class="driver-chip">${d}</span>`).join('')}
+      </div>
+      ${subScoresHtml}
+      ${narrativeParts.length > 0 ? `<div class="ew-detail-narrative">${narrativeParts.join(' · ')}</div>` : ''}
+      <button class="ew-deep-btn" onclick="EWPanelManager.loadDeepAnalysis('${score.iso3}')">Analyze with Claude</button>
+      <div id="ew-deep-result"></div>
+    `;
+  },
+
+  async loadDeepAnalysis(iso3) {
+    const btn = document.querySelector('.ew-deep-btn');
+    const resultDiv = document.getElementById('ew-deep-result');
+    if (!btn || !resultDiv) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Analyzing...';
+    resultDiv.innerHTML = '<div class="loading-spinner" style="margin: var(--space-md) auto;"></div>';
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      const response = await fetch(`/api/analysis/deep?iso3=${iso3}`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) throw new Error('Analysis failed');
+      const data = await response.json();
+
+      let html = '';
+      if (data.reasoning) html += `<div class="ew-deep-section"><strong>Assessment</strong><p>${Utils.escapeHtml(data.reasoning)}</p></div>`;
+      if (data.drivers && data.drivers.length > 0) {
+        html += `<div class="ew-deep-section"><strong>Key Drivers</strong><ul>${data.drivers.map(d => `<li>${Utils.escapeHtml(d)}</li>`).join('')}</ul></div>`;
+      }
+      if (data.trajectory) html += `<div class="ew-deep-section"><strong>30-day Trajectory</strong><p>${Utils.escapeHtml(data.trajectory)}</p></div>`;
+      if (data.trajectoryReason) html += `<div class="ew-deep-section"><p>${Utils.escapeHtml(data.trajectoryReason)}</p></div>`;
+
+      resultDiv.innerHTML = html || '<div class="text-muted">No detailed analysis available</div>';
+      btn.textContent = 'Analysis complete';
+    } catch (e) {
+      resultDiv.innerHTML = `<div class="text-muted">Analysis failed: ${e.name === 'AbortError' ? 'timeout' : e.message}</div>`;
+      btn.textContent = 'Analyze with Claude';
+      btn.disabled = false;
+    }
+  }
+};
+
+// ============================================
+// EW SITUATION MANAGER (merged into Early Warning)
+// ============================================
+const EWSituationManager = {
+  loaded: false,
+  data: null,
+  currentFilter: 'critical,high',
+
+  async init() {
+    if (this.loaded && this.data) {
+      this.renderAll(this.data);
+      return;
+    }
+
+    const list = document.getElementById('ew-situations-list');
+    if (list) Utils.showSkeleton(list, 'alert', 3);
+
+    this.initFilters();
+
+    try {
+      // Try Claude cache first
+      const claudeResp = await fetch('/api/situations/claude-cached', { cache: 'no-store' });
+      if (claudeResp.ok) {
+        const claudeData = await claudeResp.json();
+        if (claudeData && claudeData.status === 'OK' && claudeData.situations && claudeData.situations.length > 0) {
+          this.data = SituationManager.transformClaudeData(claudeData);
+          this.renderAll(this.data);
+          this.loaded = true;
+          return;
+        }
+      }
+
+      // Fallback to keyword-based
+      const resp = await fetch('/api/situations/active');
+      if (!resp.ok) return;
+      const data = await resp.json();
+
+      if (data && data.status === 'WARMING_UP') {
+        if (list) list.innerHTML = '<div class="text-muted" style="padding: var(--space-md);">Detecting situations...</div>';
+        setTimeout(() => { this.loaded = false; this.init(); }, 30000);
+        return;
+      }
+
+      if (data && (data.status === 'READY' || data.situations)) {
+        this.data = data;
+        this.renderAll(data);
+        this.loaded = true;
+      }
+    } catch (e) {
+      console.warn('EW Situations error:', e);
+      if (list) list.innerHTML = '<div class="text-muted" style="padding: var(--space-md);">Unable to detect situations</div>';
+    }
+  },
+
+  initFilters() {
+    const chips = document.querySelectorAll('#ew-situation-filter-strip .situation-filter-chip');
+    chips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        chips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        this.currentFilter = chip.dataset.filter;
+        if (this.data) this.renderList(this.data);
+      });
+    });
+  },
+
+  renderAll(data) {
+    // Update counts
+    const situations = data.situations || [];
+    const counts = { CRITICAL: 0, HIGH: 0 };
+    situations.forEach(s => {
+      const sev = (s.severity || '').toUpperCase();
+      if (counts.hasOwnProperty(sev)) counts[sev]++;
+    });
+
+    const critHighEl = document.getElementById('ew-count-critical-high');
+    const allEl = document.getElementById('ew-count-all');
+    if (critHighEl) critHighEl.textContent = counts.CRITICAL + counts.HIGH;
+    if (allEl) allEl.textContent = situations.length;
+
+    const badge = document.getElementById('ew-situations-count');
+    if (badge) {
+      const total = situations.length;
+      badge.textContent = `${total} detected`;
+      badge.className = total > 5 ? 'badge famine' : total > 2 ? 'badge critical' : 'badge';
+    }
+
+    // Auto-open collapsible if CRITICAL situations exist
+    const details = document.getElementById('ew-situations-details');
+    if (details && counts.CRITICAL > 0) {
+      details.open = true;
+    }
+
+    this.renderList(data);
+  },
+
+  renderList(data) {
+    const container = document.getElementById('ew-situations-list');
+    if (!container) return;
+
+    const situations = data.situations || [];
+    if (situations.length === 0) {
+      container.innerHTML = '<div class="text-muted" style="padding: var(--space-md);">No active situations detected</div>';
+      return;
+    }
+
+    const filterValues = this.currentFilter.split(',').map(f => f.toUpperCase());
+    const filtered = this.currentFilter === 'all'
+      ? situations
+      : situations.filter(s => filterValues.includes((s.severity || 'WATCH').toUpperCase()));
+
+    if (filtered.length === 0) {
+      container.innerHTML = '<div class="text-muted" style="padding: var(--space-md);">No situations matching filter</div>';
+      return;
+    }
+
+    container.innerHTML = filtered.slice(0, 10).map(s => {
+      const sevClass = (s.severity || '').toLowerCase();
+      const summary = s.summary || '';
+      return `
+        <div class="situation-card ${sevClass}" style="margin-bottom: var(--space-sm);">
+          <div class="situation-card-header">
+            <div>
+              <div class="situation-title-row">
+                <h4 class="situation-country">${Utils.escapeHtml(s.countryName || 'Unknown')}</h4>
+                <span class="situation-label">— ${s.situationLabel || s.situationType || ''}</span>
+              </div>
+              ${summary ? `<div style="font-size: 0.85rem; color: var(--text-secondary); margin: 4px 0 6px;">${Utils.escapeHtml(summary)}</div>` : ''}
+              <div class="situation-badges">
+                <span class="situation-badge severity ${sevClass}">${s.severity || 'WATCH'}</span>
+                ${s.trajectory ? `<span class="situation-badge trajectory ${(s.trajectory || '').toLowerCase()}">${s.trajectory}</span>` : ''}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+};
+
+// ============================================
+// Q&A MANAGER (Perplexity-style citations)
+// ============================================
+const QAManager = {
+  isLoading: false,
+  lastAsked: 0,
+  cooldownMs: 5000,
+  suggestionsShown: false,
+
+  init() {
+    const input = document.getElementById('qa-input');
+    const btn = document.getElementById('qa-submit');
+    if (!input || !btn) return;
+
+    input.addEventListener('input', () => {
+      btn.disabled = input.value.trim().length < 3;
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !btn.disabled) {
+        this.ask();
+      }
+    });
+
+    btn.addEventListener('click', () => this.ask());
+
+    // Build suggested prompts from cached data
+    this.buildSuggestions();
+  },
+
+  buildSuggestions() {
+    const container = document.getElementById('qa-suggestions');
+    if (!container || this.suggestionsShown) return;
+    this.suggestionsShown = true;
+
+    const suggestions = [];
+
+    // Dynamic: from risk scores (top WARNING+ country)
+    const scores = RiskScoreMonitor.cachedScores;
+    if (scores && scores.length > 0) {
+      const top = scores[0];
+      if (top.riskLevel && top.riskLevel !== 'STABLE') {
+        suggestions.push(`Why is ${top.countryName} at ${top.riskLevel}?`);
+      }
+      // Second highest with different name
+      const second = scores.find((s, i) => i > 0 && s.countryName !== top.countryName && ['CRITICAL','ALERT','WARNING'].includes(s.riskLevel));
+      if (second) {
+        suggestions.push(`${second.countryName} risk drivers`);
+      }
+    }
+
+    // Semi-static: common high-value questions
+    suggestions.push('Food crisis in Latin America');
+    suggestions.push('Sudan conflict update');
+    suggestions.push('Migration trends Central America');
+
+    // Limit to 5, dedupe
+    const unique = [...new Set(suggestions)].slice(0, 5);
+
+    container.innerHTML = unique.map(q =>
+      `<button class="qa-suggestion" data-query="${Utils.escapeHtml(q)}">${Utils.escapeHtml(q)}</button>`
+    ).join('');
+
+    // Click handler
+    container.addEventListener('click', (e) => {
+      const chip = e.target.closest('.qa-suggestion');
+      if (!chip) return;
+      const input = document.getElementById('qa-input');
+      const btn = document.getElementById('qa-submit');
+      if (input) {
+        input.value = chip.dataset.query;
+        if (btn) btn.disabled = false;
+        this.ask();
+      }
+    });
+
+    // If scores not ready yet, retry after 3s
+    if (!scores || scores.length === 0) {
+      this.suggestionsShown = false;
+      setTimeout(() => this.buildSuggestions(), 3000);
+    }
+  },
+
+  async ask() {
+    const input = document.getElementById('qa-input');
+    const container = document.getElementById('qa-response');
+    const btn = document.getElementById('qa-submit');
+    if (!input || !container) return;
+
+    const question = input.value.trim();
+    if (question.length < 3 || this.isLoading) return;
+
+    // Rate limit
+    const now = Date.now();
+    if (now - this.lastAsked < this.cooldownMs) {
+      return;
+    }
+    this.lastAsked = now;
+    this.isLoading = true;
+    btn.disabled = true;
+
+    // Hide suggestions after first query
+    const suggestionsEl = document.getElementById('qa-suggestions');
+    if (suggestionsEl) suggestionsEl.style.display = 'none';
+
+    // Show loading
+    container.classList.remove('hidden');
+    container.innerHTML = `
+      <div class="qa-loading">
+        <div class="spinner"></div>
+        <span>Analyzing sources...</span>
+      </div>
+    `;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+    try {
+      const response = await fetch(`/api/intelligence/ask?q=${encodeURIComponent(question)}`, {
+        signal: controller.signal
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const data = await response.json();
+      this.renderResponse(data, container);
+    } catch (error) {
+      const msg = error.name === 'AbortError'
+        ? 'Request timed out — try again in a moment'
+        : error.message;
+      container.innerHTML = `<div class="text-muted" style="padding: var(--space-sm);">Unable to answer: ${Utils.escapeHtml(msg)}</div>`;
+    } finally {
+      clearTimeout(timeoutId);
+      this.isLoading = false;
+      btn.disabled = input.value.trim().length < 3;
+    }
+  },
+
+  renderResponse(data, container) {
+    if (!data || !data.answer) {
+      container.innerHTML = '<div class="text-muted">No answer available.</div>';
+      return;
+    }
+
+    // Convert [N] citations to clickable links
+    let html = Utils.escapeHtml(data.answer);
+    html = html.replace(/\[(\d+)\]/g, (match, num) => {
+      const idx = parseInt(num);
+      const src = data.sources && data.sources.find(s => s.index === idx);
+      if (src && src.url) {
+        return `<a class="qa-cite" href="${Utils.sanitizeUrl(src.url)}" target="_blank" rel="noopener noreferrer" title="${Utils.escapeHtml(src.title || '')}">[${idx}]</a>`;
+      }
+      return `<span class="qa-cite">[${idx}]</span>`;
+    });
+
+    // Convert newlines to paragraphs
+    html = html.split('\n\n').filter(p => p.trim()).map(p => `<p>${p}</p>`).join('');
+    if (!html.includes('<p>')) html = `<p>${html}</p>`;
+
+    let sourcesHtml = '';
+    if (data.sources && data.sources.length > 0) {
+      sourcesHtml = `
+        <div class="qa-sources">
+          <div class="qa-sources-title">Sources (${data.sources.length})</div>
+          ${data.sources.map(s => `
+            <div class="qa-source-item">
+              <span class="qa-source-idx">[${s.index}]</span>
+              <a class="qa-source-link" href="${Utils.sanitizeUrl(s.url)}" target="_blank" rel="noopener noreferrer">${Utils.escapeHtml(s.title)}</a>
+              <span class="qa-source-meta">${Utils.escapeHtml(s.source || s.sourceType || '')}${s.timeAgo ? ' · ' + Utils.escapeHtml(s.timeAgo) : ''}</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    container.innerHTML = `
+      <div class="qa-answer">${html}</div>
+      ${sourcesHtml}
+    `;
+  }
+};
+
+// ============================================
 // NEWS FEED MANAGER (Two-Column: ReliefWeb | Media)
 // ============================================
 const NewsFeedManager = {
   loaded: false,
+  isLoading: false,
+  setupDone: false,
   feedData: null,
+  allItems: [],
   currentRegion: '',
   currentTopic: '',
+  sourceFilters: {},  // per-grid source filter
 
   async init() {
-    if (this.loaded && this.feedData) {
-      this.renderFeed(this.feedData);
+    if (this.loaded && this.allItems.length > 0) {
+      this.renderCards('news-cards-grid');
+      this.renderCards('intel-news-cards');
       return;
     }
 
-    this.setupFilters();
-    await this.loadFeed();
+    if (this.isLoading) return;
+
+    if (!this.setupDone) {
+      this.setupFilters();
+      this.setupSourceTabs('news-source-tabs', 'news-cards-grid');
+      this.setupSourceTabs('intel-source-tabs', 'intel-news-cards');
+      this.setupCardClicks();
+      this.setupDone = true;
+    }
+
+    this.isLoading = true;
+    try {
+      await this.loadFeed();
+    } finally {
+      this.isLoading = false;
+    }
   },
 
   setupFilters() {
     const regionFilter = document.getElementById('news-region-filter');
     const topicFilter = document.getElementById('news-topic-filter');
-    const refreshBtn = document.getElementById('news-refresh-btn');
 
     if (regionFilter) {
       regionFilter.addEventListener('change', () => {
         this.currentRegion = regionFilter.value;
-        regionFilter.classList.toggle('filter-active', regionFilter.value !== '');
+        this.resetSourceTabs();
         this.loadFeed();
       });
     }
@@ -4712,27 +5435,52 @@ const NewsFeedManager = {
     if (topicFilter) {
       topicFilter.addEventListener('change', () => {
         this.currentTopic = topicFilter.value;
-        topicFilter.classList.toggle('filter-active', topicFilter.value !== '');
-        this.loadFeed();
-      });
-    }
-
-    if (refreshBtn) {
-      refreshBtn.addEventListener('click', () => {
-        this.loaded = false;
+        this.resetSourceTabs();
         this.loadFeed();
       });
     }
   },
 
-  async loadFeed() {
-    const reliefwebCol = document.getElementById('news-col-reliefweb');
-    const mediaCol = document.getElementById('news-col-media');
-    if (!reliefwebCol || !mediaCol) return;
+  setupCardClicks() {
+    document.addEventListener('click', (e) => {
+      const card = e.target.closest('.news-card[data-url]');
+      if (!card) return;
+      window.open(card.dataset.url, '_blank', 'noopener');
+    });
+  },
 
-    const loadingHtml = '<div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">Loading... <span class="loading-dots"></span></div>';
-    reliefwebCol.innerHTML = loadingHtml;
-    mediaCol.innerHTML = loadingHtml;
+  // Reset all source tabs to "All" when server-side filters change
+  resetSourceTabs() {
+    this.sourceFilters = {};
+    document.querySelectorAll('.news-source-tabs').forEach(container => {
+      container.querySelectorAll('.news-source-tab').forEach(t => t.classList.remove('active'));
+      const allTab = container.querySelector('[data-source="all"]');
+      if (allTab) allTab.classList.add('active');
+    });
+  },
+
+  setupSourceTabs(tabsId, gridId) {
+    const tabsContainer = document.getElementById(tabsId);
+    if (!tabsContainer) return;
+
+    tabsContainer.addEventListener('click', (e) => {
+      const tab = e.target.closest('.news-source-tab');
+      if (!tab) return;
+
+      tabsContainer.querySelectorAll('.news-source-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+
+      this.sourceFilters[gridId] = tab.dataset.source;
+      this.renderCards(gridId);
+    });
+  },
+
+  async loadFeed(retryCount = 0) {
+    const grid = document.getElementById('news-cards-grid');
+    const intelGrid = document.getElementById('intel-news-cards');
+    const loadingHtml = '<div class="news-empty-state">Loading news...</div>';
+    if (grid) grid.innerHTML = loadingHtml;
+    if (intelGrid) intelGrid.innerHTML = loadingHtml;
 
     try {
       let url = '/api/news-feed';
@@ -4741,62 +5489,96 @@ const NewsFeedManager = {
       if (this.currentTopic) params.push(`topic=${this.currentTopic}`);
       if (params.length > 0) url += '?' + params.join('&');
 
-      const response = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
       const data = await response.json();
 
       this.feedData = data;
       this.loaded = true;
-      this.renderFeed(data);
+
+      // Merge both sources into one unified list
+      const reliefweb = (data.reliefweb || []).map(item => ({ ...item, _sourceType: 'RELIEFWEB' }));
+      const media = (data.media || []).map(item => ({ ...item, _sourceType: item.sourceType || 'GDELT' }));
+      this.allItems = [...reliefweb, ...media];
+
+      console.log(`[NewsFeed] Loaded ${reliefweb.length} reliefweb + ${media.length} media items`);
+
+      // If empty and first attempt, retry after 5s (cache may be building)
+      if (this.allItems.length === 0 && retryCount < 2) {
+        console.log(`[NewsFeed] Empty response, retrying in 5s (attempt ${retryCount + 1})`);
+        if (grid) grid.innerHTML = '<div class="news-empty-state">Loading news sources...</div>';
+        setTimeout(() => this.loadFeed(retryCount + 1), 5000);
+        return;
+      }
+
+      this.renderCards('news-cards-grid');
+      this.renderCards('intel-news-cards');
 
     } catch (error) {
       console.error('Error loading news feed:', error);
-      const errorHtml = '<div class="news-empty">Failed to load. Try refreshing.</div>';
-      reliefwebCol.innerHTML = errorHtml;
-      mediaCol.innerHTML = errorHtml;
+      // On timeout/error, retry once
+      if (retryCount < 1) {
+        console.log('[NewsFeed] Fetch failed, retrying in 3s');
+        if (grid) grid.innerHTML = '<div class="news-empty-state">Loading news...</div>';
+        setTimeout(() => this.loadFeed(retryCount + 1), 3000);
+        return;
+      }
+      const errorHtml = '<div class="news-empty-state">Unable to load news. Try refreshing the page.</div>';
+      if (grid) grid.innerHTML = errorHtml;
+      if (intelGrid) intelGrid.innerHTML = errorHtml;
     }
   },
 
-  renderFeed(data) {
-    const reliefwebCol = document.getElementById('news-col-reliefweb');
-    const mediaCol = document.getElementById('news-col-media');
-    if (!reliefwebCol || !mediaCol) return;
+  renderCards(gridId) {
+    const grid = document.getElementById(gridId);
+    if (!grid) return;
 
-    // Render ReliefWeb column
-    if (data.reliefweb && data.reliefweb.length > 0) {
-      reliefwebCol.innerHTML = data.reliefweb.map(item => this.renderNewsItem(item)).join('');
-    } else {
-      reliefwebCol.innerHTML = '<div class="news-empty">No humanitarian reports for these filters.</div>';
+    let items = this.allItems;
+
+    // Filter by source tab (per-grid)
+    const sourceFilter = this.sourceFilters[gridId] || 'all';
+    if (sourceFilter !== 'all') {
+      items = items.filter(item => {
+        const st = (item.sourceType || item._sourceType || '').toUpperCase();
+        return st === sourceFilter;
+      });
     }
 
-    // Render Media column
-    if (data.media && data.media.length > 0) {
-      mediaCol.innerHTML = data.media.map(item => this.renderNewsItem(item)).join('');
-    } else {
-      mediaCol.innerHTML = '<div class="news-empty">No media coverage for these filters.</div>';
+    if (items.length === 0) {
+      grid.innerHTML = '<div class="news-empty-state">No news for current filters.</div>';
+      return;
     }
+
+    const limit = gridId === 'intel-news-cards' ? 15 : 30;
+    grid.innerHTML = items.slice(0, limit).map(item => this.renderCard(item)).join('');
   },
 
-  renderNewsItem(item) {
+  renderCard(item) {
+    const sourceType = (item.sourceType || item._sourceType || 'GDELT').toUpperCase();
+    const sourceClass = sourceType === 'RELIEFWEB' ? 'reliefweb' : sourceType === 'RSS' ? 'rss' : 'gdelt';
+    const sourceLabel = sourceType === 'RELIEFWEB' ? 'ReliefWeb' : sourceType === 'RSS' ? 'Media' : 'GDELT';
     const topics = (item.topics || []).filter(t => t !== 'general' && t !== 'humanitarian').slice(0, 2);
-    const regionClass = (item.region || 'global').toLowerCase().replace(/\s+/g, '-');
 
     return `
-      <div class="news-item">
-        <div class="news-item-top">
-          <span class="news-item-region ${regionClass}">${item.region || 'Global'}</span>
-          ${item.countryName ? `<span class="news-item-country">${Utils.escapeHtml(item.countryName)}</span>` : ''}
-          ${item.timeAgo ? `<span class="news-item-time">${item.timeAgo}</span>` : ''}
+      <div class="news-card" ${item.url ? `data-url="${Utils.escapeHtml(item.url)}"` : ''}>
+        <div class="news-card-top">
+          <span class="news-card-source ${sourceClass}">${sourceLabel}</span>
+          ${item.countryName ? `<span class="news-card-country">${Utils.escapeHtml(item.countryName)}</span>` : ''}
+          ${item.timeAgo ? `<span class="news-card-time">${item.timeAgo}</span>` : ''}
         </div>
-        <div class="news-item-title">
-          ${item.url
-            ? `<a href="${item.url}" target="_blank" rel="noopener">${Utils.escapeHtml(item.title)}</a>`
-            : Utils.escapeHtml(item.title)
-          }
-        </div>
-        <div class="news-item-bottom">
-          <span class="news-item-source ${item.sourceType ? item.sourceType.toLowerCase() : ''}">${Utils.escapeHtml(item.source || '')}</span>
-          ${item.format ? `<span class="news-item-format">${Utils.escapeHtml(item.format)}</span>` : ''}
-          ${topics.length > 0 ? topics.map(t => `<span class="news-item-tag">${t}</span>`).join('') : ''}
+        <div class="news-card-title">${Utils.escapeHtml(item.title)}</div>
+        <div class="news-card-bottom">
+          ${item.source ? `<span class="news-card-outlet">${Utils.escapeHtml(item.source)}</span>` : ''}
+          ${item.format ? `<span class="news-card-format">${Utils.escapeHtml(item.format)}</span>` : ''}
+          ${topics.map(t => `<span class="news-card-tag">${t}</span>`).join('')}
         </div>
       </div>
     `;
@@ -4864,7 +5646,12 @@ const TopicReportGenerator = {
     if (status) status.textContent = 'Generating...';
 
     try {
-      const response = await fetch(`/api/intelligence/topic-report?topic=${this.currentTopic}&region=${this.currentRegion}&days=${this.currentPeriod}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      const response = await fetch(`/api/intelligence/topic-report?topic=${this.currentTopic}&region=${this.currentRegion}&days=${this.currentPeriod}`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error('Failed to generate report');

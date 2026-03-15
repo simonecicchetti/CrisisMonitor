@@ -688,6 +688,25 @@ public class ApiController {
         return topicReportService.generateReport(topic, region, days);
     }
 
+    // ========== Q&A WITH CITATIONS ==========
+
+    /**
+     * AI-powered Q&A using cached news sources.
+     * Returns answer with inline [N] citations referencing source articles.
+     */
+    @GetMapping("/intelligence/ask")
+    public ClaudeAnalysisService.QAResponse askQuestion(@RequestParam String q) {
+        if (q == null || q.isBlank() || q.length() > 500) {
+            return ClaudeAnalysisService.QAResponse.builder()
+                    .question(q)
+                    .answer("Please provide a question (max 500 characters).")
+                    .sources(java.util.List.of())
+                    .generatedAt(java.time.LocalDateTime.now())
+                    .build();
+        }
+        return claudeAnalysisService.answerQuestion(q.trim());
+    }
+
     // ========== NEWS FEED (TWO-COLUMN) ==========
 
     /**

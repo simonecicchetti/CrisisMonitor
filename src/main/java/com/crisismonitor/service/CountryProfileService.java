@@ -8,6 +8,7 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 import java.util.LinkedHashMap;
 
@@ -22,6 +23,7 @@ public class CountryProfileService {
 
     private final RiskScoreService riskScoreService;
     private final GDELTService gdeltService;
+    private final CacheWarmupService cacheWarmupService;
     private final ReliefWebService reliefWebService;
     private final CurrencyService currencyService;
     private final OpenMeteoService openMeteoService;
@@ -33,6 +35,10 @@ public class CountryProfileService {
     private final TrendTrackingService trendTrackingService;
     private final DataFreshnessService dataFreshnessService;
     private final WHODiseaseOutbreakService whoDiseaseOutbreakService;
+
+    // Dedicated thread pool for profile building — separate from ForkJoinPool to avoid GDELT warmup contention
+    private static final ExecutorService PROFILE_EXECUTOR = Executors.newFixedThreadPool(4,
+            r -> { Thread t = new Thread(r, "profile-builder"); t.setDaemon(true); return t; });
 
     // ISO3 → ISO2 reverse mapping (built from RiskScoreService's ISO2→ISO3 map)
     private static final Map<String, String> ISO3_TO_ISO2 = Map.ofEntries(
@@ -59,9 +65,35 @@ public class CountryProfileService {
     /**
      * Get complete country profile by ISO3 code.
      */
-    @Cacheable(value = "countryProfileAggregated", key = "#iso3", unless = "#result == null")
     public CountryProfileData getProfile(String iso3) {
         log.info("Building aggregated country profile for {}", iso3);
+        long start = System.currentTimeMillis();
+
+        // Run profile building with a hard timeout to prevent thread starvation
+        try {
+            return CompletableFuture.supplyAsync(() -> buildProfile(iso3), PROFILE_EXECUTOR)
+                    .get(15, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            log.warn("Country profile for {} timed out after 15s, returning partial data", iso3);
+            // Return minimal profile
+            return CountryProfileData.builder()
+                    .iso3(iso3)
+                    .iso2(ISO3_TO_ISO2.get(iso3))
+                    .name(MonitoredCountries.getName(iso3))
+                    .region(MonitoredCountries.getRegion(iso3))
+                    .build();
+        } catch (Exception e) {
+            log.error("Country profile for {} failed: {}", iso3, e.getMessage());
+            return CountryProfileData.builder()
+                    .iso3(iso3)
+                    .iso2(ISO3_TO_ISO2.get(iso3))
+                    .name(MonitoredCountries.getName(iso3))
+                    .region(MonitoredCountries.getRegion(iso3))
+                    .build();
+        }
+    }
+
+    private CountryProfileData buildProfile(String iso3) {
         long start = System.currentTimeMillis();
 
         String iso2 = ISO3_TO_ISO2.get(iso3);
@@ -74,7 +106,7 @@ public class CountryProfileService {
                 .name(name)
                 .region(region);
 
-        // 1. Risk Score (contains trend, persistence, drivers, confidence)
+        // 1. Risk Score (memory fallback only — non-blocking)
         loadRiskScore(profile, iso2, iso3);
 
         // 2. Food Security (IPC + FCS/rCSI)
@@ -83,7 +115,7 @@ public class CountryProfileService {
         // 3. Climate
         loadClimate(profile, iso2);
 
-        // 4. Conflict (GDELT)
+        // 4. Conflict (memory fallback only — non-blocking)
         loadConflict(profile, iso3);
 
         // 5. Economy
@@ -113,7 +145,17 @@ public class CountryProfileService {
     private void loadRiskScore(CountryProfileData.CountryProfileDataBuilder profile, String iso2, String iso3) {
         if (iso2 == null) return;
         try {
-            RiskScore risk = riskScoreService.calculateRiskScore(iso2);
+            // Use memory fallback only (non-blocking) — never call calculateRiskScore directly
+            // as it may trigger blocking GDELT API calls
+            RiskScore risk = null;
+            @SuppressWarnings("unchecked")
+            List<RiskScore> fallbackScores = (List<RiskScore>) cacheWarmupService.getFallback("allRiskScores");
+            if (fallbackScores != null) {
+                risk = fallbackScores.stream()
+                        .filter(s -> iso3.equals(s.getIso3()))
+                        .findFirst()
+                        .orElse(null);
+            }
             if (risk != null) {
                 profile.score(risk.getScore())
                        .riskLevel(risk.getRiskLevel())
@@ -198,13 +240,26 @@ public class CountryProfileService {
 
     private void loadConflict(CountryProfileData.CountryProfileDataBuilder profile, String iso3) {
         try {
-            MediaSpike spike = gdeltService.getConflictSpikeIndex(iso3);
+            // Use cached GDELT data to avoid live API calls (rate limiting / timeouts)
+            MediaSpike spike = null;
+
+            // Try memory-cached spikes first (from cache warmup)
+            @SuppressWarnings("unchecked")
+            List<MediaSpike> cachedSpikes = (List<MediaSpike>) cacheWarmupService.getFallback("gdeltAllSpikes");
+            if (cachedSpikes != null) {
+                spike = cachedSpikes.stream()
+                        .filter(s -> iso3.equals(s.getIso3()))
+                        .findFirst()
+                        .orElse(null);
+            }
+
+            // No fallback to live GDELT — it blocks threads with rate limiting
+
             if (spike != null) {
                 profile.gdeltZScore(spike.getZScore())
                        .spikeLevel(spike.getSpikeLevel())
                        .articles7d(spike.getArticlesLast7Days());
 
-                // Headlines
                 if (spike.getTopHeadlines() != null && !spike.getTopHeadlines().isEmpty()) {
                     List<CountryProfileData.HeadlineItem> headlines = spike.getTopHeadlines().stream()
                             .limit(5)
@@ -252,11 +307,13 @@ public class CountryProfileService {
     }
 
     private void loadDisplacement(CountryProfileData.CountryProfileDataBuilder profile, String iso3) {
-        // IDPs from DTM
+        // IDPs from DTM — skip on-demand, use only if already cached by warmup
+        // DTM downloads a large CSV that blocks threads and can cause OOM
         try {
-            List<MobilityStock> dtmData = dtmService.getCountryLevelIdps();
-            if (dtmData != null) {
-                dtmData.stream()
+            @SuppressWarnings("unchecked")
+            List<MobilityStock> dtmFallback = (List<MobilityStock>) cacheWarmupService.getFallback("dtmData");
+            if (dtmFallback != null) {
+                dtmFallback.stream()
                         .filter(d -> iso3.equalsIgnoreCase(d.getIso3()))
                         .findFirst()
                         .ifPresent(d -> profile.idps(d.getIdps()));
@@ -265,7 +322,7 @@ public class CountryProfileService {
             log.debug("No DTM data for {}: {}", iso3, e.getMessage());
         }
 
-        // Refugees from UNHCR
+        // Refugees from UNHCR — @Cacheable so safe to call (cached after first call)
         try {
             List<MobilityStock> unhcrData = unhcrService.getDisplacementByOrigin();
             if (unhcrData != null) {

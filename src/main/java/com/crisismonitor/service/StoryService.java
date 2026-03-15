@@ -94,6 +94,26 @@ public class StoryService {
         "remain in mexico", "mpp", "cbp one", "asylum seeker"
     );
 
+    // Noise keywords — articles matching these are never crisis-relevant
+    // Blocks sports, entertainment, lifestyle, business/tech from general media feeds
+    private static final List<String> NOISE_KEYWORDS = List.of(
+            // Sports
+            "la liga", "premier league", "champions league", "world cup", "serie a",
+            "bundesliga", "ligue 1", "eredivisie", "copa america", "euro 2026",
+            "football", "soccer", "cricket", "tennis", "basketball", "rugby",
+            "olympic", "olympics", "fifa", "uefa", "match", "vs ",
+            "goal scored", "hat-trick", "penalty kick", "red card",
+            // Entertainment
+            "movie", "film festival", "box office", "celebrity", "grammy",
+            "oscar", "emmy", "netflix", "spotify", "album release",
+            "concert", "tour dates", "reality tv", "kardashian",
+            // Lifestyle / business
+            "stock market", "ipo", "startup funding", "crypto", "bitcoin",
+            "fashion week", "recipe", "travel guide", "hotel review",
+            // Generic noise
+            "live:", "live score", "highlights:", "recap:", "preview:"
+    );
+
     // Topic detection keywords (expanded for better coverage)
     private static final Map<String, List<String>> TOPIC_KEYWORDS = Map.of(
         "conflict", List.of("war", "attack", "violence", "military", "armed", "killed", "killing", "fighting", "troops", "bomb", "strike", "casualties", "clashes", "offensive", "airstrike", "militia", "rebel", "insurgent", "ceasefire", "battle", "shelling", "rsf", "forces", "army", "paramilitary", "terror", "gang", "gangs", "assassination", "coup", "protests", "unrest", "hamas", "hezbollah", "taliban", "al-shabaab", "boko haram", "m23", "junta", "siege"),
@@ -403,6 +423,10 @@ public class StoryService {
                         String titleLower = item.getTitle().toLowerCase();
                         String descLower = item.getDescription() != null ? item.getDescription().toLowerCase() : "";
                         String combined = titleLower + " " + descLower;
+
+                        // Noise filter: block sports, entertainment, lifestyle
+                        boolean isNoise = NOISE_KEYWORDS.stream().anyMatch(titleLower::contains);
+                        if (isNoise) continue;
 
                         // Detect country/region from content
                         String country = detectCountryFromText(combined);
@@ -1151,6 +1175,11 @@ public class StoryService {
                 for (String title : spike.getTopHeadlines()) {
                     if (title == null || title.isBlank()) continue;
 
+                    // Noise filter: block sports, entertainment from GDELT headlines
+                    String titleLower = title.toLowerCase();
+                    boolean isNoise = NOISE_KEYWORDS.stream().anyMatch(titleLower::contains);
+                    if (isNoise) continue;
+
                     // Filter by topic if specified
                     if (topic != null && !topic.isBlank()) {
                         List<String> detected = detectTopics(title);
@@ -1250,13 +1279,20 @@ public class StoryService {
                         if (!detectedTopics.contains(topic.toLowerCase())) continue;
                     }
 
+                    // Noise filter: block sports, entertainment, lifestyle from ALL sources
+                    String titleLowerClean = titleClean.toLowerCase();
+                    boolean isNoise = NOISE_KEYWORDS.stream().anyMatch(titleLowerClean::contains);
+                    if (isNoise) {
+                        continue;
+                    }
+
                     // Crisis relevance filter for general media feeds: skip articles with no crisis topics
                     // BBC, Al Jazeera, Guardian, InSight Crime include politics/sports/business — filter to crisis content only
                     // Note: humanitarian feeds (UN News, ICRC, IOM, MMC) are NOT filtered as they are crisis-relevant by nature
                     boolean isGeneralMedia = sourceName.startsWith("BBC") || sourceName.equals("Al Jazeera")
                             || sourceName.contains("Guardian") || sourceName.equals("InSight Crime");
-                    if (isGeneralMedia && detectedTopics.isEmpty() && country == null) {
-                        continue; // Skip non-crisis articles from general media
+                    if (isGeneralMedia && detectedTopics.isEmpty()) {
+                        continue; // Skip non-crisis articles from general media (even if country detected)
                     }
 
                     items.add(NewsItem.builder()

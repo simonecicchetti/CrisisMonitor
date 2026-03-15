@@ -23,6 +23,7 @@ public class DashboardController {
     private final UNHCRService unhcrService;
     private final DTMService dtmService;
     private final GDELTService gdeltService;
+    private final CacheWarmupService cacheWarmupService;
 
     @GetMapping("/")
     public String index(Model model) {
@@ -89,15 +90,6 @@ public class DashboardController {
             model.addAttribute("migrationMonthly", Collections.emptyMap());
         }
 
-        // Economic data - high inflation countries
-        try {
-            List<EconomicIndicator> highInflation = worldBankService.getHighInflationCountries();
-            model.addAttribute("highInflation", highInflation != null ? highInflation : Collections.emptyList());
-        } catch (Exception e) {
-            log.error("Error loading inflation data: {}", e.getMessage());
-            model.addAttribute("highInflation", Collections.emptyList());
-        }
-
         // Food security metrics
         try {
             List<FoodSecurityMetrics> foodSecurity = hungerMapService.getFoodSecurityMetrics();
@@ -139,6 +131,16 @@ public class DashboardController {
         } catch (Exception e) {
             log.error("Error loading DTM data: {}", e.getMessage());
             model.addAttribute("dtmData", Collections.emptyList());
+        }
+
+        // Risk scores for country ranking — use memory fallback to avoid blocking page render
+        try {
+            @SuppressWarnings("unchecked")
+            List<RiskScore> riskScores = (List<RiskScore>) cacheWarmupService.getFallback("allRiskScores");
+            model.addAttribute("riskScores", riskScores != null ? riskScores : Collections.emptyList());
+        } catch (Exception e) {
+            log.error("Error loading risk scores: {}", e.getMessage());
+            model.addAttribute("riskScores", Collections.emptyList());
         }
 
         // GDELT conflict/media spikes (loaded async via JS for performance)

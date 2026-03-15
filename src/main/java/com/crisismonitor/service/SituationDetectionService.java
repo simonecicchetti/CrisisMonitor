@@ -138,6 +138,7 @@ public class SituationDetectionService {
         ISO3_TO_NAME.put("ECU", "Ecuador");
         ISO3_TO_NAME.put("CUB", "Cuba");
         ISO3_TO_NAME.put("PAN", "Panama");
+        ISO3_TO_NAME.put("ISR", "Israel");
     }
 
     // Country name aliases for headline matching (multiple names per country)
@@ -184,6 +185,7 @@ public class SituationDetectionService {
         COUNTRY_ALIASES.put("ECU", Arrays.asList("ecuador", "ecuadorian", "quito"));
         COUNTRY_ALIASES.put("CUB", Arrays.asList("cuba", "cuban", "havana"));
         COUNTRY_ALIASES.put("PAN", Arrays.asList("panama", "panamanian", "darien"));
+        COUNTRY_ALIASES.put("ISR", Arrays.asList("israel", "israeli", "tel aviv", "jerusalem", "idf", "netanyahu"));
     }
 
     /**
@@ -231,10 +233,14 @@ public class SituationDetectionService {
                 }
             }
 
+            // Build set of countries already covered by GDELT spikes
+            Set<String> coveredCountries = new HashSet<>();
+
             // Process each country with media activity
             if (mediaSpikes != null) {
                 for (var spike : mediaSpikes) {
                     String iso3 = spike.getIso3();
+                    coveredCountries.add(iso3);
                     String countryName = MonitoredCountries.getName(iso3);
 
                     // Get ReliefWeb reports for this country
@@ -353,6 +359,90 @@ public class SituationDetectionService {
 
                         situations.add(situation);
                     }
+                }
+            }
+
+            // Supplement: add high-risk countries not covered by GDELT spikes
+            // This catches countries like Iran/Ukraine that GDELT misses due to rate limiting or query gaps
+            if (riskScores != null) {
+                for (var score : riskScores) {
+                    String iso3 = score.getIso3();
+                    if (coveredCountries.contains(iso3)) continue;
+                    if (score.getScore() < 60) continue; // Only WARNING+ countries (avoid noise)
+                    // Only supplement crisis-monitored countries — skip stable SE Asia etc.
+                    if (!MonitoredCountries.CRISIS_COUNTRIES.contains(iso3)) continue;
+
+                    String countryName = MonitoredCountries.getName(iso3);
+
+                    // Get ReliefWeb reports for evidence
+                    List<ReliefWebService.HumanitarianReport> reports = new ArrayList<>();
+                    try {
+                        reports = reliefWebService.getLatestReports(iso3, 5);
+                    } catch (Exception e) {
+                        log.debug("No ReliefWeb reports for {}", iso3);
+                    }
+                    List<ReliefWebService.HumanitarianReport> crisisReports = filterCrisisReports(reports);
+
+                    // Detect situation type from risk score drivers
+                    String situationType = null;
+                    if (score.getConflictScore() >= 30 || score.isConflictElevated()) {
+                        situationType = "VIOLENCE_ESCALATION";
+                    } else if (score.getFoodSecurityScore() >= 50) {
+                        situationType = "FOOD_CRISIS";
+                    } else if (score.getEconomicScore() >= 70) {
+                        // Severe economic crisis — use FOOD_CRISIS as cascading effect
+                        situationType = "FOOD_CRISIS";
+                    }
+
+                    if (situationType == null) continue;
+
+                    // Build evidence from ReliefWeb
+                    List<Evidence> evidence = new ArrayList<>();
+                    for (var r : crisisReports.stream().limit(3).collect(Collectors.toList())) {
+                        evidence.add(new Evidence("ReliefWeb", r.getTitle(), r.getUrl(), r.getSource()));
+                    }
+
+                    // Add risk score drivers as evidence
+                    if (evidence.isEmpty()) {
+                        // Create driver-based evidence so the situation isn't empty
+                        for (String driver : score.getDrivers()) {
+                            if (!"No significant drivers".equals(driver)) {
+                                evidence.add(new Evidence("Risk Analysis",
+                                        driver + " (score: " + score.getScore() + "/100)",
+                                        null, "Crisis Monitor"));
+                            }
+                        }
+                    }
+
+                    if (evidence.isEmpty()) continue;
+
+                    Situation situation = new Situation();
+                    situation.setIso3(iso3);
+                    situation.setCountryName(countryName);
+                    situation.setSituationType(situationType);
+                    situation.setSituationLabel(SITUATION_TYPES.get(situationType).getLabel());
+                    situation.setSummary(String.format("%s: %s risk level (%d/100). Key drivers: %s",
+                            countryName, score.getRiskLevel(), score.getScore(),
+                            String.join(", ", score.getDrivers())));
+                    situation.setRiskScore(score.getScore());
+                    situation.setArticlesCount(0);
+                    situation.setReportsCount(crisisReports.size());
+                    situation.setEvidence(evidence);
+
+                    List<String> signals = new ArrayList<>();
+                    signals.add(String.format("Risk score: %d/100 (%s)", score.getScore(), score.getRiskLevel()));
+                    if (crisisReports.size() > 0) {
+                        signals.add(String.format("%d operational reports (ReliefWeb)", crisisReports.size()));
+                    }
+                    situation.setSignals(signals);
+
+                    String severity = score.getScore() >= 80 ? "CRITICAL" :
+                                     score.getScore() >= 60 ? "HIGH" :
+                                     score.getScore() >= 45 ? "ELEVATED" : "WATCH";
+                    situation.setSeverity(severity);
+
+                    situations.add(situation);
+                    log.info("Added risk-based situation for {} ({}): {} - {}", iso3, countryName, situationType, severity);
                 }
             }
 
