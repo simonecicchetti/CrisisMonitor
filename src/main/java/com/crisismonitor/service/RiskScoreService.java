@@ -324,12 +324,12 @@ public class RiskScoreService {
         driverScores.put("Conflict", conflictScore);
         driverScores.put("Economic", economicScore);
 
-        // Sort by score, with severity hierarchy as tiebreaker:
-        // Conflict > Food Security > Economic > Climate
-        // This ensures that when scores are equal (e.g., Climate=100, Conflict=100),
-        // the more operationally critical driver is listed first.
+        // Sort by score, with humanitarian impact hierarchy as tiebreaker:
+        // Food Security > Conflict > Economic > Climate
+        // When scores are equal, prioritize the most specific humanitarian driver.
+        // Conflict is important context but Food Security is the actionable impact.
         Map<String, Integer> driverPriority = Map.of(
-                "Conflict", 0, "Food Security", 1, "Economic", 2, "Climate", 3);
+                "Food Security", 0, "Conflict", 1, "Economic", 2, "Climate", 3);
         drivers = driverScores.entrySet().stream()
                 .filter(e -> "Conflict".equals(e.getKey()) ? e.getValue() >= 20 : e.getValue() >= 30)
                 .sorted((a, b) -> {
