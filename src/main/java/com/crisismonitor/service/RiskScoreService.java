@@ -195,9 +195,31 @@ public class RiskScoreService {
                 dataPoints++;
             }
 
-            // If GDELT cache is ready, use it as the strongest signal (may override)
-            if (cacheWarmupService != null && cacheWarmupService.isCacheReady("conflict")) {
-                MediaSpike spike = gdeltService.getConflictSpikeIndex(iso3);
+            // Use bulk GDELT data (from memoryFallback) for volume floor.
+            // This avoids per-country API calls which are rate-limited and often fail/timeout.
+            // The per-country getConflictSpikeIndex has a 4h TTL and makes fresh API calls
+            // when expired — during risk score calc this causes 47×45s = 35min of waits.
+            if (cacheWarmupService != null) {
+                MediaSpike spike = null;
+
+                // First: try bulk data from memoryFallback (always available after preload/Phase 2)
+                @SuppressWarnings("unchecked")
+                List<MediaSpike> allSpikes = cacheWarmupService.getFallback("gdeltAllSpikes");
+                if (allSpikes != null) {
+                    spike = allSpikes.stream()
+                            .filter(s -> iso3.equals(s.getIso3()))
+                            .findFirst().orElse(null);
+                }
+
+                // Fallback: per-country cache (only if bulk not available and cache ready)
+                if (spike == null && cacheWarmupService.isCacheReady("conflict")) {
+                    try {
+                        spike = gdeltService.getConflictSpikeIndex(iso3);
+                    } catch (Exception ignored) {
+                        // Per-country call can timeout/fail — don't let it break scoring
+                    }
+                }
+
                 if (spike != null && spike.getZScore() != null) {
                     gdeltZScore = spike.getZScore();
                     int gdeltScore = Math.min(100, Math.max(0, (int)(gdeltZScore * 25 + 25)));
@@ -256,10 +278,11 @@ public class RiskScoreService {
                             .filter(m -> iso3.equals(m.getIso3()))
                             .findFirst().orElse(null);
                     if (countryFcs != null) {
-                        // Use FCS prevalence (% with insufficient food) as proxy for food security score
-                        // 5% = 25, 10% = 50, 15% = 75, 20%+ = 100
+                        // Use FCS prevalence as proxy, calibrated to IPC scale:
+                        // 10% = 30 (~IPC Phase 2), 20% = 60 (~IPC Phase 3), 30%+ = 75 max
+                        // FCS is a proxy — cap at 75 (IPC Phase 4 equivalent requires real assessment)
                         if (countryFcs.getFcsPrevalence() != null && countryFcs.getFcsPrevalence() > 0.01) {
-                            foodSecurityScore = Math.min(100, (int)(countryFcs.getFcsPrevalence() * 500));
+                            foodSecurityScore = Math.min(75, (int)(countryFcs.getFcsPrevalence() * 300));
                             dataPoints++;
                             log.debug("Using FCS fallback for {}: prevalence={}%, score={}",
                                     iso3, String.format("%.1f", countryFcs.getFcsPrevalence() * 100), foodSecurityScore);
