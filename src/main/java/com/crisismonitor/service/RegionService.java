@@ -70,35 +70,28 @@ public class RegionService {
 
     /**
      * Find the dominant driver for a region.
-     * Uses the most common TOP driver among the highest-scoring countries,
-     * with a conflict override only for active wars (conflictScore >= 50).
+     * Counts drivers across top-5 countries, weighting by position:
+     * 1st driver = 3 points, 2nd = 2, 3rd = 1.
+     * This captures the breadth of each driver across the region.
      */
     private String findMostCriticalDriver(List<RiskScore> topCountries, List<RiskScore> allRegionScores) {
-        // Count the TOP driver (first driver = highest-scoring component) of the top 5 countries
-        Map<String, Integer> topDriverCounts = new java.util.LinkedHashMap<>();
         List<RiskScore> top5 = allRegionScores.stream()
                 .sorted((a, b) -> Integer.compare(b.getScore(), a.getScore()))
                 .limit(5)
                 .collect(Collectors.toList());
 
+        // Weighted count: 1st driver = 3pts, 2nd = 2pts, 3rd = 1pt
+        Map<String, Integer> driverPoints = new java.util.LinkedHashMap<>();
+        int[] weights = {3, 2, 1};
+
         for (var country : top5) {
-            if (country.getDrivers() != null && !country.getDrivers().isEmpty()) {
-                String topDriver = country.getDrivers().get(0);
-                topDriverCounts.merge(topDriver, 1, Integer::sum);
+            if (country.getDrivers() == null) continue;
+            for (int i = 0; i < Math.min(country.getDrivers().size(), weights.length); i++) {
+                driverPoints.merge(country.getDrivers().get(i), weights[i], Integer::sum);
             }
         }
 
-        // Active war override: if ANY country has conflictScore >= 50,
-        // conflict is the dominant regional driver (catches wars where conflict
-        // gets cut from a country's top-3 drivers by higher food/economic scores)
-        for (var country : allRegionScores) {
-            if (country.getConflictScore() >= 50) {
-                return "Conflict";
-            }
-        }
-
-        // Return the most frequent top driver
-        return topDriverCounts.entrySet().stream()
+        return driverPoints.entrySet().stream()
                 .max(Map.Entry.comparingByValue())
                 .map(Map.Entry::getKey)
                 .orElse(topCountries.isEmpty() || topCountries.get(0).getDrivers() == null
