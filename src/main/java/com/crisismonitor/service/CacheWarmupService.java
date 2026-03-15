@@ -444,22 +444,34 @@ public class CacheWarmupService {
      */
     @SuppressWarnings("unchecked")
     private void preloadExpensiveDataFromRedis() {
-        // GDELT conflict spikes
+        log.info("Attempting to preload GDELT data from Redis...");
         try {
-            Cache gdeltCache = cacheManager.getCache("gdeltAllSpikes");
-            if (gdeltCache != null) {
-                Cache.ValueWrapper wrapper = gdeltCache.get(org.springframework.cache.interceptor.SimpleKey.EMPTY);
-                if (wrapper != null && wrapper.get() != null) {
-                    var data = (java.util.List<MediaSpike>) wrapper.get();
-                    if (!data.isEmpty()) {
-                        memoryFallback.put("gdeltAllSpikes", data);
-                        cacheStatus.put("conflict", true);
-                        log.info("Preloaded {} GDELT entries from Redis (preserved across deploy)", data.size());
-                    }
+            // Use a timeout to prevent blocking warmup if Redis is slow
+            var future = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Cache gdeltCache = cacheManager.getCache("gdeltAllSpikes");
+                    if (gdeltCache == null) return null;
+                    Cache.ValueWrapper wrapper = gdeltCache.get(org.springframework.cache.interceptor.SimpleKey.EMPTY);
+                    if (wrapper == null || wrapper.get() == null) return null;
+                    return (java.util.List<MediaSpike>) wrapper.get();
+                } catch (Exception e) {
+                    log.warn("Failed to read GDELT from Redis: {}", e.getMessage());
+                    return null;
                 }
+            });
+
+            var data = future.get(15, java.util.concurrent.TimeUnit.SECONDS);
+            if (data != null && !data.isEmpty()) {
+                memoryFallback.put("gdeltAllSpikes", data);
+                cacheStatus.put("conflict", true);
+                log.info("Preloaded {} GDELT entries from Redis (preserved across deploy)", data.size());
+            } else {
+                log.info("No existing GDELT data in Redis to preload");
             }
+        } catch (java.util.concurrent.TimeoutException e) {
+            log.warn("GDELT preload from Redis timed out after 15s, skipping");
         } catch (Exception e) {
-            log.debug("No existing GDELT data in Redis: {}", e.getMessage());
+            log.warn("GDELT preload failed: {}", e.getMessage());
         }
     }
 
