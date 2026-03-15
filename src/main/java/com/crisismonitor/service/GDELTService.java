@@ -81,8 +81,10 @@ public class GDELTService {
     private static final String GEOPOLITICAL_KEYWORDS =
         "(conflict OR military OR attack OR bombing OR missile OR sanctions OR strike OR naval OR nuclear OR airstrike OR war)";
 
-    // Lock object for thread-safe rate limiting
-    private static final Object RATE_LIMIT_LOCK = new Object();
+    // Lock for thread-safe rate limiting — held across entire HTTP request
+    // so the 30s gap is measured from response completion, not request start
+    private static final java.util.concurrent.locks.ReentrantLock RATE_LIMIT_LOCK =
+            new java.util.concurrent.locks.ReentrantLock(true);
 
     /**
      * Build a GDELT query using country aliases for broader conflict coverage.
@@ -130,27 +132,31 @@ public class GDELTService {
     }
 
     /**
-     * Rate limiter - ensures minimum 15 seconds between any GDELT API call.
-     * Thread-safe using synchronized block to prevent concurrent requests.
+     * Acquire rate limit — waits 30s from last GDELT response, then holds the lock.
+     * Caller MUST call releaseRateLimit() in a finally block after the HTTP response.
+     * This ensures the 30s gap is measured from response-to-request, not request-to-request.
      */
-    private void waitForRateLimit() {
-        synchronized (RATE_LIMIT_LOCK) {
-            long now = System.currentTimeMillis();
-            long lastRequest = lastRequestTime.get();
-            long elapsed = now - lastRequest;
-
-            if (elapsed < RATE_LIMIT_MS) {
-                long waitTime = RATE_LIMIT_MS - elapsed;
-                log.debug("GDELT rate limit: waiting {}ms", waitTime);
-                try {
-                    Thread.sleep(waitTime);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+    private void acquireRateLimit() {
+        RATE_LIMIT_LOCK.lock();
+        long elapsed = System.currentTimeMillis() - lastRequestTime.get();
+        if (elapsed < RATE_LIMIT_MS) {
+            long waitTime = RATE_LIMIT_MS - elapsed;
+            log.debug("GDELT rate limit: waiting {}ms", waitTime);
+            try {
+                Thread.sleep(waitTime);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                RATE_LIMIT_LOCK.unlock();
             }
-
-            lastRequestTime.set(System.currentTimeMillis());
         }
+    }
+
+    /**
+     * Release rate limit — sets lastRequestTime to now and releases the lock.
+     */
+    private void releaseRateLimit() {
+        lastRequestTime.set(System.currentTimeMillis());
+        RATE_LIMIT_LOCK.unlock();
     }
 
     /**
@@ -180,15 +186,18 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            // Rate limit before API call
-            waitForRateLimit();
-
-            // Get as String first to handle various response formats
-            String responseStr = gdeltClient.get()
-                    .uri(url)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
+            // Rate limit: hold lock across entire HTTP request so 30s gap is from response-to-request
+            acquireRateLimit();
+            String responseStr;
+            try {
+                responseStr = gdeltClient.get()
+                        .uri(url)
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+            } finally {
+                releaseRateLimit();
+            }
 
             if (responseStr == null || responseStr.isBlank()) {
                 log.debug("GDELT: Empty response for {}", countryName);
@@ -198,7 +207,6 @@ public class GDELTService {
             // Parse JSON - GDELT sometimes returns non-JSON for empty results
             String trimmed = responseStr.trim();
             if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-                // Log first 200 chars to understand the response
                 log.warn("GDELT: Non-JSON response for {}: {}", countryName,
                         trimmed.substring(0, Math.min(200, trimmed.length())));
                 return 0;
@@ -340,13 +348,17 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            waitForRateLimit();
-
-            String responseStr = gdeltClient.get()
-                    .uri(url)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
+            acquireRateLimit();
+            String responseStr;
+            try {
+                responseStr = gdeltClient.get()
+                        .uri(url)
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+            } finally {
+                releaseRateLimit();
+            }
 
             if (responseStr == null || responseStr.isBlank()) {
                 return Collections.emptyList();
@@ -435,13 +447,17 @@ public class GDELTService {
                     .toUriString();
 
             // Rate limit before API call
-            waitForRateLimit();
-
-            String responseStr = gdeltClient.get()
-                    .uri(url)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
+            acquireRateLimit();
+            String responseStr;
+            try {
+                responseStr = gdeltClient.get()
+                        .uri(url)
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+            } finally {
+                releaseRateLimit();
+            }
 
             if (responseStr == null || responseStr.isBlank()) {
                 return Collections.emptyList();
@@ -521,14 +537,17 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            // Rate limit before API call
-            waitForRateLimit();
-
-            JsonNode response = gdeltClient.get()
-                    .uri(url)
-                    .retrieve()
-                    .bodyToMono(JsonNode.class)
-                    .block();
+            acquireRateLimit();
+            JsonNode response;
+            try {
+                response = gdeltClient.get()
+                        .uri(url)
+                        .retrieve()
+                        .bodyToMono(JsonNode.class)
+                        .block();
+            } finally {
+                releaseRateLimit();
+            }
 
             if (response != null && response.has("tonechart")) {
                 JsonNode toneData = response.get("tonechart");
@@ -573,7 +592,7 @@ public class GDELTService {
                 if (spike != null && !"ERROR".equals(spike.getSpikeLevel())) {
                     spikes.add(spike);
                 }
-                // Rate limiting is handled inside each API call by waitForRateLimit()
+                // Rate limiting is handled inside each API call by acquireRateLimit/releaseRateLimit
                 // No extra sleep needed here
             } catch (Exception e) {
                 log.warn("Error getting spike for {}: {}", iso3, e.getMessage());
@@ -630,14 +649,17 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            // Rate limit before API call
-            waitForRateLimit();
-
-            JsonNode response = gdeltClient.get()
-                    .uri(url)
-                    .retrieve()
-                    .bodyToMono(JsonNode.class)
-                    .block();
+            acquireRateLimit();
+            JsonNode response;
+            try {
+                response = gdeltClient.get()
+                        .uri(url)
+                        .retrieve()
+                        .bodyToMono(JsonNode.class)
+                        .block();
+            } finally {
+                releaseRateLimit();
+            }
 
             List<ConflictEvent> events = new ArrayList<>();
 
@@ -695,14 +717,17 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            // Rate limit before API call
-            waitForRateLimit();
-
-            JsonNode response = gdeltClient.get()
-                    .uri(url)
-                    .retrieve()
-                    .bodyToMono(JsonNode.class)
-                    .block();
+            acquireRateLimit();
+            JsonNode response;
+            try {
+                response = gdeltClient.get()
+                        .uri(url)
+                        .retrieve()
+                        .bodyToMono(JsonNode.class)
+                        .block();
+            } finally {
+                releaseRateLimit();
+            }
 
             Map<String, Integer> trend = new LinkedHashMap<>();
 
@@ -775,13 +800,17 @@ public class GDELTService {
                     .build()
                     .toUriString();
 
-            waitForRateLimit();
-
-            String responseStr = gdeltClient.get()
-                    .uri(url)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
+            acquireRateLimit();
+            String responseStr;
+            try {
+                responseStr = gdeltClient.get()
+                        .uri(url)
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+            } finally {
+                releaseRateLimit();
+            }
 
             if (responseStr == null || responseStr.isBlank()) {
                 return Collections.emptyList();

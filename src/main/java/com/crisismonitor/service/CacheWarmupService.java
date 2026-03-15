@@ -135,6 +135,10 @@ public class CacheWarmupService {
                 memoryFallback.remove("activeSituations");
                 warmupActiveSituations();
 
+                // Regional Pulse depends on risk scores — must recalculate after GDELT changes drivers
+                evictCache("regionalPulseV2");
+                memoryFallback.remove("regionalPulse");
+
                 long duration = System.currentTimeMillis() - startTime;
                 log.info("=== Phase 2 complete in {}s (full data with GDELT) ===", duration / 1000);
             } catch (Exception e) {
@@ -334,6 +338,8 @@ public class CacheWarmupService {
             warmupActiveSituations();
             evictCache("intelligenceFeed");
             warmupIntelligenceFeed();
+            evictCache("regionalPulseV2");
+            memoryFallback.remove("regionalPulse");
         });
     }
 
