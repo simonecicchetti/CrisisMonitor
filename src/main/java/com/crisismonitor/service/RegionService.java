@@ -69,50 +69,41 @@ public class RegionService {
     }
 
     /**
-     * Find the most critical driver across top countries in a region.
-     * Uses severity hierarchy: Conflict > Food Security > Economic > Climate.
-     * Looks at top hotspots first, then falls back to all high-scoring countries.
+     * Find the dominant driver for a region.
+     * Uses the most common TOP driver among the highest-scoring countries,
+     * with a conflict override only for active wars (conflictScore >= 50).
      */
     private String findMostCriticalDriver(List<RiskScore> topCountries, List<RiskScore> allRegionScores) {
-        // Priority order — most critical first
-        List<String> hierarchy = List.of("Conflict", "Food Security", "Economic", "Climate");
+        // Count the TOP driver (first driver = highest-scoring component) of the top 5 countries
+        Map<String, Integer> topDriverCounts = new java.util.LinkedHashMap<>();
+        List<RiskScore> top5 = allRegionScores.stream()
+                .sorted((a, b) -> Integer.compare(b.getScore(), a.getScore()))
+                .limit(5)
+                .collect(Collectors.toList());
 
-        // Collect drivers from top hotspot countries AND high-scoring countries
-        Set<String> topDrivers = new java.util.HashSet<>();
-        for (var country : topCountries) {
-            if (country.getDrivers() != null) {
-                topDrivers.addAll(country.getDrivers());
+        for (var country : top5) {
+            if (country.getDrivers() != null && !country.getDrivers().isEmpty()) {
+                String topDriver = country.getDrivers().get(0);
+                topDriverCounts.merge(topDriver, 1, Integer::sum);
             }
         }
+
+        // Active war override: if ANY country has conflictScore >= 50,
+        // conflict is the dominant regional driver (catches wars where conflict
+        // gets cut from a country's top-3 drivers by higher food/economic scores)
         for (var country : allRegionScores) {
-            if (country.getScore() >= 50 && country.getDrivers() != null) {
-                topDrivers.addAll(country.getDrivers());
+            if (country.getConflictScore() >= 50) {
+                return "Conflict";
             }
         }
 
-        // Also check raw component scores — a country may have elevated conflict
-        // but it gets cut from its top-3 drivers by higher-scoring components.
-        // If ANY country in the region has conflictScore >= 20, "Conflict" is a valid regional driver.
-        for (var country : allRegionScores) {
-            if (country.getConflictScore() >= 20) {
-                topDrivers.add("Conflict");
-                break;
-            }
-        }
-
-        // Return the highest-priority driver found
-        for (String driver : hierarchy) {
-            if (topDrivers.contains(driver)) {
-                return driver;
-            }
-        }
-
-        // Fallback: first driver from top country
-        if (!topCountries.isEmpty() && topCountries.get(0).getDrivers() != null
-                && !topCountries.get(0).getDrivers().isEmpty()) {
-            return topCountries.get(0).getDrivers().get(0);
-        }
-        return null;
+        // Return the most frequent top driver
+        return topDriverCounts.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .orElse(topCountries.isEmpty() || topCountries.get(0).getDrivers() == null
+                        || topCountries.get(0).getDrivers().isEmpty()
+                        ? null : topCountries.get(0).getDrivers().get(0));
     }
 
     /**
