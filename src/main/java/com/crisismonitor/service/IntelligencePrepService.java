@@ -5,6 +5,8 @@ import com.crisismonitor.model.Headline;
 import com.crisismonitor.model.NewsItem;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -15,12 +17,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Intelligence Preparation Service — aggregates news and humanitarian data
- * from already-cached sources (StoryService, ReliefWeb, GDELT) into
- * per-country intelligence bundles for Claude briefings.
+ * Intelligence Preparation Service — aggregates humanitarian reports and news
+ * from already-cached sources into per-country intelligence bundles for Claude briefings.
+ *
+ * Strategy: uses ONLY data that warmup has already cached (ReliefWeb, news feed).
+ * Never triggers new GDELT/RSS fetches — avoids rate limit contention with warmup.
  *
  * Trigger: manual via API endpoint (should be called AFTER warmup completes).
- * Sources: StoryService news feed (GDELT + RSS), ReliefWeb cached reports.
  * Storage: ConcurrentHashMap (survives as long as Cloud Run instance is alive).
  */
 @Slf4j
@@ -29,12 +32,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class IntelligencePrepService {
 
     private final ReliefWebService reliefWebService;
-    private final StoryService storyService;
+    private final CacheManager cacheManager;
 
     private static final int MAX_NEWS_PER_COUNTRY = 8;
     private static final int MAX_RELIEFWEB_PER_COUNTRY = 5;
 
-    // In-memory store (survives as long as Cloud Run instance is alive)
+    // In-memory store
     private final Map<String, PreparedIntelligence> intelStore = new ConcurrentHashMap<>();
 
     // Track preparation status
@@ -63,8 +66,8 @@ public class IntelligencePrepService {
 
     /**
      * Aggregate intelligence from cached data sources for all countries.
-     * Uses StoryService news feed (GDELT + RSS) and ReliefWeb — no external
-     * RSS calls needed since these are already cached by warmup.
+     * Uses cached ReliefWeb reports and cached news feed — no new external calls.
+     * Should complete in seconds since all data is already in cache.
      */
     @Async
     public void prepareAll() {
@@ -79,18 +82,20 @@ public class IntelligencePrepService {
         lastPrepStatus = "running";
         countryStatus.clear();
 
-        // Step 1: Build country→news index from StoryService news feed (already cached)
-        Map<String, List<ArticleIntel>> newsIndex = buildNewsIndex();
-        log.info("Built news index: {} countries with articles", newsIndex.size());
+        // Step 1: Try to get news index from already-cached news feed
+        Map<String, List<ArticleIntel>> newsIndex = buildNewsIndexFromCache();
 
         int success = 0;
         int failed = 0;
+        int withArticles = 0;
 
         for (String iso3 : MonitoredCountries.CRISIS_COUNTRIES) {
             try {
                 prepareCountry(iso3, newsIndex);
                 countryStatus.put(iso3, "done");
                 success++;
+                PreparedIntelligence intel = intelStore.get(iso3);
+                if (intel != null && intel.articleCount > 0) withArticles++;
             } catch (Exception e) {
                 log.warn("Failed to prepare intelligence for {}: {}", iso3, e.getMessage());
                 countryStatus.put(iso3, "failed: " + e.getMessage());
@@ -100,82 +105,68 @@ public class IntelligencePrepService {
 
         long elapsed = (System.currentTimeMillis() - startTime) / 1000;
         lastPreparedAt = LocalDateTime.now();
-        lastPrepStatus = String.format("completed: %d success, %d failed in %ds", success, failed, elapsed);
+        lastPrepStatus = String.format("completed: %d success (%d with articles), %d failed in %ds",
+                success, withArticles, failed, elapsed);
         preparing.set(false);
 
-        // Log summary
-        int totalArticles = intelStore.values().stream().mapToInt(i -> i.articleCount).sum();
-        log.info("=== Intelligence preparation complete: {} success, {} failed in {}s ({} total articles) ===",
-                success, failed, elapsed, totalArticles);
+        log.info("=== Intelligence preparation complete: {} success ({} with articles), {} failed in {}s ===",
+                success, withArticles, failed, elapsed);
     }
 
     // ========== INTERNAL ==========
 
     /**
-     * Build country→articles index from StoryService news feed cache.
-     * The news feed contains GDELT + RSS articles tagged with country ISO3.
+     * Build country→articles index from the already-cached news feed.
+     * Reads directly from Spring cache — if not cached, returns empty (no trigger).
      */
-    private Map<String, List<ArticleIntel>> buildNewsIndex() {
+    @SuppressWarnings("unchecked")
+    private Map<String, List<ArticleIntel>> buildNewsIndexFromCache() {
         Map<String, List<ArticleIntel>> index = new HashMap<>();
 
         try {
-            // Get the global news feed (cached by warmup)
-            StoryService.NewsFeedData feed = storyService.getNewsFeed(null, null);
-            if (feed == null) {
-                log.warn("News feed not available — warmup may not have completed");
+            // Check if news feed is already in cache (don't trigger computation)
+            Cache newsFeedCache = cacheManager.getCache("newsFeed");
+            if (newsFeedCache == null) {
+                log.info("News feed cache not available");
                 return index;
             }
 
-            // Index media articles (GDELT + RSS) by country
+            // The cache key for getNewsFeed(null, null) is "-" (empty region + empty topic)
+            Cache.ValueWrapper cached = newsFeedCache.get("-");
+            if (cached == null) {
+                log.info("News feed not yet cached — will rely on ReliefWeb only");
+                return index;
+            }
+
+            StoryService.NewsFeedData feed = (StoryService.NewsFeedData) cached.get();
+            if (feed == null) return index;
+
+            // Index media articles by country
             if (feed.getMedia() != null) {
                 for (NewsItem item : feed.getMedia()) {
                     String iso3 = item.getCountry();
                     if (iso3 == null || iso3.isBlank()) continue;
                     iso3 = iso3.toUpperCase();
-
                     index.computeIfAbsent(iso3, k -> new ArrayList<>()).add(toArticleIntel(item));
                 }
-                log.info("Indexed {} media articles across {} countries",
-                        feed.getMedia().size(),
-                        index.size());
             }
 
-            // Also index ReliefWeb articles by country
+            // Index ReliefWeb articles from feed
             if (feed.getReliefweb() != null) {
                 for (NewsItem item : feed.getReliefweb()) {
                     String iso3 = item.getCountry();
                     if (iso3 == null || iso3.isBlank()) continue;
                     iso3 = iso3.toUpperCase();
-
-                    // Store under separate key to distinguish later
                     index.computeIfAbsent(iso3 + "_RW", k -> new ArrayList<>()).add(toArticleIntel(item));
                 }
             }
 
+            long mediaCountries = index.entrySet().stream().filter(e -> !e.getKey().endsWith("_RW")).count();
+            long rwCountries = index.entrySet().stream().filter(e -> e.getKey().endsWith("_RW")).count();
+            log.info("News index from cache: {} media countries, {} reliefweb countries", mediaCountries, rwCountries);
+
         } catch (Exception e) {
-            log.error("Failed to build news index from StoryService: {}", e.getMessage());
-        }
-
-        // Also try per-region feeds for broader coverage
-        for (String region : List.of("africa", "mena", "asia", "lac", "europe")) {
-            try {
-                StoryService.NewsFeedData regionFeed = storyService.getNewsFeed(region, null);
-                if (regionFeed != null && regionFeed.getMedia() != null) {
-                    for (NewsItem item : regionFeed.getMedia()) {
-                        String iso3 = item.getCountry();
-                        if (iso3 == null || iso3.isBlank()) continue;
-                        iso3 = iso3.toUpperCase();
-
-                        List<ArticleIntel> existing = index.computeIfAbsent(iso3, k -> new ArrayList<>());
-                        // Only add if we don't have too many already
-                        if (existing.size() < MAX_NEWS_PER_COUNTRY * 2) {
-                            existing.add(toArticleIntel(item));
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                log.debug("Region feed {} not available: {}", region, e.getMessage());
-            }
+            log.warn("Failed to read news feed from cache: {}", e.getMessage());
         }
 
         return index;
@@ -184,7 +175,7 @@ public class IntelligencePrepService {
     private void prepareCountry(String iso3, Map<String, List<ArticleIntel>> newsIndex) {
         String countryName = MonitoredCountries.getName(iso3);
 
-        // Get news from pre-built index
+        // Get news from pre-built index (from cached news feed)
         List<ArticleIntel> news = newsIndex.getOrDefault(iso3, Collections.emptyList());
 
         // Deduplicate by title prefix
@@ -198,13 +189,12 @@ public class IntelligencePrepService {
             }
         }
 
-        // Get ReliefWeb from index or fetch directly (cached)
+        // Get ReliefWeb — from index first, then try direct (cached by warmup)
         List<ArticleIntel> reliefWeb = newsIndex.getOrDefault(iso3 + "_RW", Collections.emptyList());
         if (reliefWeb.isEmpty()) {
             reliefWeb = fetchReliefWebIntel(iso3);
         }
 
-        // Deduplicate ReliefWeb
         List<ArticleIntel> dedupedRW = new ArrayList<>();
         for (ArticleIntel a : reliefWeb) {
             if (a.title == null) continue;
@@ -223,11 +213,6 @@ public class IntelligencePrepService {
         intel.articleCount = dedupedNews.size() + dedupedRW.size();
 
         intelStore.put(iso3, intel);
-
-        if (intel.articleCount > 0) {
-            log.debug("Prepared {} for {} ({} news + {} reliefweb)",
-                    intel.articleCount, iso3, dedupedNews.size(), dedupedRW.size());
-        }
     }
 
     private ArticleIntel toArticleIntel(NewsItem item) {
@@ -241,7 +226,7 @@ public class IntelligencePrepService {
     }
 
     /**
-     * Fetch ReliefWeb reports directly (uses cached data via @Cacheable).
+     * Fetch ReliefWeb reports — uses @Cacheable so it reads from cache if available.
      */
     private List<ArticleIntel> fetchReliefWebIntel(String iso3) {
         List<ArticleIntel> articles = new ArrayList<>();
