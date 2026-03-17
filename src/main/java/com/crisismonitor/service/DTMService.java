@@ -10,6 +10,7 @@ import reactor.netty.http.client.HttpClient;
 
 import java.io.BufferedReader;
 import java.io.StringReader;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -55,6 +56,7 @@ public class DTMService {
                     .uri(DTM_CSV_URL)
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(60))
                     .block();
 
             if (csvContent == null || csvContent.isEmpty()) {
@@ -141,6 +143,7 @@ public class DTMService {
                     .uri(DTM_CSV_URL)
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(60))
                     .block();
 
             if (csvContent == null) return Collections.emptyMap();
@@ -176,6 +179,7 @@ public class DTMService {
                     .uri(DTM_CSV_URL)
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(60))
                     .block();
 
             if (csvContent == null) return Collections.emptyList();

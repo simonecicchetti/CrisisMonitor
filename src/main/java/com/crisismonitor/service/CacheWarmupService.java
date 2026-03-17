@@ -242,8 +242,8 @@ public class CacheWarmupService {
 
     @Async
     private void warmupDTM() {
+        log.info("Warming up DTM (IDP) cache...");
         try {
-            log.info("Warming up DTM (IDP) cache...");
             var data = dtmService.getCountryLevelIdps();
             if (data != null && !data.isEmpty()) {
                 memoryFallback.put("dtmData", data);
@@ -254,7 +254,7 @@ public class CacheWarmupService {
                 log.warn("DTM returned empty data");
                 cacheStatus.put("dtm", false);
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.error("DTM warmup failed: {}", e.getMessage());
             cacheStatus.put("dtm", false);
         }
