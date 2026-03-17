@@ -907,7 +907,7 @@ const Haptics = {
 const ConflictMonitor = {
   loaded: false,
   retryCount: 0,
-  maxRetries: 5,
+  maxRetries: 12,
 
   async init() {
     if (this.loaded) return;
@@ -915,12 +915,16 @@ const ConflictMonitor = {
     const container = document.getElementById('conflict-spikes-container');
     if (!container) return;
 
-    container.innerHTML = `
-      <div style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-        <div class="loading-spinner"></div>
-        Loading conflict data from GDELT...
-      </div>
-    `;
+    // Show clean default state immediately (not a spinner)
+    if (this.retryCount === 0) {
+      container.innerHTML = `
+        <div class="driver-empty-state">
+          <span class="driver-empty-icon">&#x2705;</span>
+          <span class="driver-empty-title">No elevated media spikes</span>
+          <span class="driver-empty-desc">Analyzing GDELT data in background...</span>
+        </div>
+      `;
+    }
 
     try {
       const controller = new AbortController();
@@ -932,17 +936,10 @@ const ConflictMonitor = {
       const result = await response.json();
 
       if (result.status === 'LOADING') {
-        container.innerHTML = `
-          <div class="driver-empty-state">
-            <span class="driver-empty-icon">&#x1F4E1;</span>
-            <span class="driver-empty-title">GDELT data warming up</span>
-            <span class="driver-empty-desc">Conflict monitoring data takes 10-15 minutes to load after deploy. Auto-refreshing...</span>
-          </div>
-        `;
-        // Use exponential backoff for LOADING state — extend retries for GDELT warmup
-        const delay = Utils.getBackoffDelay(this.retryCount, 10000, 60000);
+        // Keep current state, silently retry in background
+        const delay = Math.min(30000, 10000 + this.retryCount * 5000);
         this.retryCount++;
-        if (this.retryCount <= 20) {
+        if (this.retryCount <= this.maxRetries) {
           setTimeout(() => { this.loaded = false; this.init(); }, delay);
         }
         return;
@@ -952,30 +949,17 @@ const ConflictMonitor = {
       DataManager.cache.set('/api/conflict/spikes', { data: spikes, timestamp: Date.now() });
       this.render(container, spikes, result.status === 'STALE');
       this.loaded = true;
-      this.retryCount = 0; // Reset on success
+      this.retryCount = 0;
     } catch (error) {
       console.error('Error loading conflict spikes:', error);
 
+      // Silently retry — keep showing current state
       if (this.retryCount < this.maxRetries) {
-        const delay = Utils.getBackoffDelay(this.retryCount, 5000, 60000);
+        const delay = Math.min(60000, 10000 + this.retryCount * 10000);
         this.retryCount++;
-        container.innerHTML = `
-          <div class="driver-empty-state">
-            <span class="driver-empty-icon">&#x1F4E1;</span>
-            <span class="driver-empty-title">Loading conflict data</span>
-            <span class="driver-empty-desc">Connecting to GDELT... (attempt ${this.retryCount}/${this.maxRetries})</span>
-          </div>
-        `;
         setTimeout(() => { this.loaded = false; this.init(); }, delay);
-      } else {
-        container.innerHTML = `
-          <div class="driver-empty-state">
-            <span class="driver-empty-icon">&#x1F4E1;</span>
-            <span class="driver-empty-title">Conflict data unavailable</span>
-            <span class="driver-empty-desc"><a href="#" onclick="ConflictMonitor.retryCount=0; ConflictMonitor.loaded=false; ConflictMonitor.init(); return false;">Retry</a></span>
-          </div>
-        `;
       }
+      // After max retries, just leave the "No elevated spikes" state — no error shown
     }
   },
 

@@ -44,6 +44,7 @@ public class CacheWarmupService {
     private final WHODiseaseOutbreakService whoDiseaseOutbreakService;
     private final ReliefWebService reliefWebService;
     private final ClimateService climateService;
+    private final DTMService dtmService;
 
     // Track warmup status
     private final AtomicBoolean warmupComplete = new AtomicBoolean(false);
@@ -102,7 +103,8 @@ public class CacheWarmupService {
                     log.info("Phase 1a (fast data APIs) complete, starting Phase 1b (web sources)...");
                     CompletableFuture<Void> whoFuture = warmupWHO();
                     CompletableFuture<Void> briefingFuture = CompletableFuture.runAsync(this::warmupDailyBriefing);
-                    return CompletableFuture.allOf(whoFuture, briefingFuture);
+                    CompletableFuture<Void> dtmFuture = CompletableFuture.runAsync(this::warmupDTM);
+                    return CompletableFuture.allOf(whoFuture, briefingFuture, dtmFuture);
                 })
                 .thenRun(() -> {
                     warmupRiskScores();
@@ -239,6 +241,25 @@ public class CacheWarmupService {
     }
 
     @Async
+    private void warmupDTM() {
+        try {
+            log.info("Warming up DTM (IDP) cache...");
+            var data = dtmService.getCountryLevelIdps();
+            if (data != null && !data.isEmpty()) {
+                memoryFallback.put("dtmData", data);
+                cacheStatus.put("dtm", true);
+                lastRefresh.put("dtm", LocalDateTime.now());
+                log.info("DTM cache warmed: {} countries", data.size());
+            } else {
+                log.warn("DTM returned empty data");
+                cacheStatus.put("dtm", false);
+            }
+        } catch (Exception e) {
+            log.error("DTM warmup failed: {}", e.getMessage());
+            cacheStatus.put("dtm", false);
+        }
+    }
+
     public CompletableFuture<Void> warmupWHO() {
         return CompletableFuture.runAsync(() -> {
             try {
