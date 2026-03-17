@@ -231,7 +231,7 @@ public class IntelligencePrepService {
     private List<ArticleIntel> fetchReliefWebIntel(String iso3) {
         List<ArticleIntel> articles = new ArrayList<>();
         try {
-            List<Headline> reports = reliefWebService.getLatestReportsAsHeadlines(iso3, MAX_RELIEFWEB_PER_COUNTRY, 7);
+            List<Headline> reports = reliefWebService.getLatestReportsAsHeadlines(iso3, MAX_RELIEFWEB_PER_COUNTRY, 30);
             if (reports != null) {
                 for (Headline h : reports) {
                     ArticleIntel article = new ArticleIntel();
