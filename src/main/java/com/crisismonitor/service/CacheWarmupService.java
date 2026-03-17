@@ -263,9 +263,17 @@ public class CacheWarmupService {
                 var data = climateService.getClimateAnomalies();
                 if (data != null && !data.isEmpty()) {
                     memoryFallback.put("ndviClimateData", data);
+                    // Also store filtered stress data for Drivers tab (NDVI < 0.9)
+                    var stressed = data.stream()
+                            .filter(c -> c.getNdviAnomaly() != null && c.getNdviAnomaly() < 0.9)
+                            .sorted((a, b) -> Double.compare(
+                                    a.getNdviAnomaly() != null ? a.getNdviAnomaly() : 1.0,
+                                    b.getNdviAnomaly() != null ? b.getNdviAnomaly() : 1.0))
+                            .toList();
+                    memoryFallback.put("climateStress", stressed);
                     cacheStatus.put("ndvi", true);
                     lastRefresh.put("ndvi", LocalDateTime.now());
-                    log.info("NDVI cache warmed: {} entries", data.size());
+                    log.info("NDVI cache warmed: {} entries ({} stressed)", data.size(), stressed.size());
                 } else {
                     log.warn("NDVI returned empty data, keeping previous fallback ({} entries)",
                             memoryFallback.containsKey("ndviClimateData") ? ((java.util.Collection<?>) memoryFallback.get("ndviClimateData")).size() : 0);

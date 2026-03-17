@@ -467,7 +467,7 @@ const CommandPalette = {
         <div class="command-item command-ai ${index === this.selectedIndex ? 'selected' : ''}"
              data-index="${index}" data-query="${Utils.escapeHtml(q)}">
           <span class="command-icon">✨</span>
-          <span class="command-label">Ask Claude: "${Utils.escapeHtml(q)}"</span>
+          <span class="command-label">Ask AI: "${Utils.escapeHtml(q)}"</span>
         </div>
       `;
     }
@@ -932,12 +932,11 @@ const ConflictMonitor = {
       const result = await response.json();
 
       if (result.status === 'LOADING') {
-        const minutes = Math.ceil((this.retryCount * 10) / 60);
         container.innerHTML = `
-          <div style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-            <div class="loading-spinner"></div>
-            GDELT data warming up — this can take 10-15 minutes after deploy.
-            <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 4px;">Auto-refreshing...</div>
+          <div class="driver-empty-state">
+            <span class="driver-empty-icon">&#x1F4E1;</span>
+            <span class="driver-empty-title">GDELT data warming up</span>
+            <span class="driver-empty-desc">Conflict monitoring data takes 10-15 minutes to load after deploy. Auto-refreshing...</span>
           </div>
         `;
         // Use exponential backoff for LOADING state — extend retries for GDELT warmup
@@ -961,15 +960,19 @@ const ConflictMonitor = {
         const delay = Utils.getBackoffDelay(this.retryCount, 5000, 60000);
         this.retryCount++;
         container.innerHTML = `
-          <div style="padding: var(--space-lg); text-align: center; color: var(--text-tertiary);">
-            Loading conflict data... (retry ${this.retryCount}/${this.maxRetries})
+          <div class="driver-empty-state">
+            <span class="driver-empty-icon">&#x1F4E1;</span>
+            <span class="driver-empty-title">Loading conflict data</span>
+            <span class="driver-empty-desc">Connecting to GDELT... (attempt ${this.retryCount}/${this.maxRetries})</span>
           </div>
         `;
         setTimeout(() => { this.loaded = false; this.init(); }, delay);
       } else {
         container.innerHTML = `
-          <div style="padding: var(--space-lg); text-align: center; color: var(--text-tertiary);">
-            Unable to load conflict data. <a href="#" onclick="ConflictMonitor.retryCount=0; ConflictMonitor.loaded=false; ConflictMonitor.init(); return false;">Retry</a>
+          <div class="driver-empty-state">
+            <span class="driver-empty-icon">&#x1F4E1;</span>
+            <span class="driver-empty-title">Conflict data unavailable</span>
+            <span class="driver-empty-desc"><a href="#" onclick="ConflictMonitor.retryCount=0; ConflictMonitor.loaded=false; ConflictMonitor.init(); return false;">Retry</a></span>
           </div>
         `;
       }
@@ -979,8 +982,10 @@ const ConflictMonitor = {
   render(container, spikes, isStale = false) {
     if (!spikes || spikes.length === 0) {
       container.innerHTML = `
-        <div style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-          No elevated media spikes detected
+        <div class="driver-empty-state">
+          <span class="driver-empty-icon">&#x2705;</span>
+          <span class="driver-empty-title">No elevated media spikes</span>
+          <span class="driver-empty-desc">All monitored countries are within normal media coverage levels.</span>
         </div>
       `;
       return;
@@ -1653,19 +1658,10 @@ const CurrencyMonitor = {
 // ============================================
 const IPCMonitor = {
   loaded: false,
+  ipcData: {},  // iso3 → { phase, label, description }
 
   async init() {
     if (this.loaded) return;
-
-    const container = document.getElementById('ipc-alerts-container');
-    if (!container) return;
-
-    container.innerHTML = `
-      <div style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-        <div class="loading-spinner"></div>
-        Loading food security data...
-      </div>
-    `;
 
     try {
       const controller = new AbortController();
@@ -1677,98 +1673,51 @@ const IPCMonitor = {
       const result = await response.json();
 
       if (result.status === 'LOADING') {
-        container.innerHTML = `
-          <div style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-            <div class="loading-spinner"></div>
-            ${result.message || 'Loading food security data...'}
-          </div>
-        `;
         setTimeout(() => { this.loaded = false; this.init(); }, 10000);
         return;
       }
 
       const alerts = result.data || result;
-      this.render(container, alerts, result.status === 'STALE');
+      if (alerts && alerts.length > 0) {
+        // Build iso2 → iso3 mapping from risk scores (if available)
+        const iso2to3 = {};
+        if (RiskScoreMonitor.cachedScores) {
+          RiskScoreMonitor.cachedScores.forEach(s => {
+            if (s.iso2 && s.iso3) iso2to3[s.iso2.toUpperCase()] = s.iso3;
+          });
+        }
+
+        // Store IPC data indexed by iso3 for country detail cards
+        alerts.filter(a => a.ipcPhase >= 3.0).forEach(a => {
+          const p = Math.floor(a.ipcPhase);
+          // Convert iso2 to iso3 using risk score mapping
+          const iso3 = iso2to3[(a.iso2 || '').toUpperCase()] || a.iso3 || a.countryCode;
+          if (iso3) {
+            this.ipcData[iso3] = {
+              phase: p,
+              label: p >= 5 ? 'Famine' : p >= 4 ? 'Emergency' : 'Crisis',
+              countryName: a.countryName,
+              peopleAffected: a.populationPhase3to5 || a.peoplePhase3to5
+            };
+          }
+        });
+      }
       this.loaded = true;
 
     } catch (error) {
       console.error('Error loading IPC alerts:', error);
-      container.innerHTML = `
-        <div style="padding: var(--space-lg); text-align: center; color: var(--text-tertiary);">
-          Loading food security data... <span class="loading-dots"></span>
-        </div>
-      `;
       setTimeout(() => { this.loaded = false; this.init(); }, 15000);
     }
   },
 
-  render(container, alerts, isStale = false) {
-    if (!alerts || alerts.length === 0) {
-      container.innerHTML = `
-        <div style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-          No IPC data available
-        </div>
-      `;
-      return;
-    }
-
-    const staleIndicator = isStale ? `
-      <div style="padding: 8px 16px; background: rgba(255, 159, 10, 0.1); border-radius: 8px; margin-bottom: 12px; font-size: 0.75rem; color: var(--warning);">
-        ⟳ Data may be outdated, refreshing in background...
-      </div>
-    ` : '';
-
-    // Filter to critical alerts (Phase 3+) and sort by severity
-    const critical = alerts
-      .filter(a => a.ipcPhase >= 3.0)
-      .sort((a, b) => b.ipcPhase - a.ipcPhase)
-      .slice(0, 12);
-
-    if (critical.length === 0) {
-      container.innerHTML = `
-        <div style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-          No critical food security alerts
-        </div>
-      `;
-      return;
-    }
-
-    const rows = critical.map(alert => {
-      const rowClass = this.getRowClass(alert.ipcPhase);
-      const badgeClass = this.getBadgeClass(alert.ipcPhase);
-      const projDate = alert.projectionEnd ? alert.projectionEnd.substring(0, 7) : '-';
-
-      return `
-        <tr class="${rowClass}">
-          <td>
-            <strong>${alert.countryName}</strong>
-            ${alert.region ? `<div class="text-tertiary" style="font-size: 0.7rem;">${alert.region}</div>` : ''}
-          </td>
-          <td class="value-cell">
-            <span class="badge ${badgeClass}">Phase ${alert.ipcPhase}</span>
-          </td>
-          <td class="value-cell">${alert.phaseDescription}</td>
-          <td class="value-cell text-secondary">${projDate}</td>
-        </tr>
-      `;
-    }).join('');
-
-    container.innerHTML = `
-      ${staleIndicator}
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Country</th>
-            <th>Phase</th>
-            <th>Status</th>
-            <th>Proj.</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows}
-        </tbody>
-      </table>
-    `;
+  /**
+   * Get IPC badge HTML for a country (used in country detail cards)
+   */
+  getBadgeHtml(iso3) {
+    const ipc = this.ipcData[iso3];
+    if (!ipc) return '';
+    const chipClass = ipc.phase >= 5 ? 'ipc-chip-famine' : ipc.phase >= 4 ? 'ipc-chip-critical' : 'ipc-chip-high';
+    return `<span class="ipc-inline-badge ${chipClass}" title="IPC Phase ${ipc.phase}">${ipc.label}</span>`;
   },
 
   getRowClass(phase) {
@@ -1954,11 +1903,10 @@ const OverviewManager = {
         }
 
         const elevatedCount = (top.climateElevated ? 1 : 0) + (top.conflictElevated ? 1 : 0) + (top.economicElevated ? 1 : 0);
-        const ruleText = elevatedCount >= 2 ? `Triggers 2-of-3 rule (${elevatedCount}/3 elevated).` : '';
 
         const narrative = narrativeParts.length > 0
-          ? `Driven by ${narrativeParts.join(', ')}. ${ruleText}`
-          : `${drivers.join(', ')} indicators elevated. ${ruleText}`;
+          ? `Driven by ${narrativeParts.join(', ')}.`
+          : `${drivers.join(', ')} indicators elevated.`;
 
         container.innerHTML = `
           <div class="focus-now-label">Top Deterioration Risk</div>
@@ -2153,17 +2101,21 @@ const OverviewManager = {
         const sourceText = item.source || item.sourceType || 'Unknown';
         const countryText = item.countryName || '';
 
+        const liveThumb = item.thumbnailUrl && item.thumbnailUrl.startsWith('http');
         return `
-          <div class="live-news-card"${item.url ? ` data-url="${item.url}"` : ''}>
-            <div class="live-news-badges">
-              ${regionBadge}
-              ${topicBadge}
-            </div>
-            <div class="live-news-title">${item.title || 'Untitled'}</div>
-            <div class="live-news-meta">
-              ${countryText ? `<span class="live-news-country">${countryText}</span>` : ''}
-              <span class="live-news-sources">${sourceText}</span>
-              ${item.timeAgo ? `<span class="live-news-volume">${item.timeAgo}</span>` : ''}
+          <div class="live-news-card ${liveThumb ? 'has-thumbnail' : ''}"${item.url ? ` data-url="${item.url}"` : ''}>
+            ${liveThumb ? `<div class="live-news-thumb"><img src="${Utils.escapeHtml(item.thumbnailUrl)}" alt="" loading="lazy" onerror="this.parentElement.style.display='none';var c=this.closest('.live-news-card');if(c)c.classList.remove('has-thumbnail')"></div>` : ''}
+            <div class="live-news-body">
+              <div class="live-news-badges">
+                ${regionBadge}
+                ${topicBadge}
+              </div>
+              <div class="live-news-title">${item.title || 'Untitled'}</div>
+              <div class="live-news-meta">
+                ${countryText ? `<span class="live-news-country">${countryText}</span>` : ''}
+                <span class="live-news-sources">${sourceText}</span>
+                ${item.timeAgo ? `<span class="live-news-volume">${item.timeAgo}</span>` : ''}
+              </div>
             </div>
           </div>
         `;
@@ -2230,6 +2182,12 @@ const OverviewManager = {
                 <div class="pulse-hotspot secondary">
                   <span class="pulse-hotspot-name">${region.hotspot2Name}</span>
                   <span class="pulse-hotspot-score">${region.hotspot2Score}</span>
+                </div>
+              ` : ''}
+              ${region.hotspot3Name ? `
+                <div class="pulse-hotspot secondary">
+                  <span class="pulse-hotspot-name">${region.hotspot3Name}</span>
+                  <span class="pulse-hotspot-score">${region.hotspot3Score}</span>
                 </div>
               ` : ''}
               ${region.dominantDriver ? `<div class="pulse-driver">${region.dominantDriver}</div>` : ''}
@@ -2448,7 +2406,7 @@ const OverviewManager = {
         <div class="regional-brief-text">${briefContent.replace(/\n/g, '<br>')}</div>
         <div class="regional-brief-meta">
           <span>Generated: ${new Date(analysis.generatedAt).toLocaleString()}</span>
-          <span>Model: ${analysis.model || 'Claude'}</span>
+          <span>Model: ${analysis.model || 'AI'}</span>
         </div>
       `;
     } catch (error) {
@@ -2628,7 +2586,7 @@ const FocusAdvisor = {
     try {
       // Use the global AI analysis endpoint
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
       const response = await fetch('/api/analysis/global', { signal: controller.signal });
       clearTimeout(timeoutId);
       if (!response.ok) throw new Error('Analysis failed');
@@ -2831,7 +2789,7 @@ const AIAnalysisManager = {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
       const response = await fetch(`/api/analysis/country?iso3=${countryCode}`, {
@@ -2915,16 +2873,31 @@ const AIAnalysisManager = {
           return `<span class="qa-cite">[${idx}]</span>`;
         });
       }
-      // Convert section headers (BOTTOM LINE:, CURRENT SITUATION:, KEY RISKS:, OUTLOOK:) to styled elements
+      // Normalize section markers: AI may send %%SECTION:NAME%% or plain "NAME:" headers
+      // First ensure any existing %%SECTION:...%% markers have \n\n before them for splitting
+      narrativeHtml = narrativeHtml.replace(/%%SECTION:(.+?)%%/g, '\n\n%%SECTION:$1%%');
+      // Also convert plain text headers to section markers
       narrativeHtml = narrativeHtml.replace(/(?:^|\n)(BOTTOM LINE|CURRENT SITUATION|KEY RISKS|OUTLOOK):\s*/g, '\n\n%%SECTION:$1%%');
-      // Convert double newlines to paragraphs
-      narrativeHtml = narrativeHtml.split('\n\n').filter(p => p.trim()).map(p => {
-        const sectionMatch = p.match(/^%%SECTION:(.+?)%%(.*)$/s);
-        if (sectionMatch) {
-          return `<div class="narrative-section"><span class="narrative-section-label">${sectionMatch[1]}</span><p>${sectionMatch[2].replace(/\n/g, ' ')}</p></div>`;
+      // Convert to structured HTML by splitting on section markers
+      narrativeHtml = narrativeHtml.split(/%%SECTION:(.+?)%%/).reduce((acc, part, i) => {
+        if (i % 2 === 1) {
+          // Odd indices are section names captured by the regex group
+          acc.push({ type: 'label', text: part });
+        } else if (part.trim()) {
+          // Even indices are content between sections
+          const paragraphs = part.split('\n\n').filter(p => p.trim()).map(p =>
+            `<p>${p.replace(/\n/g, ' ').trim()}</p>`
+          ).join('');
+          if (acc.length > 0 && acc[acc.length - 1].type === 'label') {
+            // Attach content to the preceding section label
+            const label = acc.pop();
+            acc.push({ type: 'section', html: `<div class="narrative-section"><span class="narrative-section-label">${label.text}</span>${paragraphs}</div>` });
+          } else {
+            acc.push({ type: 'content', html: paragraphs });
+          }
         }
-        return `<p>${p.replace(/\n/g, ' ')}</p>`;
-      }).join('');
+        return acc;
+      }, []).map(item => item.html || '').join('');
       if (!narrativeHtml.includes('<p>')) narrativeHtml = `<p>${narrativeHtml}</p>`;
 
       // Sources list
@@ -3218,7 +3191,7 @@ const DeepAnalysisManager = {
     resultsContainer.innerHTML = `
       <div class="deep-analysis-loading" style="text-align: center; padding: var(--space-xl);">
         <div class="loading-spinner" style="margin: 0 auto 16px;"></div>
-        <div style="color: var(--text-secondary);">Claude is analyzing contextual risk factors...</div>
+        <div style="color: var(--text-secondary);">AI is analyzing contextual risk factors...</div>
         <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 8px;">This may take 5-10 seconds</div>
       </div>
     `;
@@ -3366,7 +3339,7 @@ const DeepAnalysisManager = {
       ` : ''}
 
       <div class="deep-analysis-meta">
-        <span>Model: ${Utils.escapeHtml(data.model || 'Claude')}</span>
+        <span>Model: ${Utils.escapeHtml(data.model || 'AI')}</span>
         <span>Generated: ${data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : 'just now'} ${data.durationMs ? `(${Math.round(data.durationMs / 1000)}s)` : ''}</span>
       </div>
     `;
@@ -3422,7 +3395,7 @@ const SituationDetectionManager = {
       situationsList.innerHTML = `
         <div style="text-align: center; padding: var(--space-xl);">
           <div class="loading-spinner" style="margin: 0 auto 16px;"></div>
-          <div style="color: var(--text-secondary);">Claude is analyzing triggered countries...</div>
+          <div style="color: var(--text-secondary);">AI is analyzing triggered countries...</div>
         </div>
       `;
     }
@@ -3459,7 +3432,7 @@ const SituationDetectionManager = {
       this.isLoading = false;
       btn.classList.remove('loading');
       btn.disabled = false;
-      btn.querySelector('span').textContent = 'Detect Situations (Claude)';
+      btn.querySelector('span').textContent = 'Detect Situations (AI)';
     }
   },
 
@@ -3481,7 +3454,7 @@ const SituationDetectionManager = {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
             </svg>
-            Claude Situation Detection
+            AI Situation Detection
           </h4>
           <span class="detect-situations-meta">${analyzed} countries analyzed in ${duration}s</span>
         </div>
@@ -3505,7 +3478,7 @@ const SituationDetectionManager = {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
           </svg>
-          Claude Situation Detection
+          AI Situation Detection
         </h4>
         <span class="detect-situations-meta">${situations.length} situations from ${analyzed} countries (${duration}s)</span>
       </div>
@@ -3554,7 +3527,7 @@ const SituationDetectionManager = {
     // Meta info
     html += `
       <div class="deep-analysis-meta" style="margin-top: var(--space-lg); padding-top: var(--space-sm); border-top: 1px solid var(--border-subtle);">
-        <span>Model: ${Utils.escapeHtml(data.model || 'Claude')}</span>
+        <span>Model: ${Utils.escapeHtml(data.model || 'AI')}</span>
         <span>Generated: ${data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : 'just now'}</span>
       </div>
     `;
@@ -3770,13 +3743,15 @@ const CountryDetailManager = {
         <div class="country-metrics">`;
       if (p.ipcPhase) {
         const phaseInt = Math.round(p.ipcPhase);
-        html += `<div class="metric"><span class="metric-label">IPC Phase</span><span class="metric-value phase-${phaseInt}">${phaseInt} - ${Utils.escapeHtml(p.ipcDescription || '')}</span></div>`;
+        const phaseNames = { 5: 'Famine', 4: 'Emergency', 3: 'Crisis', 2: 'Stressed', 1: 'Minimal' };
+        const phaseName = phaseNames[phaseInt] || `Phase ${phaseInt}`;
+        html += `<div class="metric"><span class="metric-label">Food Security Level</span><span class="metric-value phase-${phaseInt}">${phaseName}${p.ipcDescription ? ` — ${Utils.escapeHtml(p.ipcDescription)}` : ''}</span></div>`;
       }
       if (p.peoplePhase3to5) {
-        html += `<div class="metric"><span class="metric-label">People IPC 3-5</span><span class="metric-value">${this._fmtNum(p.peoplePhase3to5)}${p.percentPhase3to5 ? ` (${p.percentPhase3to5.toFixed(0)}%)` : ''}</span></div>`;
+        html += `<div class="metric"><span class="metric-label">People in Crisis+</span><span class="metric-value">${this._fmtNum(p.peoplePhase3to5)}${p.percentPhase3to5 ? ` (${p.percentPhase3to5.toFixed(0)}%)` : ''}</span></div>`;
       }
       if (p.peoplePhase4to5) {
-        html += `<div class="metric"><span class="metric-label">People IPC 4-5</span><span class="metric-value" style="color:var(--status-critical)">${this._fmtNum(p.peoplePhase4to5)}${p.percentPhase4to5 ? ` (${p.percentPhase4to5.toFixed(0)}%)` : ''}</span></div>`;
+        html += `<div class="metric"><span class="metric-label">People in Emergency+</span><span class="metric-value" style="color:var(--status-critical)">${this._fmtNum(p.peoplePhase4to5)}${p.percentPhase4to5 ? ` (${p.percentPhase4to5.toFixed(0)}%)` : ''}</span></div>`;
       }
       if (p.fcsPrevalence) {
         html += `<div class="metric"><span class="metric-label">Insufficient food (FCS)</span><span class="metric-value">${(p.fcsPrevalence * 100).toFixed(1)}%${p.fcsPeople ? ` (${this._fmtNum(p.fcsPeople)})` : ''}</span></div>`;
@@ -3903,7 +3878,7 @@ const CountryDetailManager = {
     html += `
       <div class="country-actions">
         <button class="btn-primary" onclick="AIAnalysisManager.analyzeCountry('${Utils.escapeHtml(iso3)}'); CountryDetailManager.close();">
-          Deep Analysis with Claude
+          Deep Analysis with AI
         </button>
       </div>
     `;
@@ -4029,6 +4004,7 @@ const SidebarManager = {
             window.CrisisMap.init(); // Will init or invalidate
           }, 100);
         }
+        StructuralIndicesManager.init();
         break;
       case 'early-warning':
         RiskScoreMonitor.init();
@@ -4043,16 +4019,16 @@ const SidebarManager = {
       case 'drivers':
         // Driver tabs handle their own loading
         DriverTabManager.init();
+        IntelligenceManager.loadWHOOutbreaks();
         break;
       case 'situational':
         // Operations Mode: Active Situations only
         SituationManager.init();
         break;
       case 'intelligence':
-        // AI Analysis: Ask AI + Topic Reports + WHO
+        // AI Analysis: Ask AI + Topic Reports
         QAManager.init();
         TopicReportGenerator.init();
-        IntelligenceManager.loadWHOOutbreaks();
         break;
     }
 
@@ -4392,11 +4368,10 @@ const IntelligenceManager = {
     this.renderNewsSignal(data);
     this.renderReliefWebReports(data);
     this.renderGDELTCoverage(data);
-    this.loadWHOOutbreaks();
   },
 
   async loadWHOOutbreaks() {
-    const container = document.getElementById('who-outbreaks-container');
+    const container = document.getElementById('who-outbreaks-drivers');
     if (!container) return;
     try {
       const resp = await fetch('/api/who/outbreaks');
@@ -4606,7 +4581,7 @@ const SituationManager = {
       status: 'READY',
       timestamp: claudeData.generatedAt,
       date: new Date().toISOString().split('T')[0],
-      todaySummary: [claudeData.globalContext || 'Claude-analyzed situations'],
+      todaySummary: [claudeData.globalContext || 'AI-analyzed situations'],
       situations: claudeData.situations.map(s => ({
         iso3: s.iso3,
         countryName: s.countryName,
@@ -4619,7 +4594,7 @@ const SituationManager = {
         reportsCount: 0, // Not available in Claude data
         signals: [s.summary],
         evidence: s.evidence ? s.evidence.map(e => ({
-          source: 'Claude',
+          source: 'AI',
           title: e,
           url: null,
           publisher: 'AI Analysis'
@@ -4642,7 +4617,7 @@ const SituationManager = {
       list.innerHTML = `
         <div style="padding: var(--space-lg); text-align: center;">
           <div style="color: var(--text-secondary); margin-bottom: var(--space-md);">No situations detected with keyword matching</div>
-          <div style="font-size: 0.8rem; color: var(--text-muted);">Click "Detect Situations (Claude)" for AI-powered analysis</div>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">Click "Detect Situations (AI)" for AI-powered analysis</div>
         </div>
       `;
     }
@@ -4903,10 +4878,13 @@ const EWPanelManager = {
       const levelClass = s.riskLevel === 'CRITICAL' ? 'critical' : s.riskLevel === 'ALERT' ? 'alert' : s.riskLevel === 'WARNING' ? 'warning' : 'watch';
       const isFirst = i === 0 && !this.selectedIso3;
       const isSelected = this.selectedIso3 === s.iso3;
+      const ipc = IPCMonitor.ipcData[s.iso3];
+      const ipcMini = ipc ? `<span class="ew-ipc-mini ew-ipc-p${ipc.phase}" title="IPC: ${ipc.label}">${ipc.label.charAt(0)}</span>` : '';
       return `
         <div class="ew-country-item ${isFirst || isSelected ? 'active' : ''}" data-iso3="${s.iso3}" data-index="${i}">
           <span class="ew-country-dot ew-dot-${levelClass}"></span>
           <span class="ew-country-name">${Utils.escapeHtml(s.countryName)}</span>
+          ${ipcMini}
           <span class="ew-country-score">${s.score}</span>
         </div>
       `;
@@ -4973,10 +4951,10 @@ const EWPanelManager = {
 
     // Build sub-scores display
     const subScores = [];
+    if (score.conflictScore != null) subScores.push({ label: 'Conflict', value: score.conflictScore, weight: '30%' });
     if (score.foodSecurityScore != null) subScores.push({ label: 'Food', value: score.foodSecurityScore, weight: '30%' });
     if (score.climateScore != null) subScores.push({ label: 'Climate', value: score.climateScore, weight: '25%' });
-    if (score.conflictScore != null) subScores.push({ label: 'Conflict', value: score.conflictScore, weight: '25%' });
-    if (score.economicScore != null) subScores.push({ label: 'Economic', value: score.economicScore, weight: '20%' });
+    if (score.economicScore != null) subScores.push({ label: 'Economic', value: score.economicScore, weight: '15%' });
 
     const subScoresHtml = subScores.length > 0 ? `
       <div class="ew-detail-subscores">
@@ -5007,19 +4985,23 @@ const EWPanelManager = {
       narrativeParts.push(`Media spike z=${score.gdeltZScore.toFixed(1)}`);
     }
 
+    // IPC badge from IPCMonitor
+    const ipcBadge = IPCMonitor.getBadgeHtml(score.iso3);
+
     container.innerHTML = `
       <div class="ew-detail-header">
         <span class="ew-detail-country">${Utils.escapeHtml(score.countryName)}</span>
         <span class="badge ${badgeClass}">${score.riskLevel}</span>
+        ${ipcBadge}
         <span class="ew-detail-score">${score.score}/100</span>
       </div>
-      <div class="ew-detail-horizon">${score.horizon || '30-day'} horizon${elevatedCount >= 2 ? ' · 2-of-3 rule triggered' : ''}</div>
+      <div class="ew-detail-horizon">${score.horizon || '30-day'} horizon${elevatedCount >= 2 ? ' · multi-indicator confirmed' : ''}</div>
       <div class="ew-detail-drivers">
         ${drivers.map(d => `<span class="driver-chip">${d}</span>`).join('')}
       </div>
       ${subScoresHtml}
       ${narrativeParts.length > 0 ? `<div class="ew-detail-narrative">${narrativeParts.join(' · ')}</div>` : ''}
-      <button class="ew-deep-btn" onclick="EWPanelManager.loadDeepAnalysis('${score.iso3}')">Analyze with Claude</button>
+      <button class="ew-deep-btn" onclick="EWPanelManager.loadDeepAnalysis('${score.iso3}')">Analyze with AI</button>
       <div id="ew-deep-result"></div>
     `;
   },
@@ -5035,7 +5017,7 @@ const EWPanelManager = {
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
       const response = await fetch(`/api/analysis/deep?iso3=${iso3}`, { signal: controller.signal });
       clearTimeout(timeoutId);
 
@@ -5054,7 +5036,7 @@ const EWPanelManager = {
       btn.textContent = 'Analysis complete';
     } catch (e) {
       resultDiv.innerHTML = `<div class="text-muted">Analysis failed: ${e.name === 'AbortError' ? 'timeout' : e.message}</div>`;
-      btn.textContent = 'Analyze with Claude';
+      btn.textContent = 'Analyze with AI';
       btn.disabled = false;
     }
   }
@@ -5315,7 +5297,7 @@ const QAManager = {
     `;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
       const response = await fetch(`/api/intelligence/ask?q=${encodeURIComponent(question)}`, {
@@ -5566,19 +5548,23 @@ const NewsFeedManager = {
     const sourceClass = sourceType === 'RELIEFWEB' ? 'reliefweb' : sourceType === 'RSS' ? 'rss' : 'gdelt';
     const sourceLabel = sourceType === 'RELIEFWEB' ? 'ReliefWeb' : sourceType === 'RSS' ? 'Media' : 'GDELT';
     const topics = (item.topics || []).filter(t => t !== 'general' && t !== 'humanitarian').slice(0, 2);
+    const hasThumb = item.thumbnailUrl && item.thumbnailUrl.startsWith('http');
 
     return `
-      <div class="news-card" ${item.url ? `data-url="${Utils.escapeHtml(item.url)}"` : ''}>
-        <div class="news-card-top">
-          <span class="news-card-source ${sourceClass}">${sourceLabel}</span>
-          ${item.countryName ? `<span class="news-card-country">${Utils.escapeHtml(item.countryName)}</span>` : ''}
-          ${item.timeAgo ? `<span class="news-card-time">${item.timeAgo}</span>` : ''}
-        </div>
-        <div class="news-card-title">${Utils.escapeHtml(item.title)}</div>
-        <div class="news-card-bottom">
-          ${item.source ? `<span class="news-card-outlet">${Utils.escapeHtml(item.source)}</span>` : ''}
-          ${item.format ? `<span class="news-card-format">${Utils.escapeHtml(item.format)}</span>` : ''}
-          ${topics.map(t => `<span class="news-card-tag">${t}</span>`).join('')}
+      <div class="news-card ${hasThumb ? 'has-thumbnail' : ''}" ${item.url ? `data-url="${Utils.escapeHtml(item.url)}"` : ''}>
+        ${hasThumb ? `<div class="news-card-thumb"><img src="${Utils.escapeHtml(item.thumbnailUrl)}" alt="" loading="lazy" onerror="this.parentElement.style.display='none';var c=this.closest('.news-card');if(c)c.classList.remove('has-thumbnail')"></div>` : ''}
+        <div class="news-card-content">
+          <div class="news-card-top">
+            <span class="news-card-source ${sourceClass}">${sourceLabel}</span>
+            ${item.countryName ? `<span class="news-card-country">${Utils.escapeHtml(item.countryName)}</span>` : ''}
+            ${item.timeAgo ? `<span class="news-card-time">${item.timeAgo}</span>` : ''}
+          </div>
+          <div class="news-card-title">${Utils.escapeHtml(item.title)}</div>
+          <div class="news-card-bottom">
+            ${item.source ? `<span class="news-card-outlet">${Utils.escapeHtml(item.source)}</span>` : ''}
+            ${item.format ? `<span class="news-card-format">${Utils.escapeHtml(item.format)}</span>` : ''}
+            ${topics.map(t => `<span class="news-card-tag">${t}</span>`).join('')}
+          </div>
         </div>
       </div>
     `;
@@ -6384,5 +6370,99 @@ window.CrisisMonitor = {
   IntelligenceManager,
   DailyBriefingManager,
   SituationManager,
-  TopicSearch
+  TopicSearch,
+  StructuralIndicesManager
+};
+
+// ==============================================
+// STRUCTURAL INDICES MANAGER
+// Global watchlists + FSI + GPI integration
+// ==============================================
+const StructuralIndicesManager = {
+  loaded: false,
+  data: null,
+
+  async init() {
+    if (this.loaded) return;
+    try {
+      const response = await fetch('/api/structural-indices');
+      if (!response.ok) return;
+      this.data = await response.json();
+      this.loaded = true;
+      this.populateTable();
+      this.enhanceRiskCards();
+    } catch (e) {
+      console.warn('Could not load structural indices:', e);
+    }
+  },
+
+  populateTable() {
+    if (!this.data?.indices) return;
+    const table = document.getElementById('countries-data-table');
+    if (!table) return;
+
+    const rows = table.querySelectorAll('tbody tr');
+    rows.forEach(row => {
+      const iso3 = row.dataset.iso3;
+      if (!iso3) return;
+      const idx = this.data.indices[iso3];
+      if (!idx) return;
+
+      const cells = row.querySelectorAll('.structural-idx');
+      cells.forEach(cell => {
+        const type = cell.dataset.type;
+        if (type === 'fsi' && idx.fsiRank) {
+          cell.textContent = `#${idx.fsiRank}`;
+          cell.title = `FSI Score: ${idx.fsiScore} — ${idx.fsiTier}`;
+          if (idx.fsiRank <= 10) cell.style.color = 'var(--critical)';
+          else if (idx.fsiRank <= 25) cell.style.color = 'var(--high)';
+        } else if (type === 'gpi' && idx.gpiRank) {
+          cell.textContent = `#${idx.gpiRank}`;
+          cell.title = `GPI Score: ${idx.gpiScore} — ${idx.gpiTier}`;
+          if (idx.gpiRank >= 150) cell.style.color = 'var(--critical)';
+          else if (idx.gpiRank >= 130) cell.style.color = 'var(--high)';
+        } else if (type === 'flags') {
+          const count = idx.watchlistCount || 0;
+          if (count > 0) {
+            cell.innerHTML = `<span class="flag-count flag-count-${Math.min(count, 5)}" title="${count} global watchlists">${count}/5</span>`;
+          } else {
+            cell.textContent = '—';
+          }
+        }
+      });
+    });
+  },
+
+  enhanceRiskCards() {
+    if (!this.data?.indices) return;
+    const cards = document.querySelectorAll('.risk-card');
+    cards.forEach(card => {
+      const iso3 = card.dataset.iso3;
+      if (!iso3) return;
+      const idx = this.data.indices[iso3];
+      if (!idx || !idx.watchlistCount) return;
+
+      // Add consensus badge to card
+      const tagEl = card.querySelector('.risk-card-tag');
+      if (tagEl) {
+        const badge = document.createElement('span');
+        badge.className = 'structural-badge';
+        badge.title = this.getWatchlistTooltip(idx);
+        badge.textContent = `${idx.watchlistCount}/5`;
+        tagEl.appendChild(badge);
+      }
+    });
+  },
+
+  getWatchlistTooltip(idx) {
+    if (!idx.watchlists || idx.watchlists.length === 0) return '';
+    const names = {
+      'irc2026': 'IRC Watchlist',
+      'icg2026': 'ICG Conflicts to Watch',
+      'ipcHighest': 'IPC Highest Concern',
+      'ipcVeryHigh': 'IPC Very High Concern',
+      'gho2026': 'UN GHO 2026'
+    };
+    return idx.watchlists.map(w => names[w] || w).join(', ');
+  }
 };

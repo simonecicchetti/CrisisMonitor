@@ -13,10 +13,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 /**
  * REST API endpoints for map and AJAX calls
@@ -54,6 +51,8 @@ public class ApiController {
     private final RegionService regionService;
     private final CountryProfileService countryProfileService;
     private final WHODiseaseOutbreakService whoDiseaseOutbreakService;
+    private final StructuralIndexService structuralIndexService;
+    private final IntelligencePrepService intelligencePrepService;
 
     /**
      * Health/keep-alive endpoint for Cloud Scheduler.
@@ -86,6 +85,38 @@ public class ApiController {
     @GetMapping("/countries/{iso3}/profile")
     public CountryProfileData getCountryProfile(@PathVariable String iso3) {
         return countryProfileService.getProfile(iso3.toUpperCase());
+    }
+
+    /**
+     * Structural indices and watchlist data for a country.
+     * FSI (Fragile States Index), GPI (Global Peace Index),
+     * plus IRC/ICG/IPC/GHO watchlist flags.
+     */
+    @GetMapping("/countries/{iso3}/indices")
+    public Map<String, Object> getCountryIndices(@PathVariable String iso3) {
+        String code = iso3.toUpperCase();
+        Map<String, Object> result = new LinkedHashMap<>();
+        StructuralIndexService.CountryIndices indices = structuralIndexService.getCountryIndices(code);
+        if (indices != null) {
+            result.put("fsi", Map.of("score", indices.getFsiScore(), "rank", indices.getFsiRank(),
+                    "totalCountries", 179, "tier", indices.getFsiTier()));
+            result.put("gpi", Map.of("score", indices.getGpiScore(), "rank", indices.getGpiRank(),
+                    "totalCountries", 163, "tier", indices.getGpiTier()));
+            result.put("watchlistCount", indices.getWatchlistCount());
+        }
+        result.put("watchlists", structuralIndexService.getCountryWatchlistEntries(code));
+        return result;
+    }
+
+    /**
+     * All structural indices for all countries (used by Countries page).
+     */
+    @GetMapping("/structural-indices")
+    public Map<String, Object> getAllStructuralIndices() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("indices", structuralIndexService.getAllCountryIndices());
+        result.put("watchlists", structuralIndexService.getAllWatchlists());
+        return result;
     }
 
     @GetMapping("/alerts")
@@ -519,6 +550,51 @@ public class ApiController {
             }
         });
         return Map.of("status", "cleared", "caches", String.join(", ", cacheManager.getCacheNames()));
+    }
+
+    // ========== INTELLIGENCE PREPARATION ==========
+
+    /**
+     * Preview prepared intelligence for a country (debug/verification).
+     */
+    @GetMapping("/intelligence/prepared/{iso3}")
+    public Map<String, Object> getPreviewPreparedIntel(@PathVariable String iso3) {
+        IntelligencePrepService.PreparedIntelligence intel =
+                intelligencePrepService.getIntelligence(iso3.toUpperCase());
+        Map<String, Object> result = new LinkedHashMap<>();
+        if (intel == null) {
+            result.put("status", "not_prepared");
+            return result;
+        }
+        result.put("iso3", intel.iso3);
+        result.put("preparedAt", intel.preparedAt);
+        result.put("articleCount", intel.articleCount);
+        result.put("newsArticles", intel.newsArticles);
+        result.put("reliefWebReports", intel.reliefWebReports);
+        result.put("dataPackPreview", intel.toDataPackSection());
+        return result;
+    }
+
+    /**
+     * Trigger intelligence preparation for all countries.
+     * Pre-fetches news articles with content snippets, stores in Redis.
+     * Takes ~5-8 minutes to complete. Can be called by Cloud Scheduler.
+     */
+    @PostMapping("/intelligence/prepare")
+    public Map<String, Object> prepareIntelligence() {
+        intelligencePrepService.prepareAll();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status", "started");
+        result.put("message", "Intelligence preparation started for all countries. Check /api/intelligence/prepare/status for progress.");
+        return result;
+    }
+
+    /**
+     * Check intelligence preparation status.
+     */
+    @GetMapping("/intelligence/prepare/status")
+    public Map<String, Object> getIntelligencePrepStatus() {
+        return intelligencePrepService.getStatus();
     }
 
     // ========== INTELLIGENCE FEED (CENTRALIZED) ==========

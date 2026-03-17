@@ -66,20 +66,34 @@ public class PrecipitationAnomaly {
     }
 
     /**
-     * Calculate risk score from anomaly
+     * Calculate risk score from anomaly.
+     *
+     * Outlier protection: anomalies beyond -90% or +500% are capped.
+     * -100% means ZERO rainfall for 90 days — while possible in deserts,
+     * it's usually an API error (offline weather station, missing data).
+     * +1600% is physically implausible. Real extreme floods are +200-400%.
+     * Cap at 70 for outlier-range values to prevent false CRITICAL scores.
      */
     public static int calculateRiskScore(double anomalyPercent) {
         if (anomalyPercent >= 0) {
             // Excess rainfall: moderate risk for flooding
+            // Cap at 50: excess rain is less immediately dangerous than drought
+            // for food security (crops can often recover from flooding)
+            if (anomalyPercent > 500) return 50; // outlier: cap at 50
             return Math.min(50, (int)(anomalyPercent / 2));
         }
-        // Drought: higher risk
+        // Drought: higher risk for food security
         double absAnomaly = Math.abs(anomalyPercent);
-        if (absAnomaly >= 80) return 100;
-        if (absAnomaly >= 60) return 85;
-        if (absAnomaly >= 40) return 70;
-        if (absAnomaly >= 20) return 50;
-        if (absAnomaly >= 10) return 30;
+
+        // Outlier protection: -95% to -100% is almost certainly API error
+        // (weather station offline = 0 readings = -100%). Cap score at 70.
+        if (absAnomaly >= 95) return 70;
+
+        if (absAnomaly >= 80) return 85;
+        if (absAnomaly >= 60) return 70;
+        if (absAnomaly >= 40) return 55;
+        if (absAnomaly >= 20) return 40;
+        if (absAnomaly >= 10) return 25;
         return 10;
     }
 }

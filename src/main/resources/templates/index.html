@@ -23,7 +23,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
     <!-- Custom CSS -->
-    <link rel="stylesheet" th:href="@{/css/style.css(v=79)}"/>
+    <link rel="stylesheet" th:href="@{/css/style.css(v=81)}"/>
 
     <!-- Preconnect for performance -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -243,7 +243,7 @@
                     </svg>
                 </summary>
                 <div class="data-details-content">
-                    <table class="data-table">
+                    <table class="data-table" id="countries-data-table">
                         <thead>
                             <tr>
                                 <th>Country</th>
@@ -254,10 +254,14 @@
                                 <th>Conflict</th>
                                 <th>Econ</th>
                                 <th>Trend</th>
+                                <th title="Fragile States Index 2024 (Fund for Peace) — rank out of 179">FSI</th>
+                                <th title="Global Peace Index 2025 (IEP) — rank out of 163">GPI</th>
+                                <th title="Number of global watchlists flagging this country (IRC, ICG, IPC, GHO)">Flags</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr th:each="rs : ${riskScores}"
+                                th:data-iso3="${rs.iso3}"
                                 th:class="${rs.score >= 86 ? 'critical-row' : (rs.score >= 71 ? 'high-row' : '')}">
                                 <td th:text="${rs.countryName}">Country</td>
                                 <td class="value-cell" th:classappend="${rs.score >= 86 ? 'text-critical' : (rs.score >= 71 ? 'text-high' : '')}"
@@ -270,6 +274,9 @@
                                 <td class="value-cell" th:text="${rs.conflictScore}">0</td>
                                 <td class="value-cell" th:text="${rs.economicScore}">0</td>
                                 <td class="value-cell" th:text="${rs.trendIcon != null ? rs.trendIcon + ' ' + (rs.scoreDelta != null ? rs.scoreDelta : '') : '—'}">—</td>
+                                <td class="value-cell structural-idx" data-type="fsi">—</td>
+                                <td class="value-cell structural-idx" data-type="gpi">—</td>
+                                <td class="value-cell structural-idx" data-type="flags">—</td>
                             </tr>
                         </tbody>
                     </table>
@@ -330,31 +337,16 @@
                 </div>
             </div>
 
-            <!-- ZONA 1: NOW — Cluster banner (conditional) + IPC Extreme Conditions -->
+            <!-- Cluster banner (conditional) -->
             <div id="ew-cluster-banner" class="ew-cluster-banner" style="display: none;">
                 <div id="cluster-alerts-full" class="ew-clusters"></div>
             </div>
 
-            <div class="ew-zona" id="ew-zona-now">
-                <div class="ew-zona-label">Current Crises</div>
-                <div class="ew-ipc-section">
-                    <div class="ew-section-header">
-                        <h3>Extreme Conditions</h3>
-                        <div class="ew-ipc-legend">
-                            <span class="badge famine">P5</span>
-                            <span class="badge critical">P4</span>
-                            <span class="badge high">P3</span>
-                        </div>
-                    </div>
-                    <div id="ipc-alerts-container" class="ew-ipc-table">
-                        <div class="loading-placeholder">Loading food security data...</div>
-                    </div>
-                </div>
-            </div>
+            <!-- Hidden container for IPC data (used by country detail cards) -->
+            <div id="ipc-alerts-container" style="display:none;"></div>
 
-            <!-- ZONA 2: FORECAST — Split panel: country list + detail -->
-            <div class="ew-zona">
-                <div class="ew-zona-label">Deterioration Forecast</div>
+            <!-- Risk Scores Split Panel -->
+            <div style="margin-top: var(--space-sm);">
                 <div class="ew-split-panel">
                     <div class="ew-split-left">
                         <div class="ew-split-header">
@@ -463,6 +455,7 @@
                 <button class="tab-btn" data-tab="driver-conflict">Conflict</button>
                 <button class="tab-btn" data-tab="driver-economy">Economy</button>
                 <button class="tab-btn" data-tab="driver-displacement">Displacement</button>
+                <button class="tab-btn" data-tab="driver-health">Health</button>
             </div>
 
             <!-- Tab Content -->
@@ -529,8 +522,10 @@
                             </div>
                             <div class="card-body no-padding">
                                 <div id="conflict-spikes-container" class="data-table-container" style="max-height: 380px;">
-                                    <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-                                        Loading conflict data...
+                                    <div class="driver-empty-state">
+                                        <span class="driver-empty-icon">&#x1F4E1;</span>
+                                        <span class="driver-empty-title">Loading GDELT data</span>
+                                        <span class="driver-empty-desc">Conflict media spikes take 10-15 minutes to load after deploy.</span>
                                     </div>
                                 </div>
                             </div>
@@ -589,15 +584,15 @@
 
                 <!-- Displacement Tab -->
                 <div id="tab-driver-displacement" class="tab-pane">
-                    <div class="grid grid-cols-2" style="gap: var(--space-lg);">
+                    <div style="max-width: 800px;">
                         <div class="glass-card">
                             <div class="card-header">
-                                <h3>IDPs by Country</h3>
+                                <h3>Internally Displaced Persons</h3>
                                 <span class="badge high">IOM DTM</span>
                             </div>
                             <div class="card-body no-padding">
-                                <div class="data-table-container" style="max-height: 300px;">
-                                    <table class="data-table">
+                                <div class="data-table-container" style="max-height: 420px;">
+                                    <table class="data-table" th:if="${!#lists.isEmpty(dtmData)}">
                                         <thead>
                                             <tr>
                                                 <th>Country</th>
@@ -605,60 +600,37 @@
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <tr th:each="dtm, iter : ${dtmData}" th:if="${iter.index < 15}"
+                                            <tr th:each="dtm, iter : ${dtmData}" th:if="${iter.index < 20}"
                                                 th:class="${dtm.idps != null && dtm.idps >= 5000000 ? 'critical-row' : (dtm.idps != null && dtm.idps >= 1000000 ? 'high-row' : '')}">
                                                 <td th:text="${dtm.countryName}">Country</td>
                                                 <td class="value-cell" th:text="${dtm.idps != null ? #numbers.formatDecimal(dtm.idps / 1000000.0, 1, 1) + 'M' : '-'}">-</td>
                                             </tr>
-                                            <tr th:if="${#lists.isEmpty(dtmData)}">
-                                                <td colspan="2" class="text-muted text-center">No data</td>
-                                            </tr>
                                         </tbody>
                                     </table>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="glass-card">
-                            <div class="card-header">
-                                <h3>Darien Migration</h3>
-                                <span class="badge medium">12 mo</span>
-                            </div>
-                            <div class="card-body no-padding">
-                                <div class="data-table-container" style="max-height: 300px;">
-                                    <table class="data-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Nationality</th>
-                                                <th>Crossings</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <tr th:each="entry : ${migrationByCountry}">
-                                                <td th:text="${entry.key}">Country</td>
-                                                <td class="value-cell" th:text="${#numbers.formatInteger(entry.value, 1, 'COMMA')}">0</td>
-                                            </tr>
-                                            <tr th:if="${migrationByCountry == null || #maps.isEmpty(migrationByCountry)}">
-                                                <td colspan="2" class="text-muted text-center">No data</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
+                                    <div th:if="${#lists.isEmpty(dtmData)}" class="driver-empty-state">
+                                        <span class="driver-empty-icon">&#x1F6B6;</span>
+                                        <span class="driver-empty-title">IDP data loading</span>
+                                        <span class="driver-empty-desc">IOM DTM displacement data will appear after cache warmup completes.</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
+                </div>
 
-                    <!-- Migration Trend -->
-                    <div th:if="${migrationMonthly != null && !#maps.isEmpty(migrationMonthly)}" class="glass-card" style="margin-top: var(--space-lg);">
-                        <div class="card-header">
-                            <h3>Monthly Migration Trend</h3>
-                            <span class="badge">Last 6 Months</span>
-                        </div>
-                        <div class="card-body">
-                            <div id="migration-chart" class="trend-bars">
-                                <div th:each="entry : ${migrationMonthly}" class="trend-bar-item">
-                                    <div class="trend-value" th:text="${#numbers.formatInteger(entry.value, 1, 'COMMA')}">0</div>
-                                    <div class="trend-bar" th:style="'height:' + (entry.value / 100) + '%'"></div>
-                                    <div class="trend-label" th:text="${#strings.substring(entry.key, 5)}">Mo</div>
+                <!-- Health Tab -->
+                <div id="tab-driver-health" class="tab-pane">
+                    <div style="max-width: 800px;">
+                        <div class="glass-card">
+                            <div class="card-header">
+                                <h3>WHO Disease Outbreaks</h3>
+                                <span class="badge" style="background: var(--danger);">DON</span>
+                            </div>
+                            <div class="card-body no-padding">
+                                <div id="who-outbreaks-drivers" class="data-table-container" style="max-height: 420px;">
+                                    <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
+                                        Loading WHO outbreaks...
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -687,7 +659,7 @@
                         <circle cx="7.5" cy="14.5" r="1.5"/>
                         <circle cx="16.5" cy="14.5" r="1.5"/>
                     </svg>
-                    <span>Detect Situations (Claude)</span>
+                    <span>Detect Situations (AI)</span>
                 </button>
                 <span class="detect-situations-hint">Semantic analysis of triggered countries (1 API call)</span>
             </div>
@@ -739,90 +711,69 @@
         <!-- ==================== SECTION: INTELLIGENCE ==================== -->
         <section class="content-section" data-section="intelligence">
 
-            <div class="section-header-bar">
-                <h2>Intelligence</h2>
-                <span class="badge" style="background: var(--accent);">AI Analysis</span>
+            <!-- Ask AI — inline search bar in header -->
+            <div class="intel-ask-block">
+                <div class="intel-ask-row">
+                    <input type="text" id="qa-input" class="intel-ask-input"
+                           placeholder="Ask about any crisis, country, or trend..."
+                           maxlength="500" autocomplete="off">
+                    <button id="qa-submit" class="intel-ask-btn" disabled>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                        </svg>
+                    </button>
+                </div>
+                <div id="qa-suggestions" class="intel-suggestions"></div>
+                <div id="qa-response" class="qa-response hidden"></div>
             </div>
 
-            <p class="section-description">AI-powered analysis with citations from humanitarian agencies, media outlets and conflict monitoring sources.</p>
+            <!-- Topic Reports -->
+            <div>
 
-            <!-- Ask AI (Perplexity-style Q&A) — PRIMARY FEATURE -->
-            <div class="glass-card qa-card">
-                <div class="card-header">
-                    <h3>Ask AI</h3>
-                    <span class="badge" style="background: var(--accent);">Powered by Claude</span>
-                </div>
-                <div class="card-body">
-                    <div class="qa-input-row">
-                        <input type="text" id="qa-input" class="qa-input"
-                               placeholder="Ask anything about current crises..."
-                               maxlength="500" autocomplete="off">
-                        <button id="qa-submit" class="qa-submit-btn" disabled>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                            </svg>
-                        </button>
-                    </div>
-                    <div id="qa-suggestions" class="qa-suggestions"></div>
-                    <div id="qa-response" class="qa-response hidden"></div>
-                </div>
-            </div>
-
-            <!-- Topic Report Generator (collapsible) -->
-            <details class="topic-report-details" style="margin-top: var(--space-lg);">
-                <summary class="topic-report-summary glass-card">
-                    <div class="card-header" style="cursor: pointer;">
-                        <h3>Topic Report Generator</h3>
+                <!-- Topic Report Generator -->
+                <div class="glass-card intel-card">
+                    <div class="card-header">
+                        <h3>Topic Reports</h3>
                         <span class="badge" id="report-status">Ready</span>
                     </div>
-                </summary>
-                <div class="topic-report-generator glass-card" style="border-top: none; border-radius: 0 0 var(--radius-lg) var(--radius-lg);">
-                    <div class="card-body">
-                        <div class="report-controls">
-                            <div class="control-group">
-                                <label class="control-label">Topic</label>
-                                <div class="topic-chips" id="report-topic-chips">
-                                    <button class="topic-chip active" data-topic="migration">Migration</button>
-                                    <button class="topic-chip" data-topic="food-crisis">Food Crisis</button>
-                                    <button class="topic-chip" data-topic="conflict">Conflict</button>
-                                    <button class="topic-chip" data-topic="political">Political</button>
-                                    <button class="topic-chip" data-topic="climate">Climate</button>
-                                    <button class="topic-chip" data-topic="health">Health</button>
-                                    <button class="topic-chip" data-topic="economic">Economic</button>
-                                </div>
+                    <div class="card-body intel-report-body">
+                        <div class="intel-report-controls">
+                            <div class="topic-chips" id="report-topic-chips">
+                                <button class="topic-chip active" data-topic="migration">Migration</button>
+                                <button class="topic-chip" data-topic="food-crisis">Food Crisis</button>
+                                <button class="topic-chip" data-topic="conflict">Conflict</button>
+                                <button class="topic-chip" data-topic="political">Political</button>
+                                <button class="topic-chip" data-topic="climate">Climate</button>
+                                <button class="topic-chip" data-topic="health">Health</button>
+                                <button class="topic-chip" data-topic="economic">Economic</button>
                             </div>
-                            <div class="control-row">
-                                <div class="control-group">
-                                    <label class="control-label">Region</label>
-                                    <select id="report-region-select" class="form-select">
-                                        <option value="">All Regions</option>
-                                        <option value="lac">LAC (Latin America & Caribbean)</option>
-                                        <option value="mena">MENA (Middle East & North Africa)</option>
-                                        <option value="east-africa">East Africa</option>
-                                        <option value="west-africa">West Africa</option>
-                                        <option value="asia">Asia Pacific</option>
-                                        <option value="europe">Europe</option>
-                                    </select>
-                                </div>
-                                <div class="control-group">
-                                    <label class="control-label">Period</label>
-                                    <select id="report-period-select" class="form-select">
-                                        <option value="7">Last 7 days</option>
-                                        <option value="14">Last 14 days</option>
-                                        <option value="30">Last 30 days</option>
-                                    </select>
-                                </div>
+                            <div class="intel-report-row">
+                                <select id="report-region-select" class="form-select intel-select">
+                                    <option value="">All Regions</option>
+                                    <option value="lac">LAC</option>
+                                    <option value="mena">MENA</option>
+                                    <option value="east-africa">East Africa</option>
+                                    <option value="west-africa">West Africa</option>
+                                    <option value="asia">Asia Pacific</option>
+                                    <option value="europe">Europe</option>
+                                </select>
+                                <select id="report-period-select" class="form-select intel-select">
+                                    <option value="7">7 days</option>
+                                    <option value="14">14 days</option>
+                                    <option value="30">30 days</option>
+                                </select>
                                 <button class="btn-generate-report" id="btn-generate-report">
-                                    <span class="btn-text">Generate Report</span>
-                                    <span class="btn-loading" style="display:none;">Generating...</span>
+                                    <span class="btn-text">Generate</span>
+                                    <span class="btn-loading" style="display:none;">...</span>
                                 </button>
                             </div>
                         </div>
                     </div>
                 </div>
-            </details>
 
-            <!-- Generated Report Output -->
+            </div><!-- /intel-grid -->
+
+            <!-- Generated Report Output (full width, below grid) -->
             <div id="topic-report-output" class="topic-report-output glass-card" style="display: none; margin-top: var(--space-md);">
                 <div class="report-header">
                     <div class="report-title-row">
@@ -871,19 +822,6 @@
                         <span class="toggle-icon">▼</span>
                     </h4>
                     <div class="report-sources" id="report-sources"></div>
-                </div>
-            </div>
-
-            <!-- WHO Disease Outbreaks -->
-            <div class="glass-card" style="margin-top: var(--space-lg);">
-                <div class="card-header">
-                    <h3>WHO Disease Outbreaks</h3>
-                    <span class="badge" style="background: var(--danger);">WHO DON</span>
-                </div>
-                <div class="card-body" id="who-outbreaks-container">
-                    <div class="loading-placeholder" style="padding: var(--space-lg); text-align: center; color: var(--text-secondary);">
-                        Loading WHO data...
-                    </div>
                 </div>
             </div>
 
@@ -1038,7 +976,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <!-- App Scripts -->
-<script th:src="@{/js/app.js(v=243)}"></script>
+<script th:src="@{/js/app.js(v=248)}"></script>
 <script th:src="@{/js/map.js(v=10)}"></script>
 
 </body>

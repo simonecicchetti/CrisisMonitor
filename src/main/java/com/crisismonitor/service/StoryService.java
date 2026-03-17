@@ -649,6 +649,64 @@ public class StoryService {
         private String link;
         private String description;
         private String pubDate;
+
+        // Media elements for thumbnail extraction
+        @JacksonXmlProperty(namespace = "http://search.yahoo.com/mrss/", localName = "content")
+        private RssMediaContent mediaContent;
+
+        @JacksonXmlProperty(localName = "enclosure")
+        private RssEnclosure enclosure;
+
+        // Some feeds use media:thumbnail directly
+        @JacksonXmlProperty(namespace = "http://search.yahoo.com/mrss/", localName = "thumbnail")
+        private RssMediaThumbnail mediaThumbnail;
+
+        public String getImageUrl() {
+            // Priority: media:thumbnail > media:content (if image) > enclosure (if image)
+            if (mediaThumbnail != null && mediaThumbnail.getUrl() != null) {
+                return mediaThumbnail.getUrl();
+            }
+            if (mediaContent != null && mediaContent.getUrl() != null
+                    && mediaContent.getMedium() != null && mediaContent.getMedium().contains("image")) {
+                return mediaContent.getUrl();
+            }
+            if (mediaContent != null && mediaContent.getUrl() != null && mediaContent.getMedium() == null) {
+                // No medium specified — check if URL looks like an image
+                String url = mediaContent.getUrl().toLowerCase();
+                if (url.endsWith(".jpg") || url.endsWith(".jpeg") || url.endsWith(".png") || url.endsWith(".webp")) {
+                    return mediaContent.getUrl();
+                }
+            }
+            if (enclosure != null && enclosure.getUrl() != null
+                    && enclosure.getType() != null && enclosure.getType().startsWith("image/")) {
+                return enclosure.getUrl();
+            }
+            return null;
+        }
+    }
+
+    @Data
+    public static class RssMediaContent {
+        @JacksonXmlProperty(isAttribute = true)
+        private String url;
+        @JacksonXmlProperty(isAttribute = true)
+        private String medium;
+        @JacksonXmlProperty(isAttribute = true)
+        private String type;
+    }
+
+    @Data
+    public static class RssEnclosure {
+        @JacksonXmlProperty(isAttribute = true)
+        private String url;
+        @JacksonXmlProperty(isAttribute = true)
+        private String type;
+    }
+
+    @Data
+    public static class RssMediaThumbnail {
+        @JacksonXmlProperty(isAttribute = true)
+        private String url;
     }
 
     /**
@@ -1081,6 +1139,7 @@ public class StoryService {
                                 .topics(detectedTopics)
                                 .timeAgo(formatTimeAgo(report.getDate()))
                                 .format(report.getFormat())
+                                .thumbnailUrl(report.getThumbnailUrl())
                                 .build());
                     }
                 }
@@ -1307,6 +1366,7 @@ public class StoryService {
                             .region(itemRegion != null ? itemRegion : "Global")
                             .topics(detectedTopics)
                             .timeAgo(formatRssDate(item.getPubDate()))
+                            .thumbnailUrl(item.getImageUrl())
                             .build());
 
                     count++;

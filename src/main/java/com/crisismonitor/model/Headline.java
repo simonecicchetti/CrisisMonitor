@@ -17,4 +17,5 @@ public class Headline {
     private String url;
     private String source;  // Domain name (e.g., "reuters.com", "bbc.com")
     private String date;    // Publication date
+    private String imageUrl; // Social/preview image URL (og:image, socialimage)
 }

@@ -129,6 +129,7 @@ public class ReliefWebService {
                     .queryParam("fields[include][]", "url")
                     .queryParam("fields[include][]", "theme.name")
                     .queryParam("fields[include][]", "format.name")
+                    .queryParam("fields[include][]", "file")
                     .build()
                     .toUriString();
 
@@ -270,6 +271,25 @@ public class ReliefWebService {
                         format = formatNode.get(0).path("name").asText(null);
                     }
 
+                    // Extract thumbnail from file attachments
+                    String thumbnailUrl = null;
+                    JsonNode fileNode = fields.path("file");
+                    if (fileNode.isArray()) {
+                        for (JsonNode f : fileNode) {
+                            JsonNode preview = f.path("preview");
+                            if (!preview.isMissingNode()) {
+                                // Try url-thumb first, then url-small
+                                String thumb = preview.path("url-thumb").asText(null);
+                                if (thumb == null) thumb = preview.path("url-small").asText(null);
+                                if (thumb == null) thumb = preview.path("url").asText(null);
+                                if (thumb != null) {
+                                    thumbnailUrl = thumb;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     if (title != null && url != null) {
                         reports.add(HumanitarianReport.builder()
                                 .title(title)
@@ -279,6 +299,7 @@ public class ReliefWebService {
                                 .countryIso3(country)
                                 .themes(themes)
                                 .format(format)
+                                .thumbnailUrl(thumbnailUrl)
                                 .build());
                     }
                 }
@@ -348,6 +369,7 @@ public class ReliefWebService {
         private String countryIso3;
         private List<String> themes;   // Food Security, Health, Protection, etc.
         private String format;         // Situation Report, Flash Update, Assessment, etc.
+        private String thumbnailUrl;   // Preview image from attached file
     }
 
     /**

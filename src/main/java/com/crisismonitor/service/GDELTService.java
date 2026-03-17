@@ -236,11 +236,10 @@ public class GDELTService {
         log.info("Fetching GDELT conflict count for {} ({} days)", countryName, days);
 
         try {
-            // Simple focused query — avoids saturating the 250 maxrecords cap
-            // Don't quote short single-word terms (GDELT rejects quoted phrases < 5 chars)
-            String query = countryName.contains(" ") || countryName.length() >= 5
-                    ? String.format("\"%s\" conflict", countryName)
-                    : String.format("%s conflict", countryName);
+            // Use geopolitical keywords for broader conflict coverage
+            // (conflict OR military OR attack OR war etc.)
+            // 250 cap is handled by z-score calculation (both-capped → ELEVATED, 7d-only → CRITICAL)
+            String query = buildCountryConflictQuery(iso3, countryName);
 
             String url = UriComponentsBuilder.fromHttpUrl(GDELT_DOC_API)
                     .queryParam("query", query)
@@ -516,6 +515,7 @@ public class GDELTService {
                     String title = article.has("title") ? article.get("title").asText() : null;
                     String articleUrl = article.has("url") ? article.get("url").asText() : null;
                     String domain = article.has("domain") ? article.get("domain").asText() : null;
+                    String socialImage = article.has("socialimage") ? article.get("socialimage").asText(null) : null;
 
                     if (title != null && !title.isBlank()) {
                         // Truncate long titles
@@ -528,6 +528,7 @@ public class GDELTService {
                                     .title(displayTitle)
                                     .url(articleUrl)
                                     .source(domain)
+                                    .imageUrl(socialImage != null && !socialImage.isBlank() ? socialImage : null)
                                     .build());
                         }
                     }
@@ -829,6 +830,7 @@ public class GDELTService {
                     String title = article.has("title") ? article.get("title").asText() : null;
                     String articleUrl = article.has("url") ? article.get("url").asText() : null;
                     String domain = article.has("domain") ? article.get("domain").asText() : null;
+                    String socialImage = article.has("socialimage") ? article.get("socialimage").asText(null) : null;
 
                     if (title != null && !title.isBlank()) {
                         String displayTitle = title.length() > 120 ? title.substring(0, 117) + "..." : title;
@@ -839,6 +841,7 @@ public class GDELTService {
                                     .title(displayTitle)
                                     .url(articleUrl)
                                     .source(domain)
+                                    .imageUrl(socialImage != null && !socialImage.isBlank() ? socialImage : null)
                                     .build());
                         }
                     }

@@ -26,4 +26,5 @@ public class NewsItem {
     private List<String> topics;    // [conflict, migration, food, climate, health, humanitarian]
     private String timeAgo;         // "3h ago", "Just now", "1d ago"
     private String format;          // ReliefWeb only: "Situation Report", "Flash Update", etc.
+    private String thumbnailUrl;    // Article thumbnail/social image URL (og:image, media:content, etc.)
 }

@@ -90,11 +90,11 @@ public class RiskScore {
      */
     @JsonIgnore
     public boolean isHighRisk() {
-        return score >= 71;
+        return score >= 60;
     }
 
     /**
-     * Does this meet the 2-of-3 confirmation threshold?
+     * Does this have multiple elevated indicators?
      */
     @JsonIgnore
     public boolean isConfirmed() {

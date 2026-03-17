@@ -225,22 +225,36 @@ public class CurrencyService {
             // Calculate % change (higher rate = weaker currency)
             change = ((currentRate - baselineRate) / baselineRate) * 100;
 
-            // Determine trend
-            if (change > 30) {
+            // Determine trend — graduated scale instead of cliff at 30%
+            // Chronic depreciation (e.g., Iran 2589%) is real but not proportionally
+            // more crisis-inducing than acute depreciation (e.g., Libya 32%).
+            if (change > 500) {
                 trend = "CRISIS";
-                riskScore = 100;
-            } else if (change > 15) {
+                riskScore = 100;  // Hyperinflation (Venezuela, Iran)
+            } else if (change > 200) {
+                trend = "CRISIS";
+                riskScore = 85;
+            } else if (change > 100) {
+                trend = "CRISIS";
+                riskScore = 70;
+            } else if (change > 50) {
                 trend = "DEVALUING";
-                riskScore = 75;
+                riskScore = 55;
+            } else if (change > 30) {
+                trend = "DEVALUING";
+                riskScore = 45;
+            } else if (change > 15) {
+                trend = "WEAKENING";
+                riskScore = 30;
             } else if (change > 5) {
                 trend = "WEAKENING";
-                riskScore = 50;
+                riskScore = 15;
             } else if (change > -5) {
                 trend = "STABLE";
-                riskScore = 10;
+                riskScore = 5;
             } else {
                 trend = "STRENGTHENING";
-                riskScore = 5;
+                riskScore = 0;
             }
         }
 

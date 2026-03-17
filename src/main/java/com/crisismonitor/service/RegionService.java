@@ -24,6 +24,10 @@ public class RegionService {
     private final RssService rssService;
     private final ObjectMapper objectMapper;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private CacheWarmupService cacheWarmupService;
+
     private Map<String, String> countryToRegion = new HashMap<>();
     private Map<String, String> regionNames = new HashMap<>();
     private Map<String, List<String>> regionCountries = new HashMap<>();
@@ -70,9 +74,19 @@ public class RegionService {
 
     /**
      * Find the dominant driver for a region.
-     * Counts drivers across top-5 countries, weighting by position:
-     * 1st driver = 3 points, 2nd = 2, 3rd = 1.
-     * This captures the breadth of each driver across the region.
+     * Uses raw component scores (not driver position rankings) weighted by country score.
+     * This avoids distortion from inflated individual components dominating driver position lists.
+     * Formula: sum of (countryScore × componentScore) for each component across top-5 countries.
+     */
+    /**
+     * Find the dominant driver for a region.
+     *
+     * WAR IS WAR: if the majority of top-5 countries have "Conflict" as their
+     * first driver, the region's dominant driver MUST be Conflict.
+     * A region at war cannot show "Climate" or "Food Security" as dominant —
+     * those are consequences of the conflict, not independent drivers.
+     *
+     * For non-war regions, uses raw component scores weighted by country score.
      */
     private String findMostCriticalDriver(List<RiskScore> topCountries, List<RiskScore> allRegionScores) {
         List<RiskScore> top5 = allRegionScores.stream()
@@ -80,23 +94,48 @@ public class RegionService {
                 .limit(5)
                 .collect(Collectors.toList());
 
-        // Weighted count: 1st driver = 3pts, 2nd = 2pts, 3rd = 1pt
-        Map<String, Integer> driverPoints = new java.util.LinkedHashMap<>();
-        int[] weights = {3, 2, 1};
-
-        for (var country : top5) {
-            if (country.getDrivers() == null) continue;
-            for (int i = 0; i < Math.min(country.getDrivers().size(), weights.length); i++) {
-                driverPoints.merge(country.getDrivers().get(i), weights[i], Integer::sum);
-            }
+        if (top5.isEmpty()) {
+            return topCountries.isEmpty() || topCountries.get(0).getDrivers() == null
+                    || topCountries.get(0).getDrivers().isEmpty()
+                    ? null : topCountries.get(0).getDrivers().get(0);
         }
 
-        return driverPoints.entrySet().stream()
+        // War override: if majority of top-5 countries list Conflict as their #1 driver,
+        // the region is at war. Conflict must be the dominant driver.
+        long conflictFirstCount = top5.stream()
+                .filter(c -> c.getDrivers() != null && !c.getDrivers().isEmpty()
+                        && "Conflict".equals(c.getDrivers().get(0)))
+                .count();
+        if (conflictFirstCount >= 3) {
+            return "Conflict";
+        }
+
+        // Standard weighted scoring for non-war regions
+        long conflictPoints = 0, foodPoints = 0, economicPoints = 0, climatePoints = 0;
+        for (var country : top5) {
+            int w = Math.max(country.getScore(), 1);
+            conflictPoints += (long) w * country.getConflictScore();
+            foodPoints += (long) w * country.getFoodSecurityScore();
+            economicPoints += (long) w * country.getEconomicScore();
+            climatePoints += (long) w * country.getClimateScore();
+        }
+
+        Map<String, Long> points = new java.util.LinkedHashMap<>();
+        if (conflictPoints > 0) points.put("Conflict", conflictPoints);
+        if (foodPoints > 0) points.put("Food Security", foodPoints);
+        if (economicPoints > 0) points.put("Economic", economicPoints);
+        if (climatePoints > 0) points.put("Climate", climatePoints);
+
+        if (points.isEmpty()) {
+            return topCountries.isEmpty() || topCountries.get(0).getDrivers() == null
+                    || topCountries.get(0).getDrivers().isEmpty()
+                    ? null : topCountries.get(0).getDrivers().get(0);
+        }
+
+        return points.entrySet().stream()
                 .max(Map.Entry.comparingByValue())
                 .map(Map.Entry::getKey)
-                .orElse(topCountries.isEmpty() || topCountries.get(0).getDrivers() == null
-                        || topCountries.get(0).getDrivers().isEmpty()
-                        ? null : topCountries.get(0).getDrivers().get(0));
+                .orElse(null);
     }
 
     /**
@@ -110,8 +149,12 @@ public class RegionService {
         RegionalPulseData pulse = new RegionalPulseData();
         pulse.setTimestamp(new Date());
 
-        // Get all risk scores
-        var allScores = riskScoreService.getAllRiskScores();
+        // Use cached risk scores (from warmup) — never recalculate on-demand
+        @SuppressWarnings("unchecked")
+        List<RiskScore> cachedScores = cacheWarmupService != null
+                ? (List<RiskScore>) cacheWarmupService.getFallback("allRiskScores")
+                : null;
+        var allScores = cachedScores != null ? cachedScores : riskScoreService.getAllRiskScores();
         if (allScores == null || allScores.isEmpty()) {
             log.warn("No risk scores available for Regional Pulse");
             return pulse;
@@ -140,10 +183,10 @@ public class RegionService {
             card.setCriticalCount(critical);
             card.setHighCount(high);
 
-            // Top 2 hotspots
+            // Top 3 hotspots
             List<RiskScore> sorted = scores.stream()
                 .sorted((a, b) -> Integer.compare(b.getScore(), a.getScore()))
-                .limit(2)
+                .limit(3)
                 .collect(Collectors.toList());
 
             if (sorted.size() > 0) {
@@ -153,10 +196,7 @@ public class RegionService {
                 card.setHotspot1Score(top.getScore());
                 card.setHotspot1Level(top.getRiskLevel());
 
-                // Dominant driver: pick the most critical driver type across top countries
-                // Severity hierarchy: Conflict > Food Security > Economic > Climate
                 String dominantDriver = findMostCriticalDriver(sorted, scores);
-
                 card.setDominantDriver(dominantDriver);
             }
 
@@ -165,6 +205,13 @@ public class RegionService {
                 card.setHotspot2Iso3(second.getIso3());
                 card.setHotspot2Name(second.getCountryName());
                 card.setHotspot2Score(second.getScore());
+            }
+
+            if (sorted.size() > 2) {
+                var third = sorted.get(2);
+                card.setHotspot3Iso3(third.getIso3());
+                card.setHotspot3Name(third.getCountryName());
+                card.setHotspot3Score(third.getScore());
             }
 
             pulse.getRegions().add(card);
@@ -340,6 +387,9 @@ public class RegionService {
         private String hotspot2Iso3;
         private String hotspot2Name;
         private int hotspot2Score;
+        private String hotspot3Iso3;
+        private String hotspot3Name;
+        private int hotspot3Score;
         private String dominantDriver;
     }
 

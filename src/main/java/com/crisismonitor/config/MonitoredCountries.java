@@ -122,7 +122,7 @@ public final class MonitoredCountries {
         terms.put("IRQ", "iraq");
         terms.put("YEM", "yemen");
         terms.put("LBN", "lebanon");
-        terms.put("PSE", "palestinian");
+        terms.put("PSE", "gaza");
         terms.put("IRN", "iran");
         terms.put("ISR", "israel");
         terms.put("AFG", "afghanistan");

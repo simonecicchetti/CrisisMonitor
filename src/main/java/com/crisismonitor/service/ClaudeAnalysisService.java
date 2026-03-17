@@ -50,6 +50,7 @@ public class ClaudeAnalysisService {
     private final UNHCRService unhcrService;
     private final StoryService storyService;
     private final CacheWarmupService cacheWarmupService;
+    private final IntelligencePrepService intelligencePrepService;
     private final ObjectMapper objectMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     private final org.springframework.cache.CacheManager cacheManager;
@@ -74,8 +75,62 @@ public class ClaudeAnalysisService {
     // Per-country lock to prevent duplicate builds under concurrent load
     private final Map<String, Object> countryDataPackLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * Crisis Context — verified intelligence injected into Claude data packs so
+     * the model can produce informed briefings even for events beyond its training
+     * cutoff. Each entry is a concise situational summary for a country.
+     *
+     * MAINTENANCE: Update these when major developments occur (new wars, ceasefires,
+     * regime changes, famine declarations). Remove entries when crises resolve.
+     * Last updated: 2026-03-16
+     */
+    private static final Map<String, String> CRISIS_CONTEXT = Map.ofEntries(
+            // === ACTIVE WARS ===
+            Map.entry("IRN", "Active war with US/Israel coalition since Feb 28, 2026 (Operation Epic Fury, Day 16 as of Mar 16). Supreme Leader Khamenei killed in initial strikes; successor Mojtaba Khamenei reportedly injured and transported to Moscow for surgery (unconfirmed). IRGC command structure decapitated — IRGC Ground Forces commander Brig. Gen. Karami possibly eliminated Mar 16. Strait of Hormuz blockaded; US forming multinational coalition to escort shipping (announcement expected this week). First non-Iranian tanker transited Hormuz with AIS on Mar 16. Iran retaliating with drone/missile attacks on UAE (Dubai airport fire, Fujairah oil terminal hit), Bahrain, Kuwait (14 drones intercepted, 3 injuries), Saudi Arabia (64-98 drones in single day record). US Embassy Baghdad under sustained drone attack from Iranian-backed militias (C-RAM active). B-52H and B-1 bombers conducting daily strike missions from England/Kuwait. 6,000+ combat flights completed. Iranian rial collapsed to ~1.75M/USD. Oil exports halted. Iran FM says 'no ceasefire requested.' Trump: 'I don't know who to talk to in Iran, everyone there is dead.'"),
+            Map.entry("PSE", "Gaza war ongoing since Oct 7, 2023. Israeli military operations in all parts of Gaza Strip. Full siege: food, water, fuel, medicine severely restricted. IPC Phase 5 (Famine) declared in northern Gaza. Over 40,000 confirmed dead (actual toll likely much higher). 1.9M displaced (90% of population). Infrastructure >70% destroyed. Rafah crossing closed. West Bank: intensified raids, settler violence, 700+ killed since Oct 2023."),
+            Map.entry("ISR", "Multi-front war since Oct 7, 2023: Gaza ground operations, Iran war (Feb 2026), Houthi missile/drone attacks. Oct 7 attack: 1,200 killed, 250 hostages. NEW: IDF launched 'limited and targeted ground operations' in southern Lebanon on Mar 16 — Israel approving call-up of up to 450,000 reservists. IDF striking Hezbollah targets in Beirut. Iran front: participated in Feb 28 strikes, IDF expanding strikes on Iranian C2 nodes across western/central Iran. Destroyed Iran's Space Research Institute and state Airbus A340 at Mehrabad Airport. Israeli security apparatus approved war plan for at least 3 more weeks. Economy strained by prolonged mobilization."),
+            Map.entry("SDN", "Civil war between SAF and RSF since April 15, 2023. World's largest displacement crisis: 11.8M internally displaced, 2.8M refugees. Famine confirmed in multiple areas of Darfur and Kordofan (IPC Phase 5). Over 150,000 estimated dead. RSF controls most of Darfur and Khartoum. SAF controls Port Sudan and eastern corridor. Systematic ethnic cleansing in El Geneina documented. Aid access severely restricted. No ceasefire prospects."),
+            Map.entry("UKR", "Full-scale Russian invasion since Feb 24, 2022. Frontline largely static in eastern Donbas and southern Zaporizhzhia. Russia controls ~18% of Ukrainian territory. Ongoing drone and missile attacks on energy infrastructure. 6.3M internally displaced, 6.4M refugees in Europe. Kursk Oblast incursion (Aug 2024) partially recaptured by Russia. Negotiations stalled. US military aid uncertain under current administration."),
+
+            // === CIVIL WARS / HIGH-INTENSITY CONFLICT ===
+            Map.entry("MMR", "Post-coup civil war since Feb 2021. Junta controls only ~21% of territory. Resistance forces (PDF + ethnic armed organizations) advancing on multiple fronts. Mandalay potentially threatened. 3.4M displaced. Economy collapsed: kyat lost 80% value. Rohingya crisis ongoing in Rakhine. Internet blackouts. Conscription law driving mass emigration."),
+            Map.entry("SYR", "Post-Assad transition underway since Dec 2024 when HTS-led forces took Damascus. Assad fled to Russia. New transitional government under Ahmed al-Sharaa (Abu Mohammed al-Julani). Sanctions partially lifted. Massive reconstruction needs. Northeast: SDF/Kurdish areas autonomous. ISIS remnants active in central desert. 7.2M still internally displaced. Fragile stability, sectarian tensions persist."),
+            Map.entry("YEM", "Houthi-government conflict frozen but Houthi Red Sea campaign ongoing since Nov 2023 (solidarity with Gaza). US/UK strikes on Houthi positions. Strait of Bab el-Mandeb shipping disrupted. 21.6M need humanitarian aid. Economy divided between Aden government and Sanaa Houthis. Iran war (Feb 2026) intensified Houthi attacks as proxy escalation."),
+            Map.entry("ETH", "Tigray war officially ended (Pretoria Agreement Nov 2022) but Amhara insurgency (Fano militia) intensifying since Aug 2023. State of emergency in Amhara region. Drone strikes on civilian areas. Oromia: OLA insurgency ongoing. 20M+ food insecure. Inflation ~30%. 1.55M displaced from Amhara conflict alone. Government increasingly authoritarian."),
+            Map.entry("SSD", "Fragile 2018 peace deal barely holding. Inter-communal violence in Jonglei and Upper Nile. Sudan war spillover: 800K+ refugees from Sudan. 76% of population food insecure. Oil production declining. Transitional period extended repeatedly. Economic collapse: SSP worthless. UN peacekeeping (UNMISS) present but limited."),
+            Map.entry("COD", "Eastern DRC: M23 rebellion (Rwanda-backed) controls large swaths of North Kivu including approach to Goma. ADF/ISIS affiliate active in Ituri. Over 100 armed groups. 7.2M displaced (largest in Africa after Sudan). Cobalt/mineral exploitation fueling conflict. MONUSCO withdrawal underway. Regional tensions with Rwanda at breaking point."),
+
+            // === SEVERE HUMANITARIAN CRISES ===
+            Map.entry("HTI", "Gang coalitions control 80-90% of Port-au-Prince. Expanding to provinces (Artibonite). 1.4M displaced. Police force <3,000 functional officers. Kenyan-led MSS force deployed but insufficient. 5.9M food insecure, 600K in famine-like conditions. Vigilante justice (bwa kale) widespread. No functioning government. Infrastructure collapsed."),
+            Map.entry("BFA", "JNIM and IS-Sahel control >50% of territory. 40+ towns under jihadi siege — populations starving. 2.1M IDPs. Military junta (Traoré) expelled French forces, relies on Russian Wagner/Africa Corps. Gold mining revenue funds junta but doesn't reach besieged populations. 38+ killed in attacks Feb 2026. Media blackout on conflict zones."),
+            Map.entry("MLI", "JNIM controls large areas, advancing toward Bamako. Military junta expelled MINUSMA, French, turned to Russia/Wagner. Supply routes to northern cities cut. 1.3M food insecure. Tuareg rebellion in north (separate from jihadi insurgency). Wagner suffered major defeat at Tinzaouaten (Jul 2024). Bamako increasingly isolated."),
+            Map.entry("SOM", "Al-Shabaab controls rural areas of south-central Somalia. Government offensive stalled. Drought recovery but food insecurity persists. 3.8M displaced. Tensions with Ethiopia over MOU with Somaliland. ATMIS peacekeeping drawdown. Clan dynamics complicate governance. Mogadishu relatively stable but attacks continue."),
+            Map.entry("AFG", "CRITICAL Mar 16: Major Pakistani military strikes hitting Kabul — cross-border escalation unprecedented since Taliban takeover. Taliban rule since Aug 2021. IS-K attacks continue. Women banned from education, work, public spaces. 97% near poverty. Banking frozen. 23.7M need humanitarian aid. Opium ban devastating livelihoods. 1.7M refugees returned from Pakistan. International engagement minimal."),
+
+            // === ECONOMIC/POLITICAL CRISES ===
+            Map.entry("LBN", "CRITICAL ESCALATION Mar 16: IDF launched new 'limited and targeted ground operations' in southern Lebanon against Hezbollah. IDF striking Hezbollah targets throughout Beirut. Israel calling up 450,000 reservists. Five European nations (Germany, France, Italy, Canada, UK) oppose major Israeli ground offensive. Post-2024 war (Sep-Nov 2024): 4,000+ killed, southern infrastructure devastated. Previous ceasefire collapsed. 80% below poverty line. Banking sector collapsed since 2019. Hezbollah firing Grad rockets at Israeli military facilities."),
+            Map.entry("CUB", "ESCALATION Mar 16: Trump stated 'I believe I'll have the honor of taking Cuba' and is pushing to remove Díaz-Canel. US-Cuba negotiations ongoing. US oil blockade tightened 2025-2026. GDP contracted 7.2%. Rolling blackouts 12-18 hours daily. Severe food rationing. Mass emigration (300K+ in 2024 via Mexico). Dual currency collapse. Healthcare system near non-functional. Worst economic crisis since 1990s Special Period."),
+            Map.entry("VEN", "Maduro retained power after disputed Jul 2024 election. Opposition leader González in exile. 7.7M refugees/migrants (second largest crisis globally after Ukraine). Sanctions partially reimposed. Oil production recovering but below potential. Hyperinflation controlled but poverty ~82%. Essequibo territorial dispute with Guyana unresolved."),
+            Map.entry("NGA", "35M at risk of hunger (record high). WFP defunded, forced to cut operations. Northeast: ISWAP/Boko Haram intensifying. Northwest: mass kidnappings, banditry. 40.9% food inflation. Naira collapse after float. Fuel subsidy removal drove prices up 300%. Security forces overstretched across multiple fronts. Climate: severe flooding 2024 displaced 1.4M."),
+            Map.entry("PAK", "MAJOR ESCALATION Mar 16: Pakistan conducting strikes in Afghan capital Kabul — significant cross-border military action. TTP insurgency intensifying in KP and Balochistan. 2024 deadliest year since 2014. Economic crisis: IMF bailout conditions. Political instability: Imran Khan imprisoned. Iran war spillover (border incidents). Climate: 2022 floods recovery still incomplete. 40% children malnourished."),
+
+            // === FRAGILE/WATCHLIST ===
+            Map.entry("LBY", "Two rival governments: GNU (Tripoli) and LNA-backed (Benghazi). Militia competition for oil revenue. No elections since 2014. Derna flood disaster (Sep 2023): 11,000+ dead, government negligence. Migrant detention/abuse systematic. Oil production volatile (~1.2M bpd). Wagner/Russian presence in east."),
+            Map.entry("CAF", "Armed groups control ~80% of territory. Wagner/Russia Corps supports Touadéra government. MINUSCA peacekeeping present but limited. 3.4M need humanitarian aid. Diamond/gold exploitation by armed groups and Wagner. Ethnic tensions between Séléka-aligned and anti-balaka. Fragile peace agreements not holding."),
+            Map.entry("TCD", "Sudan war spillover: 1M+ Sudanese refugees, border closed Feb 2026. Chadian army involved in Darfur operations. RSF incursions across border. Host communities food insecure. Déby dynasty continues (Mahamat Déby won contested 2024 election). Lake Chad shrinking, Boko Haram spillover from Nigeria."),
+            Map.entry("CMR", "Anglophone crisis (2017-present): separatist conflict in Northwest/Southwest regions. 600K displaced. Boko Haram spillover in Far North. Biya (91 years old, president since 1982) — succession crisis looming. Democratic space shrinking. French-English divide deepening."),
+            Map.entry("MOZ", "Cabo Delgado insurgency (IS-linked) since 2017. Rwandan/SADC forces partially restored control. Major LNG projects (TotalEnergies) suspended. 1M displaced in north. Contested 2024 election sparked nationwide protests. Economic potential undermined by conflict and governance failures."),
+            Map.entry("NER", "Military junta since Jul 2023 coup. Expelled French/US forces. ECOWAS sanctions lifted. Jihadi spillover from BFA/MLI intensifying. Uranium exports disrupted. Alliance with Mali and Burkina (AES). Democratic reversals. Food insecurity increasing in western regions near BFA border."),
+            Map.entry("COL", "FARC dissidents (EMC, Segunda Marquetalia) and ELN active. Total Peace policy negotiations stalled. Coca production at record levels. Venezuela border tensions. Environmental defenders targeted. Indigenous communities displaced by armed groups in Pacific coast (Chocó). Urban violence in Cali, Buenaventura."),
+            Map.entry("ZWE", "Post-Mugabe era: Mnangagwa consolidating power. ZiG currency introduced 2024 (replacing collapsed ZWL). Inflation controlled but poverty ~50%. Election 2023 disputed. Civil liberties restricted. Climate: El Niño drought devastated 2024 harvest. 7.7M food insecure. Cholera outbreaks. Diaspora remittances key to survival."),
+            Map.entry("IRQ", "ACTIVE COMBAT ZONE as of Mar 16: US Embassy Baghdad under sustained drone attack from Iranian-backed militias (Popular Mobilization Front, Saraya Awliya al-Dam). C-RAM air defense actively engaging Shahed-136 drones over Baghdad. US airstrikes leveling militia positions in Mosul. A-10 Warthogs conducting close air support in northern Iraq. Iraqi airspace contested. Al-Rashid Hotel (EU mission, Austrian/Swedish embassies) targeted by drone. HIMARS launching ATACMS from Kuwait into Iran. Iraq caught between US and Iranian operations on its soil.")
+    );
+
     // Redis key for Claude situation detection cache (4 hour TTL)
     private static final String CLAUDE_SITUATIONS_CACHE_KEY = "claudeSituations::latest";
+
+    // In-memory fallback for Claude situation detection (when Redis is unavailable)
+    private volatile SituationDetectionResult cachedSituationInMemory;
 
     /**
      * Global analysis - overview of all monitored countries
@@ -195,11 +250,16 @@ public class ClaudeAnalysisService {
      * - Internal scores (Climate Score, Conflict Score, Economic Score, Food Security Score)
      * - z-scores, article counts, precipitation anomaly %, currency change %
      */
+    @SuppressWarnings("unchecked")
     private String buildGlobalDataPack() {
         StringBuilder pack = new StringBuilder();
 
         // ===== RISK SCORES =====
-        List<RiskScore> scores = riskScoreService.getAllRiskScores();
+        List<RiskScore> scores = cacheWarmupService != null
+                ? (List<RiskScore>) cacheWarmupService.getFallback("allRiskScores") : null;
+        if (scores == null || scores.isEmpty()) {
+            scores = riskScoreService.getAllRiskScores();
+        }
 
         pack.append("## RISK SCORES\n");
         pack.append("Countries by Risk Level (visible in dashboard):\n\n");
@@ -763,6 +823,24 @@ public class ClaudeAnalysisService {
             log.debug("Regional peers cache not ready: {}", e.getMessage());
         }
 
+        // === CRISIS CONTEXT (verified intelligence for post-cutoff events) ===
+        String crisisContext = CRISIS_CONTEXT.get(iso3);
+        if (crisisContext != null) {
+            pack.append("\n### CRISIS CONTEXT (verified current intelligence — use this as ground truth)\n");
+            pack.append(crisisContext).append("\n");
+        }
+
+        // === PREPARED INTELLIGENCE (enriched articles from daily prep pipeline) ===
+        try {
+            IntelligencePrepService.PreparedIntelligence preparedIntel =
+                    intelligencePrepService.getIntelligence(iso3);
+            if (preparedIntel != null && preparedIntel.articleCount > 0) {
+                pack.append(preparedIntel.toDataPackSection());
+            }
+        } catch (Exception e) {
+            log.debug("Prepared intelligence not available for {}: {}", iso3, e.getMessage());
+        }
+
         // === NUMBERED SOURCES (for narrative citations) ===
         pack.append("\n### SOURCES\n");
 
@@ -1247,20 +1325,39 @@ public class ClaudeAnalysisService {
         return String.format("""
             Produce a country risk brief for %s. %s
 
-            Use ONLY the data below. Cite sources as [1], [2], etc. Institutional tone. No markdown, no bullet points, no numbered lists. Never start with "Based on the data".
+            You have the sensor data below AND your own knowledge of the current geopolitical situation. \
+            START with the most important real-world context — if there is an active war, coup, famine, \
+            or major crisis, LEAD with that. The news headlines in the sources tell you what is happening NOW. \
+            Do not just describe numbers — explain what they MEAN in context.
+
+            If the data includes a CRISIS CONTEXT section, treat it as verified ground truth — this is \
+            confirmed intelligence about the current situation. Lead your analysis with this context. \
+            If the data includes a CURRENT INTELLIGENCE section, use the article snippets to inform \
+            your analysis with specific recent developments, facts, and details. \
+            Integrate the sensor data and news sources as supporting evidence.
+
+            Cite sources as [1], [2], etc. where relevant. Institutional tone. No markdown, no bullet points, \
+            no numbered lists. Never start with "Based on the data".
 
             DATA:
             %s
 
-            YOUR OUTPUT MUST USE EXACTLY THIS FORMAT with these 4 section headers. Each header must appear on its own line, followed by a colon and space, then the content. Do not omit or rename any section.
+            YOUR OUTPUT MUST USE EXACTLY THIS FORMAT with these 4 section headers. \
+            Each header must appear on its own line, followed by a colon and space, then the content. \
+            Do not omit or rename any section.
 
-            BOTTOM LINE: One to two sentences — the single most critical takeaway for a decision-maker.
+            BOTTOM LINE: One to two sentences — the single most critical takeaway for a decision-maker. \
+            Lead with the real-world situation, not the score.
 
-            CURRENT SITUATION: What is happening on the ground. Integrate the risk score, key drivers, recent developments with citations [N]. Compare to regional peers.
+            CURRENT SITUATION: What is actually happening on the ground — the real-world crisis first, \
+            then supporting data (risk score, indicators, recent developments with citations [N]). \
+            Compare to regional peers.
 
-            KEY RISKS: The 2-3 most critical risk factors woven into analytical prose. Connect to evidence and explain cascading effects.
+            KEY RISKS: The 2-3 most critical risk factors woven into analytical prose. \
+            Connect to evidence and explain cascading effects.
 
-            OUTLOOK: 30-day forward assessment. Most likely trajectory, escalation/de-escalation triggers, what to monitor.""",
+            OUTLOOK: 30-day forward assessment. Most likely trajectory, escalation/de-escalation triggers, \
+            what to monitor.""",
                 countryName, lengthGuidance, dataPack);
     }
 
@@ -1283,7 +1380,11 @@ public class ClaudeAnalysisService {
         }
 
         try {
-            String systemMsg = "You are a senior intelligence analyst. Structure every response with exactly 4 sections: BOTTOM LINE:, CURRENT SITUATION:, KEY RISKS:, OUTLOOK:. Each header on its own line followed by content.";
+            String systemMsg = "You are a senior intelligence analyst producing crisis briefs. " +
+                    "If the data includes a CRISIS CONTEXT section, treat it as verified ground truth and lead with it. " +
+                    "Lead with real-world context — wars, coups, famines, geopolitical events — not scores or indicators. " +
+                    "Structure every response with exactly 4 sections: BOTTOM LINE:, CURRENT SITUATION:, KEY RISKS:, OUTLOOK:. " +
+                    "Each header on its own line followed by content. Write in analytical prose, no bullet points.";
 
             // Prefill assistant response to force structured format
             Map<String, Object> request = Map.of(
@@ -1567,7 +1668,7 @@ public class ClaudeAnalysisService {
                     .bodyValue(request)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30))
+                    .timeout(Duration.ofSeconds(45))
                     .block();
 
             DeepAnalysisResult result = parseDeepAnalysisResponse(response, iso3);
@@ -1593,8 +1694,15 @@ public class ClaudeAnalysisService {
      * Organized by data freshness: REALTIME → RECENT → BASELINE → STRUCTURAL
      * Token-efficient format optimized for Claude.
      */
+    @SuppressWarnings("unchecked")
     private String buildDeepDataPack(String iso3) {
-        List<RiskScore> scores = riskScoreService.getAllRiskScores();
+        // Use cached scores (from warmup) — never trigger expensive on-demand recalculation
+        List<RiskScore> scores = cacheWarmupService != null
+                ? (List<RiskScore>) cacheWarmupService.getFallback("allRiskScores")
+                : null;
+        if (scores == null || scores.isEmpty()) {
+            scores = riskScoreService.getAllRiskScores();
+        }
         RiskScore country = scores.stream()
                 .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
                 .findFirst()
@@ -1612,9 +1720,18 @@ public class ClaudeAnalysisService {
         // === SECTION 1: REAL-TIME SIGNALS (updated within hours) ===
         pack.append("## REALTIME SIGNALS [use for current situation]\n");
 
-        // GDELT - truly real-time
+        // GDELT - use cached bulk data (avoid per-country API call that can timeout)
         try {
-            MediaSpike spike = gdeltService.getConflictSpikeIndex(iso3);
+            MediaSpike spike = null;
+            List<MediaSpike> cachedSpikes = cacheWarmupService != null
+                    ? (List<MediaSpike>) cacheWarmupService.getFallback("gdeltAllSpikes") : null;
+            if (cachedSpikes != null) {
+                spike = cachedSpikes.stream()
+                        .filter(s -> iso3.equals(s.getIso3()))
+                        .findFirst().orElse(null);
+            }
+            // No fallback to direct API call — it can timeout (30-60s for high-volume countries)
+            // If cached data isn't available yet, skip GDELT section
             if (spike != null) {
                 pack.append(String.format("Media: z=%.1f (%s), %d articles/7d\n",
                     spike.getZScore() != null ? spike.getZScore() : 0,
@@ -1631,94 +1748,33 @@ public class ClaudeAnalysisService {
             }
         } catch (Exception e) { /* skip */ }
 
-        // Currency - daily
-        try {
-            CurrencyData currency = currencyService.getCurrencyData(country.getIso2());
-            if (currency != null && currency.getChange30d() != null) {
-                pack.append(String.format("Currency: %.1f%% (30d), trend=%s\n",
-                    currency.getChange30d(),
-                    currency.getTrend() != null ? currency.getTrend() : "N/A"));
-            }
-        } catch (Exception e) { /* skip */ }
+        // Currency — use data already in RiskScore (no API call)
+        if (country.getCurrencyChange30d() != null) {
+            pack.append(String.format("Currency: %.1f%% (30d)\n", country.getCurrencyChange30d()));
+        }
 
-        // === SECTION 2: RECENT DATA (updated within days) ===
+        // === SECTION 2: RECENT DATA (from cached scores) ===
         pack.append("\n## RECENT DATA [conditions this week]\n");
 
-        // Climate - daily satellite
+        // Climate — from RiskScore
         pack.append(String.format("Precip anomaly: %.1f%% vs 5yr avg\n",
             country.getPrecipitationAnomaly() != null ? country.getPrecipitationAnomaly() : 0));
 
-        // NDVI
+        // NDVI — from memory fallback only (no API call)
         try {
-            List<ClimateData> climateStress = climateService.getCountriesWithClimateStress();
-            climateStress.stream()
-                .filter(c -> iso3.equalsIgnoreCase(c.getIso3()))
-                .findFirst()
-                .ifPresent(c -> pack.append(String.format("NDVI drought: %s\n", c.getAlertLevel())));
-        } catch (Exception e) { /* skip */ }
-
-        // ReliefWeb - recent reports (compact)
-        try {
-            List<Headline> reports = reliefWebService.getLatestReportsAsHeadlines(iso3, 3);
-            if (reports != null && !reports.isEmpty()) {
-                pack.append("ReliefWeb: ");
-                pack.append(reports.stream()
-                    .map(h -> (h.getSource() != null ? h.getSource() + ": " : "") +
-                             (h.getTitle().length() > 60 ? h.getTitle().substring(0, 57) + "..." : h.getTitle()))
-                    .collect(Collectors.joining(" | ")));
-                pack.append("\n");
+            List<ClimateData> ndviData = (List<ClimateData>) cacheWarmupService.getFallback("ndviClimateData");
+            if (ndviData != null) {
+                ndviData.stream()
+                    .filter(c -> iso3.equalsIgnoreCase(c.getIso3()))
+                    .findFirst()
+                    .ifPresent(c -> pack.append(String.format("NDVI drought: %s\n", c.getAlertLevel())));
             }
         } catch (Exception e) { /* skip */ }
 
-        // === SECTION 3: BASELINE DATA (monthly assessments) ===
-        pack.append("\n## BASELINE DATA [last formal assessment - may have changed]\n");
-
-        // IPC
-        Map<String, Country> ipcData = hungerMapService.getIpcData();
-        Country ipc = ipcData.get(iso3);
-        if (ipc != null) {
-            pack.append(String.format("IPC: Phase %.0f, %s people (%s%%) in IPC3+\n",
-                country.getIpcPhase() != null ? country.getIpcPhase() : 0,
-                ipc.getPeoplePhase3to5() != null ? formatPopulation(ipc.getPeoplePhase3to5()) : "N/A",
-                ipc.getPercentPhase3to5() != null ? String.format("%.0f", ipc.getPercentPhase3to5()) : "N/A"));
+        // IPC — from RiskScore
+        if (country.getIpcPhase() != null && country.getIpcPhase() > 0) {
+            pack.append(String.format("IPC Phase: %.0f\n", country.getIpcPhase()));
         }
-
-        // IDPs
-        try {
-            List<MobilityStock> idpData = dtmService.getCountryLevelIdps();
-            idpData.stream()
-                .filter(m -> iso3.equalsIgnoreCase(m.getIso3()))
-                .findFirst()
-                .ifPresent(m -> {
-                    if (m.getIdps() != null) {
-                        pack.append(String.format("IDPs: %s\n", formatPopulation(m.getIdps())));
-                    }
-                });
-        } catch (Exception e) { /* skip */ }
-
-        // Refugees (UNHCR)
-        try {
-            List<MobilityStock> displacement = unhcrService.getDisplacementByOrigin();
-            displacement.stream()
-                .filter(m -> iso3.equalsIgnoreCase(m.getIso3()))
-                .findFirst()
-                .ifPresent(m -> {
-                    if (m.getRefugees() != null && m.getRefugees() > 0) {
-                        pack.append(String.format("Refugees abroad: %s\n", formatPopulation(m.getRefugees())));
-                    }
-                });
-        } catch (Exception e) { /* skip */ }
-
-        // === SECTION 4: STRUCTURAL CONTEXT (annual - for background only) ===
-        pack.append("\n## STRUCTURAL [annual data - context only]\n");
-
-        try {
-            List<EconomicIndicator> inflation = worldBankService.getHighInflationCountries();
-            inflation.stream()
-                .filter(i -> iso3.equalsIgnoreCase(i.getIso3()))
-                .findFirst()
-                .ifPresent(i -> pack.append(String.format("Inflation: %.1f%% (%d, IMF WEO)\n", i.getValue(), i.getYear())));
-        } catch (Exception e) { /* skip */ }
 
         // === SECTION 5: COMPUTED SCORES & TRENDS ===
         pack.append("\n## RISK SCORES [computed from above]\n");
@@ -1886,45 +1942,44 @@ Weights must sum to 100. Consider cascade effects and non-linear amplification.
      * Returns null if no cached result exists.
      */
     public SituationDetectionResult getCachedSituationResult() {
+        // Try Redis first
         try {
             Object cached = redisTemplate.opsForValue().get(CLAUDE_SITUATIONS_CACHE_KEY);
-            if (cached == null) {
-                log.debug("No cached Claude situations in Redis");
-                return null;
-            }
-
-            // Handle both direct object and LinkedHashMap (from JSON deserialization)
-            if (cached instanceof SituationDetectionResult) {
+            if (cached instanceof SituationDetectionResult r) {
                 log.debug("Found cached Claude situations in Redis (direct)");
-                return (SituationDetectionResult) cached;
+                return r;
             }
-
-            // If it's a Map (from JSON), convert it
             if (cached instanceof java.util.Map) {
                 log.debug("Found cached Claude situations in Redis (Map), converting...");
                 String json = objectMapper.writeValueAsString(cached);
-                SituationDetectionResult result = objectMapper.readValue(json, SituationDetectionResult.class);
-                return result;
+                return objectMapper.readValue(json, SituationDetectionResult.class);
             }
-
-            log.warn("Unexpected cache type: {}", cached.getClass().getName());
-            return null;
         } catch (Exception e) {
-            log.error("Error reading Claude situations from Redis: {}", e.getMessage());
-            return null;
+            log.debug("Redis read failed for Claude situations: {}", e.getMessage());
         }
+
+        // Fall back to in-memory cache (works without Redis)
+        if (cachedSituationInMemory != null) {
+            log.debug("Returning Claude situations from in-memory cache");
+            return cachedSituationInMemory;
+        }
+
+        return null;
     }
 
     /**
      * Save Claude situation detection result to Redis (4 hour TTL).
      */
     private void cacheSituationResult(SituationDetectionResult result) {
+        // Always save in-memory (works without Redis)
+        cachedSituationInMemory = result;
+
         try {
             redisTemplate.opsForValue().set(CLAUDE_SITUATIONS_CACHE_KEY, result,
                 java.time.Duration.ofHours(4));
             log.info("Cached Claude situations in Redis (4h TTL)");
         } catch (Exception e) {
-            log.error("Error caching Claude situations to Redis: {}", e.getMessage());
+            log.info("Redis unavailable, Claude situations cached in-memory only");
         }
     }
 
@@ -2015,24 +2070,32 @@ Weights must sum to 100. Consider cascade effects and non-linear amplification.
      * Uses CACHED batch data to avoid rate limiting.
      * Triggers: z-score > 2.0, currency collapse > 20%, flash updates, high risk score
      */
+    @SuppressWarnings("unchecked")
     private List<CountrySignals> collectTriggeredCountries() {
         List<CountrySignals> triggered = new ArrayList<>();
-        List<RiskScore> scores = riskScoreService.getAllRiskScores();
-
+        List<RiskScore> scores = cacheWarmupService != null
+                ? (List<RiskScore>) cacheWarmupService.getFallback("allRiskScores") : null;
+        if (scores == null || scores.isEmpty()) {
+            scores = riskScoreService.getAllRiskScores();
+        }
         if (scores == null || scores.isEmpty()) return triggered;
 
-        // Pre-fetch all cached batch data (already cached, no new API calls)
-        List<MediaSpike> allSpikes = gdeltService.getAllConflictSpikes();
+        // Use cached data only — never trigger expensive API calls from user actions
+        @SuppressWarnings("unchecked")
+        List<MediaSpike> allSpikes = cacheWarmupService != null
+                ? (List<MediaSpike>) cacheWarmupService.getFallback("gdeltAllSpikes") : null;
+        if (allSpikes == null) allSpikes = List.of();
         Map<String, MediaSpike> spikesByIso3 = new HashMap<>();
-        if (allSpikes != null) {
-            for (MediaSpike spike : allSpikes) {
-                if (spike.getIso3() != null) {
-                    spikesByIso3.put(spike.getIso3(), spike);
-                }
+        for (MediaSpike spike : allSpikes) {
+            if (spike.getIso3() != null) {
+                spikesByIso3.put(spike.getIso3(), spike);
             }
         }
 
-        List<CurrencyData> allCurrency = currencyService.getAllCurrencyData();
+        @SuppressWarnings("unchecked")
+        List<CurrencyData> allCurrency = cacheWarmupService != null
+                ? (List<CurrencyData>) cacheWarmupService.getFallback("allCurrencyData")
+                : currencyService.getAllCurrencyData();
         Map<String, CurrencyData> currencyByIso2 = new HashMap<>();
         if (allCurrency != null) {
             for (CurrencyData c : allCurrency) {
