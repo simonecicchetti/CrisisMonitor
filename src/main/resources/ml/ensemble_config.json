@@ -1,0 +1,42 @@
+{
+  "models": [
+    "ensemble_base.onnx",
+    "ensemble_huber.onnx",
+    "ensemble_xgboost.onnx",
+    "ensemble_quantile.onnx"
+  ],
+  "method": "average",
+  "features": [
+    "proxy_current",
+    "fcg_current",
+    "rcsi_current",
+    "proxy_lag_7d",
+    "proxy_lag_14d",
+    "proxy_lag_30d",
+    "proxy_lag_60d",
+    "proxy_lag_90d",
+    "proxy_rolling_mean_7d",
+    "proxy_rolling_mean_14d",
+    "proxy_rolling_mean_30d",
+    "proxy_rolling_mean_60d",
+    "proxy_rolling_mean_90d",
+    "proxy_rolling_std_7d",
+    "proxy_rolling_std_14d",
+    "proxy_rolling_std_30d",
+    "proxy_rolling_std_60d",
+    "proxy_rolling_std_90d",
+    "proxy_change_7d",
+    "proxy_change_14d",
+    "proxy_change_30d",
+    "proxy_trend_30d",
+    "proxy_volatility_30d",
+    "month_sin",
+    "month_cos",
+    "sample_quality"
+  ],
+  "metrics": {
+    "mae": 1.2035867788775225,
+    "r2": 0.9827510954405839,
+    "direction": 0.9858904717980254
+  }
+}

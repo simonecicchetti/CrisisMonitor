@@ -1,6 +1,7 @@
 package com.crisismonitor.service;
 
 import com.crisismonitor.model.Headline;
+import com.crisismonitor.model.MediaSpike;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -111,10 +112,11 @@ public class IntelligenceFeedService {
             log.warn("Failed to get top risk country: {}", e.getMessage());
         }
 
-        // 2. Get GDELT spikes for media coverage table (only if cache is ready)
+        // 2. Get GDELT spikes for media coverage table (from warmup fallback only)
         if (cacheWarmupService.isCacheReady("conflict")) {
             try {
-                var spikes = gdeltService.getAllConflictSpikes();
+                @SuppressWarnings("unchecked")
+                List<MediaSpike> spikes = cacheWarmupService.getFallback("gdeltAllSpikes");
                 if (spikes != null) {
                     List<MediaSpikeInfo> spikeList = spikes.stream()
                         .filter(s -> s.getZScore() > 0.5) // Only show elevated

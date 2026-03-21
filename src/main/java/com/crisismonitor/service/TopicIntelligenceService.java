@@ -1,5 +1,6 @@
 package com.crisismonitor.service;
 
+import com.crisismonitor.model.MediaSpike;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +22,7 @@ public class TopicIntelligenceService {
 
     private final GDELTService gdeltService;
     private final ReliefWebService reliefWebService;
+    private final CacheWarmupService cacheWarmupService;
 
     // ========================================
     // TOPIC TAXONOMY
@@ -301,11 +303,27 @@ public class TopicIntelligenceService {
             .map(name -> "\"" + name + "\"")
             .collect(Collectors.joining(" OR "));
 
-        // For each country, get headlines with topic keywords (increased limit)
+        // Get cached spikes for headlines (avoid triggering GDELT from request thread)
+        @SuppressWarnings("unchecked")
+        List<MediaSpike> cachedSpikes = cacheWarmupService.getFallback("gdeltAllSpikes");
+
+        // For each country, get headlines from cached spikes
         for (String iso3 : countries.subList(0, Math.min(countries.size(), 15))) {
             try {
                 String countryName = ISO3_TO_NAME.getOrDefault(iso3, iso3.toLowerCase());
-                var headlines = gdeltService.getTopHeadlinesWithUrls(iso3, 3);
+                // Get headlines from cached spike data instead of making new GDELT API calls
+                var headlines = new ArrayList<com.crisismonitor.model.Headline>();
+                if (cachedSpikes != null) {
+                    cachedSpikes.stream()
+                            .filter(s -> iso3.equalsIgnoreCase(s.getIso3()) && s.getTopHeadlines() != null)
+                            .findFirst()
+                            .ifPresent(s -> s.getTopHeadlines().forEach(title -> {
+                                var h = new com.crisismonitor.model.Headline();
+                                h.setTitle(title);
+                                h.setSource("GDELT");
+                                headlines.add(h);
+                            }));
+                }
 
                 if (headlines != null) {
                     for (var h : headlines) {
@@ -384,9 +402,14 @@ public class TopicIntelligenceService {
     private Map<String, CountryTopicStats> calculateCountryStats(Topic topic, List<String> countries) {
         Map<String, CountryTopicStats> stats = new LinkedHashMap<>();
 
+        @SuppressWarnings("unchecked")
+        List<MediaSpike> spikeData = cacheWarmupService.getFallback("gdeltAllSpikes");
+
         for (String iso3 : countries.subList(0, Math.min(countries.size(), 12))) {
             try {
-                var spike = gdeltService.getConflictSpikeIndex(iso3);
+                MediaSpike spike = spikeData != null ? spikeData.stream()
+                        .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
+                        .findFirst().orElse(null) : null;
                 if (spike != null) {
                     CountryTopicStats cs = new CountryTopicStats();
                     cs.setIso3(iso3);

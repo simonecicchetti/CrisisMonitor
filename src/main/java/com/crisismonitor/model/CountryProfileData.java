@@ -35,6 +35,14 @@ public class CountryProfileData {
     private Double confidence;         // 0.0-1.0
     private String confidenceNote;
 
+    // AI scoring reasons (from Qwen)
+    private String foodReason;
+    private String conflictReason;
+    private String climateReason;
+    private String economicReason;
+    private String summary;
+    private String scoreSource;
+
     // Trend
     private String trend;              // rising, falling, stable, new
     private String trendIcon;

@@ -89,12 +89,13 @@ public class RssService {
             return results;
         }
 
-        // 1. Fetch ReliefWeb global and filter by countryNames (HUM) - up to 2 items
+        // 1. Fetch ReliefWeb global and filter by countryNames (HUM)
+        int humLimit = Math.max(2, limit - 2); // Reserve 2 slots for general news
         try {
             List<RssItem> allHum = fetchAndParseFeed(RELIEFWEB_GLOBAL, "ReliefWeb", true);
             int humCount = 0;
             for (RssItem item : allHum) {
-                if (humCount >= 2) break;
+                if (humCount >= humLimit) break;
                 if (matchesCountryNames(item.getTitle(), feeds.getCountryNames())) {
                     item.setRegion(regionCode);
                     results.add(item);
@@ -106,16 +107,18 @@ public class RssService {
             log.debug("Failed to fetch ReliefWeb: {}", e.getMessage());
         }
 
-        // 2. Fetch BBC regional (GEN) - 1 item (already region-specific, no filtering)
+        // 2. Fetch BBC regional (GEN) - up to 2 items
         if (feeds.getGeneralUrl() != null && results.size() < limit) {
             try {
                 List<RssItem> genItems = fetchAndParseFeed(feeds.getGeneralUrl(), "BBC", false);
-                if (!genItems.isEmpty()) {
-                    RssItem item = genItems.get(0);
+                int genAdded = 0;
+                for (RssItem item : genItems) {
+                    if (genAdded >= 2 || results.size() >= limit) break;
                     item.setRegion(regionCode);
                     results.add(item);
+                    genAdded++;
                 }
-                log.debug("Got 1 GEN item for {}", regionCode);
+                log.debug("Got {} GEN items for {}", genAdded, regionCode);
             } catch (Exception e) {
                 log.debug("Failed to fetch BBC for {}: {}", regionCode, e.getMessage());
             }

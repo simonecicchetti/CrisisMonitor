@@ -1,7 +1,9 @@
 package com.crisismonitor.controller;
 
+import com.crisismonitor.config.MonitoredCountries;
 import com.crisismonitor.model.*;
 import com.crisismonitor.service.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.CacheManager;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -9,6 +11,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -53,6 +57,26 @@ public class ApiController {
     private final WHODiseaseOutbreakService whoDiseaseOutbreakService;
     private final StructuralIndexService structuralIndexService;
     private final IntelligencePrepService intelligencePrepService;
+    private final NowcastService nowcastService;
+    private final ReportSchedulerService reportSchedulerService;
+    private final UserService userService;
+    private final CountryAnalysisGenerator countryAnalysisGenerator;
+    private final ObjectMapper objectMapper;
+    private final FirestoreService firestoreService;
+    private final CommunityService communityService;
+    private final FAOFoodPriceService faoFoodPriceService;
+    private final QwenScoringService qwenScoringService;
+    private final DailyBriefService dailyBriefService;
+
+    @org.springframework.beans.factory.annotation.Value("${ADMIN_API_KEY:notamy-admin-2026}")
+    private String adminApiKey;
+
+    /** Check admin API key for protected endpoints */
+    private boolean isAdmin(String authHeader) {
+        if (authHeader == null) return false;
+        String key = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
+        return adminApiKey.equals(key);
+    }
 
     /**
      * Health/keep-alive endpoint for Cloud Scheduler.
@@ -83,8 +107,22 @@ public class ApiController {
      * economy, displacement, and recent reports.
      */
     @GetMapping("/countries/{iso3}/profile")
-    public CountryProfileData getCountryProfile(@PathVariable String iso3) {
-        return countryProfileService.getProfile(iso3.toUpperCase());
+    public Map<String, Object> getCountryProfile(@PathVariable String iso3) {
+        String upper = iso3.toUpperCase();
+        CountryProfileData profile = countryProfileService.getProfile(upper);
+
+        // Convert to map and add AI analysis from Firestore
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = objectMapper.convertValue(profile, Map.class);
+
+        // >>> CHANGE POINT: check subscription tier before including AI analysis
+        Map<String, Object> aiAnalysis = countryAnalysisGenerator.getPreGeneratedAnalysis(upper);
+        if (aiAnalysis != null && aiAnalysis.get("analysis") != null) {
+            result.put("aiAnalysis", aiAnalysis.get("analysis"));
+            result.put("analysisGeneratedAt", aiAnalysis.get("generatedAt"));
+        }
+
+        return result;
     }
 
     /**
@@ -253,26 +291,28 @@ public class ApiController {
 
     @GetMapping("/conflict/spikes")
     public DataResponse<List<MediaSpike>> getConflictSpikes() {
-        try {
-            List<MediaSpike> data = gdeltService.getAllConflictSpikes();
-            if (data != null && !data.isEmpty()) {
-                return DataResponse.ready(data);
-            }
-        } catch (Exception e) {
-            // Try fallback
-        }
-
+        // Read from warmup fallback only — never trigger GDELT from request threads.
+        // GDELT requires 45s rate limiting × 42 countries = 30+ min computation;
+        // calling it from a request thread causes 429 cascades and timeouts.
         List<MediaSpike> fallback = cacheWarmupService.getFallback("gdeltAllSpikes");
         if (fallback != null && !fallback.isEmpty()) {
-            return DataResponse.stale(fallback, null);
+            return DataResponse.ready(fallback);
         }
 
-        return DataResponse.loading("Conflict data is being loaded...");
+        return DataResponse.loading("Conflict data is being loaded in background...");
     }
 
     @GetMapping("/conflict/spike")
     public MediaSpike getConflictSpike(@RequestParam String iso3) {
-        return gdeltService.getConflictSpikeIndex(iso3);
+        // Try warmup fallback first to avoid triggering GDELT from request thread
+        List<MediaSpike> allSpikes = cacheWarmupService.getFallback("gdeltAllSpikes");
+        if (allSpikes != null) {
+            return allSpikes.stream()
+                    .filter(s -> iso3.equalsIgnoreCase(s.getIso3()))
+                    .findFirst()
+                    .orElse(null);
+        }
+        return null;
     }
 
     @GetMapping("/conflict/events")
@@ -542,7 +582,8 @@ public class ApiController {
     }
 
     @PostMapping("/cache/clear")
-    public Map<String, String> clearCache() {
+    public Object clearCache(@RequestHeader(value = "Authorization", required = false) String auth) {
+        if (!isAdmin(auth)) return Map.of("error", "Unauthorized");
         cacheManager.getCacheNames().forEach(name -> {
             var cache = cacheManager.getCache(name);
             if (cache != null) {
@@ -581,7 +622,8 @@ public class ApiController {
      * Takes ~5-8 minutes to complete. Can be called by Cloud Scheduler.
      */
     @PostMapping("/intelligence/prepare")
-    public Map<String, Object> prepareIntelligence() {
+    public Object prepareIntelligence(@RequestHeader(value = "Authorization", required = false) String auth) {
+        if (!isAdmin(auth)) return Map.of("error", "Unauthorized");
         intelligencePrepService.prepareAll();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("status", "started");
@@ -756,12 +798,294 @@ public class ApiController {
      * Combines GDELT media coverage with ReliefWeb operational reports
      * Example: /api/intelligence/topic-report?topic=migration&region=lac&days=7
      */
+    /**
+     * Get intelligence report — reads from pre-generated Firestore cache.
+     * Falls back to live generation if no pre-generated report exists.
+     *
+     * >>> CHANGE POINT: add auth check here when authentication is implemented
+     * >>> CHANGE POINT: add credit check here when paywall is implemented
+     * >>> For paywall: return keyDevelopments free, narrative only with credits
+     */
     @GetMapping("/intelligence/topic-report")
-    public TopicReportService.IntelligenceReport getTopicReport(
+    public Object getTopicReport(
             @RequestParam String topic,
             @RequestParam(required = false) String region,
             @RequestParam(defaultValue = "7") int days) {
-        return topicReportService.generateReport(topic, region, days);
+
+        // Country-specific report (region starts with "country:")
+        if (region != null && region.startsWith("country:")) {
+            String iso3 = region.substring(8).toUpperCase();
+            // Try pre-generated country report
+            Map<String, Object> preGenerated = reportSchedulerService.getPreGeneratedReport(topic, "country_" + iso3);
+            if (preGenerated != null) {
+                preGenerated.put("source", "pre-generated");
+                return preGenerated;
+            }
+            // Generate live using country as single-country region
+            return topicReportService.generateReport(topic, iso3.toLowerCase(), 7);
+        }
+
+        // Try pre-generated regional report first (instant, no API cost)
+        if (region != null && !region.isEmpty()) {
+            Map<String, Object> preGenerated = reportSchedulerService.getPreGeneratedReport(topic, region);
+            if (preGenerated != null) {
+                preGenerated.put("source", "pre-generated");
+                return preGenerated;
+            }
+        }
+
+        // Fallback: generate live (costs Claude API credits)
+        return topicReportService.generateReport(topic, region, 7);
+    }
+
+    /**
+     * Trigger manual report generation (admin only).
+     *
+     * >>> CHANGE POINT: protect with admin auth when auth is implemented
+     */
+    @PostMapping("/intelligence/generate-all-reports")
+    public Object triggerReportGeneration(@RequestHeader(value = "Authorization", required = false) String auth) {
+        if (!isAdmin(auth)) return Map.of("error", "Unauthorized");
+        return reportSchedulerService.triggerGeneration();
+    }
+
+    // ==========================================
+    // FAO FOOD PRICE INDEX
+    // ==========================================
+
+    @GetMapping("/fao/food-price-index")
+    public Map<String, Object> getFAOFoodPriceIndex() {
+        var latest = faoFoodPriceService.getLatest();
+        var recent = faoFoodPriceService.getRecent(24);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("latest", latest);
+        result.put("trend24m", recent);
+        result.put("source", "FAO Food Price Index (FFPI) — base 2014-2016=100");
+        return result;
+    }
+
+    // ==========================================
+    // NOWCAST BRIEF
+    // ==========================================
+
+    @GetMapping("/nowcast/brief")
+    public Object getNowcastBrief() {
+        var brief = dailyBriefService.getNowcastBrief();
+        if (brief != null) return brief;
+        return Map.of("status", "none", "message", "Nowcast brief not yet generated");
+    }
+
+    // ==========================================
+    // DAILY BRIEF
+    // ==========================================
+
+    @GetMapping("/daily-brief")
+    public Object getDailyBrief(@RequestParam(defaultValue = "en") String lang) {
+        var brief = dailyBriefService.getTodayBrief(lang);
+        if (brief != null) return brief;
+        return Map.of("status", "none", "message", "Today's brief not yet generated");
+    }
+
+    @PostMapping("/daily-brief/generate")
+    public Object generateDailyBrief(@RequestParam(defaultValue = "en") String lang,
+                                     @RequestParam(defaultValue = "false") boolean force,
+                                     @RequestHeader(value = "Authorization", required = false) String auth) {
+        if (!isAdmin(auth)) return Map.of("error", "Unauthorized");
+        var brief = dailyBriefService.generateAndSave(lang, force);
+        // Also generate nowcast brief (piggyback on daily trigger)
+        try { dailyBriefService.getNowcastBrief(); } catch (Exception e) { /* non-blocking */ }
+        if (brief != null) return brief;
+        return Map.of("error", "Failed to generate brief");
+    }
+
+    @GetMapping("/country-brief/{iso3}")
+    public Object getCountryBrief(@PathVariable String iso3,
+                                   @RequestParam(defaultValue = "en") String lang) {
+        var brief = dailyBriefService.getCountryBrief(iso3, lang);
+        if (brief != null) return brief;
+        return Map.of("error", "Failed to generate country brief");
+    }
+
+    @PostMapping("/daily-brief/deep-dive")
+    public Object getDeepDive(@RequestBody Map<String, String> body,
+                              @RequestParam(defaultValue = "en") String lang) {
+        String country = body.get("country");
+        String situation = body.get("situation");
+        if (country == null || country.isBlank()) return Map.of("error", "Country required");
+        if (situation == null || situation.isBlank()) return Map.of("error", "Situation required");
+        // Limit input length to prevent abuse
+        if (country.length() > 100) country = country.substring(0, 100);
+        if (situation.length() > 200) situation = situation.substring(0, 200);
+        var dive = dailyBriefService.getOrGenerateDeepDive(country, situation, lang);
+        if (dive != null) return dive;
+        return Map.of("error", "Failed to generate deep dive");
+    }
+
+    // ==========================================
+    // COMMUNITY — COMMENTS & REACTIONS
+    // ==========================================
+
+    @PostMapping("/community/reports/{reportId}/comments")
+    public Object addComment(@PathVariable String reportId,
+                             @RequestBody Map<String, String> body,
+                             @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        var token = verifyAuth(authHeader);
+        if (token == null) return Map.of("error", "Authentication required");
+
+        String text = body.get("text");
+        if (text == null || text.isBlank()) return Map.of("error", "Text required");
+
+        var comment = communityService.addComment(reportId, token.getUid(), token.getName(), token.getPicture(), text);
+        if (comment != null) return Map.of("success", true, "comment", comment);
+        return Map.of("error", "Failed to add comment");
+    }
+
+    @GetMapping("/community/reports/{reportId}/comments")
+    public Object getComments(@PathVariable String reportId,
+                              @RequestParam(defaultValue = "20") int limit,
+                              @RequestParam(required = false) String cursor) {
+        var page = communityService.getComments(reportId, limit, cursor);
+        if (page != null) return page;
+        return Map.of("comments", List.of(), "hasMore", false);
+    }
+
+    @DeleteMapping("/community/reports/{reportId}/comments/{commentId}")
+    public Object deleteComment(@PathVariable String reportId,
+                                @PathVariable String commentId,
+                                @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        var token = verifyAuth(authHeader);
+        if (token == null) return Map.of("error", "Authentication required");
+
+        boolean deleted = communityService.deleteComment(commentId, token.getUid());
+        return Map.of("success", deleted);
+    }
+
+    @PostMapping("/community/reports/{reportId}/react")
+    public Object toggleReaction(@PathVariable String reportId,
+                                 @RequestBody Map<String, String> body,
+                                 @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        var token = verifyAuth(authHeader);
+        if (token == null) return Map.of("error", "Authentication required");
+
+        String type = body.get("reactionType");
+        var counts = communityService.toggleReaction(reportId, token.getUid(), type);
+        if (counts != null) return counts;
+        return Map.of("error", "Failed to toggle reaction");
+    }
+
+    @GetMapping("/community/reports/{reportId}/reactions")
+    public Object getReactions(@PathVariable String reportId,
+                               @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        String userId = null;
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            var token = verifyAuth(authHeader);
+            if (token != null) userId = token.getUid();
+        }
+        var counts = communityService.getReactionCounts(reportId, userId);
+        if (counts != null) return counts;
+        return Map.of("useful", 0, "insightful", 0, "verify", 0, "comments", 0);
+    }
+
+    private com.google.firebase.auth.FirebaseToken verifyAuth(String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
+        return userService.verifyToken(authHeader.substring(7));
+    }
+
+    // ==========================================
+    // QWEN AI SCORING
+    // ==========================================
+
+    @GetMapping("/scores/qwen/{iso3}")
+    public Object getQwenScore(@PathVariable String iso3) {
+        var score = qwenScoringService.getScore(iso3.toUpperCase());
+        if (score != null) return score;
+        return Map.of("error", "No Qwen score for " + iso3, "status", "NOT_FOUND");
+    }
+
+    @PostMapping("/scores/qwen/generate/{iso3}")
+    public Object generateQwenScore(@PathVariable String iso3,
+                                     @RequestHeader(value = "Authorization", required = false) String auth) {
+        if (!isAdmin(auth)) return Map.of("error", "Unauthorized");
+        var score = qwenScoringService.scoreCountry(iso3.toUpperCase());
+        if (score != null) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> data = objectMapper.convertValue(score, Map.class);
+            data.put("timestamp", System.currentTimeMillis());
+            firestoreService.saveDocument("qwenScores", iso3.toUpperCase(), data);
+            return score;
+        }
+        return Map.of("error", "Scoring failed for " + iso3);
+    }
+
+    @PostMapping("/scores/qwen/generate-all")
+    public Object generateAllQwenScores(@RequestHeader(value = "Authorization", required = false) String auth) {
+        if (!isAdmin(auth)) return Map.of("error", "Unauthorized");
+        new Thread(() -> qwenScoringService.scoreAllCountries(), "qwen-scorer").start();
+        return Map.of("status", "STARTED", "countries", MonitoredCountries.CRISIS_COUNTRIES.size());
+    }
+
+    // ==========================================
+    // USER & AUTH ENDPOINTS
+    // ==========================================
+
+    /**
+     * Login/register user. Called from frontend after Google Sign-In.
+     * Creates user profile in Firestore on first login.
+     *
+     * >>> CHANGE POINT: return subscription status for frontend paywall logic
+     */
+    @PostMapping("/auth/login")
+    public Map<String, Object> loginUser(@RequestBody Map<String, String> body) {
+        String idToken = body.get("idToken");
+        if (idToken == null || idToken.isBlank()) {
+            return Map.of("error", "Missing idToken");
+        }
+
+        var token = userService.verifyToken(idToken);
+        if (token == null) {
+            return Map.of("error", "Invalid token");
+        }
+
+        var user = userService.getOrCreateUser(
+            token.getUid(),
+            token.getEmail(),
+            token.getName(),
+            token.getPicture()
+        );
+
+        return Map.of(
+            "status", "OK",
+            "uid", token.getUid(),
+            "email", token.getEmail() != null ? token.getEmail() : "",
+            "tier", user.getOrDefault("tier", "free"),
+            "user", user
+        );
+    }
+
+    /**
+     * Get user profile and subscription status.
+     *
+     * >>> CHANGE POINT: add subscription details (expiry, plan name, etc.)
+     */
+    @GetMapping("/auth/profile")
+    public Map<String, Object> getUserProfile(@RequestHeader(value = "Authorization", required = false) String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return Map.of("error", "Not authenticated", "tier", "free");
+        }
+
+        String idToken = authHeader.substring(7);
+        var token = userService.verifyToken(idToken);
+        if (token == null) {
+            return Map.of("error", "Invalid token", "tier", "free");
+        }
+
+        String tier = userService.getUserTier(token.getUid());
+        return Map.of(
+            "status", "OK",
+            "uid", token.getUid(),
+            "tier", tier,
+            "isPro", userService.isProUser(token.getUid())
+        );
     }
 
     // ========== Q&A WITH CITATIONS ==========
@@ -872,5 +1196,48 @@ public class ApiController {
     @GetMapping("/who/outbreaks/{iso3}")
     public List<WHODiseaseOutbreakService.DiseaseOutbreak> getWHOOutbreaksForCountry(@PathVariable String iso3) {
         return whoDiseaseOutbreakService.getOutbreaksForCountry(iso3.toUpperCase());
+    }
+
+    // ==========================================
+    // FOOD INSECURITY NOWCASTING
+    // ==========================================
+
+    @GetMapping("/nowcast/food-insecurity")
+    public Map<String, Object> getNowcast() {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", nowcastService.isReady() ? "READY" : "MODEL_NOT_LOADED");
+        response.put("modelType", "4-model ensemble: LightGBM(MAE) + LightGBM(Huber) + XGBoost + LightGBM(Quantile)");
+        response.put("target", "90-day % change in food insecurity proxy");
+        response.put("proxy", "avg(FCG<=2%, rCSI>=19%) from WFP HungerMap LIVE");
+        response.put("accuracy", Map.of(
+            "testMAE", 1.20,
+            "testR2", 0.9828,
+            "directionAccuracy", "98.6%"
+        ));
+        response.put("historyCountries", nowcastService.getHistoryCountries());
+        response.put("predictions", nowcastService.getNowcastAll());
+        response.put("timestamp", java.time.Instant.now().toString());
+        response.put("note", "Predictions improve as history accumulates. Initial predictions use current values as proxy for historical lags (LOW confidence).");
+        return response;
+    }
+
+    @GetMapping("/nowcast/food-insecurity/{iso3}")
+    public Map<String, Object> getNowcastCountry(@PathVariable String iso3) {
+        String upper = iso3.toUpperCase();
+        List<NowcastResult> all = nowcastService.getNowcastAll();
+        NowcastResult country = all.stream()
+            .filter(r -> upper.equals(r.getIso3()))
+            .findFirst().orElse(null);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        if (country != null) {
+            response.put("status", "OK");
+            response.put("prediction", country);
+            response.put("historyDays", nowcastService.getHistoryDays(upper));
+        } else {
+            response.put("status", "NOT_FOUND");
+            response.put("message", "No nowcast data for " + upper);
+        }
+        return response;
     }
 }

@@ -461,8 +461,15 @@ public class ClaudeAnalysisService {
             String riskLevel = topRisk.getRiskLevel();
             int riskScore = topRisk.getScore();
 
-            // Get media spike data
-            MediaSpike spike = gdeltService.getConflictSpikeIndex(iso3);
+            // Get media spike data from warmup fallback (avoid triggering GDELT from request thread)
+            MediaSpike spike = null;
+            @SuppressWarnings("unchecked")
+            List<MediaSpike> allSpikes = cacheWarmupService.getFallback("gdeltAllSpikes");
+            if (allSpikes != null) {
+                spike = allSpikes.stream()
+                        .filter(s -> iso3.equals(s.getIso3()))
+                        .findFirst().orElse(null);
+            }
             if (spike == null) return null;
 
             Double zScore = spike.getZScore();
@@ -481,8 +488,16 @@ public class ClaudeAnalysisService {
                     articles != null ? articles : 0,
                     zScore != null ? zScore : 0.0);
 
-            // Get headlines with URLs (GDELT - media)
-            List<Headline> headlines = gdeltService.getTopHeadlinesWithUrls(iso3, 3);
+            // Get headlines from cached spike (avoid triggering GDELT from request thread)
+            List<Headline> headlines = new ArrayList<>();
+            if (spike.getTopHeadlines() != null) {
+                spike.getTopHeadlines().stream().limit(3).forEach(title -> {
+                    Headline h = new Headline();
+                    h.setTitle(title);
+                    h.setSource("GDELT");
+                    headlines.add(h);
+                });
+            }
 
             // Get humanitarian reports (ReliefWeb - official UN/NGO reports)
             List<Headline> humanitarianReports = reliefWebService.getLatestReportsAsHeadlines(iso3, 3);
@@ -1078,7 +1093,9 @@ public class ClaudeAnalysisService {
 
         // Recent news for top countries
         pack.append("\n## RECENT DEVELOPMENTS (GDELT)\n");
-        List<MediaSpike> spikes = gdeltService.getAllConflictSpikes();
+        @SuppressWarnings("unchecked")
+        List<MediaSpike> rawSpikes = cacheWarmupService.getFallback("gdeltAllSpikes");
+        final List<MediaSpike> spikes = rawSpikes != null ? rawSpikes : Collections.emptyList();
         regionalScores.stream().limit(3).forEach(country -> {
             spikes.stream()
                     .filter(s -> country.getIso3().equalsIgnoreCase(s.getIso3()))

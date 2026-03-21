@@ -86,6 +86,8 @@ public class RegionalClusterService {
         COUNTRY_TO_CLUSTER.put("LBN", "Middle East");
         COUNTRY_TO_CLUSTER.put("PSE", "Middle East");
         COUNTRY_TO_CLUSTER.put("JOR", "Middle East");
+        COUNTRY_TO_CLUSTER.put("IRN", "Middle East");
+        COUNTRY_TO_CLUSTER.put("ISR", "Middle East");
 
         // South Asia
         COUNTRY_TO_CLUSTER.put("AFG", "South Asia");
@@ -169,7 +171,7 @@ public class RegionalClusterService {
         // Sort by severity (most critical first)
         alerts.sort((a, b) -> Integer.compare(b.getSeverityRank(), a.getSeverityRank()));
 
-        return alerts.stream().limit(3).collect(Collectors.toList()); // Top 3 clusters
+        return alerts.stream().limit(5).collect(Collectors.toList()); // Top 5 clusters
     }
 
     private ClusterAlert analyzeCluster(String clusterName, List<RiskScore> members) {
@@ -208,9 +210,15 @@ public class RegionalClusterService {
             }
         }
 
-        // Find top drivers (those appearing in 2+ countries)
+        // Find top drivers
+        // Rule: 2+ countries sharing a driver, OR a single CRITICAL country with
+        // that driver as #1 (a war doesn't need company to be the dominant issue)
+        Set<String> criticalFirstDrivers = members.stream()
+                .filter(s -> "CRITICAL".equals(s.getRiskLevel()) && s.getDrivers() != null && !s.getDrivers().isEmpty())
+                .map(s -> s.getDrivers().get(0))
+                .collect(java.util.stream.Collectors.toSet());
         List<String> topDrivers = driverCounts.entrySet().stream()
-                .filter(e -> e.getValue() >= 2)
+                .filter(e -> e.getValue() >= 2 || criticalFirstDrivers.contains(e.getKey()))
                 .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
                 .map(Map.Entry::getKey)
                 .limit(2)
@@ -268,7 +276,7 @@ public class RegionalClusterService {
                 .warningCount(warningCount)
                 .risingCount(risingCount)
                 .topDrivers(topDrivers)
-                .affectedCountries(affectedCountries.stream().limit(3).collect(Collectors.toList()))
+                .affectedCountries(affectedCountries) // Show all affected countries, not just 3
                 .severityRank(severityRank)
                 .totalMembers(members.size())
                 .build();

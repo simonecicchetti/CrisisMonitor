@@ -188,6 +188,48 @@ public class CacheConfig implements CachingConfigurer {
         RedisCacheConfiguration newsFeedConfig = defaultConfig.entryTtl(Duration.ofMinutes(15));
         cacheConfigs.put("newsFeed", newsFeedConfig);
 
+        // DTM (IOM displacement data) — changes monthly
+        cacheConfigs.put("dtmCountryData", longTtlConfig);
+        cacheConfigs.put("dtmByReason", longTtlConfig);
+        cacheConfigs.put("dtmOperations", longTtlConfig);
+
+        // HungerMap — refreshed every 30min by default, explicit for clarity
+        cacheConfigs.put("countries", oneHourConfig);
+        cacheConfigs.put("ipcData", oneHourConfig);
+        cacheConfigs.put("severityData", oneHourConfig);
+        cacheConfigs.put("alerts", oneHourConfig);
+        cacheConfigs.put("foodSecurityMetrics", oneHourConfig);
+
+        // WorldBank — static data, long TTL
+        cacheConfigs.put("countryProfiles", longTtlConfig);
+        cacheConfigs.put("inflationData", longTtlConfig);
+        cacheConfigs.put("gdpData", longTtlConfig);
+        cacheConfigs.put("populationData", longTtlConfig);
+        cacheConfigs.put("povertyData", longTtlConfig);
+
+        // UNHCR — updated infrequently
+        cacheConfigs.put("unhcrPopulation", longTtlConfig);
+        cacheConfigs.put("unhcrGlobalSummary", longTtlConfig);
+        cacheConfigs.put("unhcrAsylum", longTtlConfig);
+        cacheConfigs.put("unhcrDemographics", longTtlConfig);
+        cacheConfigs.put("unhcrSolutions", longTtlConfig);
+
+        // Nowcast — refreshed every hour, model predictions don't change rapidly
+        cacheConfigs.put("nowcast", oneHourConfig);
+
+        // FAO Food Price Index — monthly data, cache for 24 hours
+        cacheConfigs.put("faoFoodPriceIndex", longTtlConfig);
+        cacheConfigs.put("worldBankSFI", longTtlConfig);
+
+        // Topic reports — expensive to generate (Claude API + multiple data sources)
+        // Cache for 2 hours, first user generates, all others read from cache
+        cacheConfigs.put("topicReport", longTtlConfig);
+
+        // Other services
+        cacheConfigs.put("hazards", oneHourConfig);
+        cacheConfigs.put("migrationData", longTtlConfig);
+        cacheConfigs.put("climateData", longTtlConfig);
+
         return RedisCacheManager.builder(connectionFactory)
                 .cacheDefaults(defaultConfig)
                 .withInitialCacheConfigurations(cacheConfigs)

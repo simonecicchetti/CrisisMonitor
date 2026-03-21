@@ -40,6 +40,10 @@ public class RiskScoreService {
     @org.springframework.context.annotation.Lazy
     private CacheWarmupService cacheWarmupService;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private QwenScoringService qwenScoringService;
+
     // ISO2 to ISO3 mapping - all monitored countries
     private static final Map<String, String> ISO2_TO_ISO3 = Map.ofEntries(
             // Africa - East
@@ -183,10 +187,27 @@ public class RiskScoreService {
                 }
             }
 
+            // Cap climate score: precipitation anomaly alone should not exceed 50.
+            // Only NDVI SEVERE (confirmed vegetation crisis) allows higher scores.
+            // This prevents false positives like Venezuela climate=70 from rain anomaly
+            // when the actual crisis is economic, not climate.
+            boolean ndviSevere = false;
+            try {
+                @SuppressWarnings("unchecked")
+                List<com.crisismonitor.model.ClimateData> stressData = cacheWarmupService != null
+                        ? (List<com.crisismonitor.model.ClimateData>) cacheWarmupService.getFallback("climateStress")
+                        : null;
+                if (stressData != null) {
+                    ndviSevere = stressData.stream().anyMatch(c -> iso3.equals(c.getIso3()));
+                }
+            } catch (Exception e) { /* skip */ }
+
+            if (!ndviSevere && climateScore > 50) {
+                log.debug("Climate cap {}: {} → 50 (no NDVI SEVERE confirmation)", iso3, climateScore);
+                climateScore = 50;
+            }
+
             // Dampen climate score in active conflict zones:
-            // War zones have unreliable meteorological infrastructure and
-            // displaced populations — precipitation anomalies are less meaningful
-            // as a standalone crisis driver when conflict baseline is high.
             int conflictBaseline = CONFLICT_BASELINE.getOrDefault(iso3, 0);
             if (conflictBaseline >= 35 && climateScore > 0) {
                 double dampFactor = conflictBaseline >= 60 ? 0.4 : 0.6;
@@ -281,88 +302,83 @@ public class RiskScoreService {
             dataPoints++;
         }
 
-        // 4. Food Security data (IPC primary, FCS/rCSI fallback)
-        try {
-            IPCAlert ipc = fewsNetService.getLatestIPCPhase(iso2);
-            if (ipc != null && ipc.getIpcPhase() != null) {
-                ipcPhase = ipc.getIpcPhase();
-                foodSecurityScore = (int)(ipcPhase * 20);  // Phase 5 = 100
-                dataPoints++;
-            }
-        } catch (Exception e) {
-            log.warn("Could not get IPC data for {}: {}", iso2, e.getMessage());
-        }
+        // 4. Food Security — MULTI-SOURCE, MAX WINS
+        // Three independent public sources, take the highest score.
+        // Conservative: better to overestimate food insecurity than underestimate.
+        // Zero hardcoded values — all from public APIs.
+        //
+        // Source A: WFP HungerMap FCS/rCSI (real-time, ~80 countries)
+        // Source B: WFP HungerMap Severity Tier (real-time, ~255 countries)
+        // Source C: World Bank Severe Food Insecurity % (annual, ~150 countries)
 
-        // FCS/rCSI fallback: when IPC is missing, use HungerMap food consumption data
-        // This covers countries like Iran that aren't in FEWS NET but have WFP monitoring
-        // FCS is a PROXY — cap at 50 (never equate proxy data with verified IPC assessments)
-        // Baseline offset: subtract 8% (many developing countries have ~8-12% baseline FCS)
-        if (foodSecurityScore == 0) {
-            try {
-                List<FoodSecurityMetrics> fcsMetrics = hungerMapService.getFoodSecurityMetrics();
-                if (fcsMetrics != null) {
-                    FoodSecurityMetrics countryFcs = fcsMetrics.stream()
-                            .filter(m -> iso3.equals(m.getIso3()))
-                            .findFirst().orElse(null);
-                    if (countryFcs != null) {
-                        // Subtract baseline (8%) before scoring — most developing countries
-                        // have 8-12% FCS prevalence as normal. Only crisis-level prevalence scores.
-                        if (countryFcs.getFcsPrevalence() != null && countryFcs.getFcsPrevalence() > 0.08) {
-                            double adjusted = countryFcs.getFcsPrevalence() - 0.08;
-                            foodSecurityScore = Math.min(50, (int)(adjusted * 250));
-                            dataPoints++;
-                            log.debug("Using FCS fallback for {}: prevalence={}%, adjusted={}%, score={}",
-                                    iso3, String.format("%.1f", countryFcs.getFcsPrevalence() * 100),
-                                    String.format("%.1f", adjusted * 100), foodSecurityScore);
-                        }
-                        // rCSI fallback (coping strategies) — same conservative approach
-                        if (foodSecurityScore == 0 && countryFcs.getRcsiPrevalence() != null && countryFcs.getRcsiPrevalence() > 0.10) {
-                            double adjusted = countryFcs.getRcsiPrevalence() - 0.10;
-                            foodSecurityScore = Math.min(50, (int)(adjusted * 200));
-                            dataPoints++;
-                        }
+        int foodScoreA = 0; // WFP FCS/rCSI
+        int foodScoreB = 0; // WFP Severity Tier
+        int foodScoreC = 0; // World Bank SFI
+
+        // Source A: WFP FCS/rCSI (real-time phone surveys)
+        try {
+            List<FoodSecurityMetrics> fcsMetrics = hungerMapService.getFoodSecurityMetrics();
+            if (fcsMetrics != null) {
+                FoodSecurityMetrics countryFcs = fcsMetrics.stream()
+                        .filter(m -> iso3.equals(m.getIso3()))
+                        .findFirst().orElse(null);
+                if (countryFcs != null) {
+                    Double fcs = countryFcs.getFcsPrevalence();
+                    Double rcsi = countryFcs.getRcsiPrevalence();
+                    if (fcs != null && rcsi != null) {
+                        foodScoreA = Math.min(100, (int)((fcs + rcsi) / 2.0 * 100));
+                    } else if (fcs != null) {
+                        foodScoreA = Math.min(100, (int)(fcs * 100));
+                    } else if (rcsi != null) {
+                        foodScoreA = Math.min(100, (int)(rcsi * 100));
                     }
                 }
-            } catch (Exception e) {
-                log.debug("Could not get FCS fallback for {}: {}", iso3, e.getMessage());
             }
+        } catch (Exception e) {
+            log.debug("WFP FCS/rCSI not available for {}: {}", iso3, e.getMessage());
         }
 
-        // Food security for active conflict zones:
-        // War disrupts food systems. Data sources can't collect in active war zones.
-        //
-        // KNOWN FAMINES — hardcoded because sensors can't reach these areas:
-        // Gaza (PSE): IPC Phase 5 Famine declared since late 2024. FEWS NET/WFP can't
-        // collect data due to siege. This is the most documented famine since Somalia 2011.
-        if ("PSE".equals(iso3) && foodSecurityScore < 100) {
-            foodSecurityScore = 100;  // IPC Phase 5 — Famine (documented, UN-declared)
-            ipcPhase = 5.0;
-            if (dataPoints == 0) dataPoints++;
-            log.debug("Palestine famine override: foodSecurityScore=100 (IPC5 declared)");
-        }
-
-        // Conflict-zone food floor for countries WITHOUT specific IPC data
-        if (foodSecurityScore == 0) {
-            int conflictFloor = CONFLICT_BASELINE.getOrDefault(iso3, 0);
-            if (conflictFloor >= 75) {
-                foodSecurityScore = 60;  // Siege/active bombing → severe food disruption
-                dataPoints++;
-            } else if (conflictFloor >= 60) {
-                foodSecurityScore = 50;  // Active war → food system disrupted
-                dataPoints++;
-            } else if (conflictFloor >= 40) {
-                foodSecurityScore = 30;  // Significant conflict → moderate food disruption
-                dataPoints++;
+        // Source B: WFP Severity Tier (public API, 255 countries)
+        try {
+            Map<String, Integer> severityData = hungerMapService.getSeverityData();
+            if (severityData != null) {
+                Integer tier = severityData.get(iso3);
+                if (tier != null) {
+                    foodScoreB = tier == 1 ? 95 : tier == 2 ? 75 : tier == 3 ? 55 : 20;
+                }
             }
+        } catch (Exception e) {
+            log.debug("Severity tier not available for {}: {}", iso3, e.getMessage());
         }
 
-        // Food floor for known humanitarian crises NOT covered by FEWS NET or WFP.
-        // These are sensor gaps — the crises are real but our data sources don't reach them.
-        // Without these floors, countries with millions suffering show food=0.
-        foodSecurityScore = Math.max(foodSecurityScore, FOOD_FLOOR.getOrDefault(iso3, 0));
-        if (FOOD_FLOOR.containsKey(iso3) && foodSecurityScore > 0 && dataPoints == 0) {
-            dataPoints++;
+        // Source C: World Bank Severe Food Insecurity (annual, ~150 countries)
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Double> wbSfi = cacheWarmupService.getFallback("worldBankSFI");
+            if (wbSfi != null) {
+                Double sfiPercent = wbSfi.get(iso3);
+                if (sfiPercent != null) {
+                    // Direct mapping: 63% SFI → score 63
+                    foodScoreC = Math.min(100, (int) Math.round(sfiPercent));
+                }
+            }
+        } catch (Exception e) {
+            log.debug("World Bank SFI not available for {}: {}", iso3, e.getMessage());
         }
+
+        // MAX WINS — take highest score from all sources
+        foodSecurityScore = Math.max(foodScoreA, Math.max(foodScoreB, foodScoreC));
+        if (foodSecurityScore > 0) dataPoints++;
+
+        // Derive IPC phase from food score for compatibility
+        if (foodSecurityScore > 0) {
+            ipcPhase = Math.min(5.0, foodSecurityScore / 20.0);
+        }
+
+        String foodSource = foodSecurityScore == foodScoreA ? "WFP_FCS" :
+                           foodSecurityScore == foodScoreB ? "WFP_Severity" : "WorldBank_SFI";
+        log.debug("Food score for {}: A(FCS)={}, B(Tier)={}, C(WB)={} → max={} (source={})",
+                iso3, foodScoreA, foodScoreB, foodScoreC, foodSecurityScore, foodSource);
 
         // 5. Economic stress amplifier: severe economic crisis cascades into food insecurity
         // Only for verified IPC data (foodSecurityScore >= 60 = IPC Phase 3+)
@@ -401,10 +417,10 @@ public class RiskScoreService {
         // countries in active crisis that happen to have OK NDVI (e.g. Ethiopia climate=4).
         // At 25% climate weight, a country at war with IPC Phase 4 could score WARNING
         // simply because satellite vegetation looks green. That's indefensible.
-        double powerSum = 0.35 * Math.pow(conflictScore, p)
-                + 0.35 * Math.pow(foodSecurityScore, p)
-                + 0.15 * Math.pow(climateScore, p)
-                + 0.15 * Math.pow(economicCapped, p);
+        double powerSum = 0.35 * Math.pow(Math.max(1, conflictScore), p)
+                + 0.35 * Math.pow(Math.max(1, foodSecurityScore), p)
+                + 0.15 * Math.pow(Math.max(1, climateScore), p)
+                + 0.15 * Math.pow(Math.max(1, economicCapped), p);
         int overallScore = (int) Math.pow(powerSum, 1.0 / p);
 
         // === WAR OVERRIDE ===
@@ -573,11 +589,112 @@ public class RiskScoreService {
             }
         }
 
+        // Overlay Qwen AI scores (replaces formula scores where available)
+        overlayQwenScores(scores);
+
         // Sort by score descending (highest risk first)
         scores.sort((a, b) -> Integer.compare(b.getScore(), a.getScore()));
 
         log.info("Calculated risk scores for {} countries", scores.size());
         return scores;
+    }
+
+    /**
+     * Overlay Qwen AI scores onto formula-based scores.
+     * Qwen scores are pre-generated weekly and stored in Firestore.
+     * If Qwen score exists and is fresh (< 14 days), it replaces the formula score.
+     * Formula scores are kept as fallback.
+     */
+    private void overlayQwenScores(List<RiskScore> scores) {
+        int overlaid = 0;
+
+        for (RiskScore rs : scores) {
+            try {
+                QwenScoringService.CountryScore qwen = qwenScoringService.getScore(rs.getIso3());
+                if (qwen == null) {
+                    rs.setScoreSource("formula");
+                    continue;
+                }
+
+                // Replace scores with Qwen AI assessment
+                // BUT: enforce CONFLICT_BASELINE floor — a verified war cannot
+                // be downgraded by Qwen if web search misses it.
+                int conflictFloor = CONFLICT_BASELINE.getOrDefault(rs.getIso3(), 0);
+                int finalConflict = Math.max(qwen.getConflictScore(), conflictFloor);
+                String conflictReason = qwen.getConflictReason();
+                if (finalConflict > qwen.getConflictScore() && conflictFloor >= 50) {
+                    conflictReason = "Active armed conflict (verified baseline); " + conflictReason;
+                    log.info("  {} conflict floor enforced: Qwen={} → baseline={}", rs.getIso3(), qwen.getConflictScore(), conflictFloor);
+                }
+
+                rs.setFoodSecurityScore(qwen.getFoodScore());
+                rs.setConflictScore(finalConflict);
+                rs.setClimateScore(qwen.getClimateScore());
+                rs.setEconomicScore(qwen.getEconomicScore());
+
+                // Recalculate overall with corrected conflict
+                double p = 1.5;
+                double wConflict = 0.35, wFood = 0.35, wClimate = 0.15, wEcon = 0.15;
+                if (finalConflict <= 5) {
+                    wFood += wConflict * 0.5;
+                    wEcon += wConflict * 0.5;
+                    wConflict = 0;
+                }
+                double powerSum = wConflict * Math.pow(Math.max(1, finalConflict), p)
+                                + wFood * Math.pow(Math.max(1, qwen.getFoodScore()), p)
+                                + wClimate * Math.pow(Math.max(1, qwen.getClimateScore()), p)
+                                + wEcon * Math.pow(Math.max(1, qwen.getEconomicScore()), p);
+                int recalcOverall = (int) Math.pow(powerSum, 1.0 / p);
+                rs.setScore(recalcOverall);
+
+                // Risk level from recalculated overall
+                rs.setRiskLevel(recalcOverall >= 60 ? "CRITICAL" : recalcOverall >= 48 ? "ALERT" :
+                               recalcOverall >= 38 ? "WARNING" : recalcOverall >= 22 ? "WATCH" : "STABLE");
+
+                // Drivers from corrected scores
+                // WAR IS WAR: if conflict floor >= 50, Conflict MUST be first driver
+                List<String> drivers = new java.util.ArrayList<>();
+                if (conflictFloor >= 50) {
+                    drivers.add("Conflict");
+                }
+                Map<String, Integer> driverScores = Map.of(
+                    "Food Security", qwen.getFoodScore(), "Conflict", finalConflict,
+                    "Climate", qwen.getClimateScore(), "Economic", qwen.getEconomicScore());
+                driverScores.entrySet().stream()
+                    .filter(e -> e.getValue() >= 30)
+                    .filter(e -> !drivers.contains(e.getKey())) // skip if already added
+                    .sorted((a, b) -> b.getValue() - a.getValue())
+                    .limit(conflictFloor >= 50 ? 2 : 3)
+                    .forEach(e -> drivers.add(e.getKey()));
+                rs.setDrivers(drivers);
+
+                // Set AI reasons (new fields)
+                rs.setFoodReason(qwen.getFoodReason());
+                rs.setConflictReason(conflictReason);
+                rs.setClimateReason(qwen.getClimateReason());
+                rs.setEconomicReason(qwen.getEconomicReason());
+                rs.setSummary(qwen.getSummary());
+                rs.setScoreSource("qwen");
+                rs.setQwenGeneratedAt(qwen.getGeneratedAt());
+
+                // Recalculate elevated flags (use finalConflict, not Qwen's original)
+                boolean climElevated = qwen.getClimateScore() >= 30;
+                boolean confElevated = finalConflict >= 30;
+                boolean econElevated = qwen.getEconomicScore() >= 30;
+                boolean foodElevated = qwen.getFoodScore() >= 60;
+                rs.setClimateElevated(climElevated);
+                rs.setConflictElevated(confElevated);
+                rs.setEconomicElevated(econElevated);
+                rs.setElevatedCount((climElevated ? 1 : 0) + (confElevated ? 1 : 0)
+                    + (econElevated ? 1 : 0) + (foodElevated ? 1 : 0));
+
+                overlaid++;
+            } catch (Exception e) {
+                rs.setScoreSource("formula");
+                log.debug("Qwen overlay failed for {}: {}", rs.getIso3(), e.getMessage());
+            }
+        }
+        log.info("Qwen overlay: {}/{} countries using AI scores", overlaid, scores.size());
     }
 
     /**
@@ -654,44 +771,51 @@ public class RiskScoreService {
      *
      * Last reviewed: March 16, 2026 — Full recalibration: IRC Watchlist + Iran war + Sahel siege + Hormuz
      */
+    /**
+     * Conflict floor for countries with VERIFIED ACTIVE WARS only.
+     *
+     * This exists because GDELT (media volume) systematically underestimates
+     * conflicts in low-media-attention countries (CAR, Sahel, Myanmar).
+     * Without this floor, a country at war shows conflict=5 on a quiet news day.
+     *
+     * ONLY includes countries with:
+     * - Active armed conflict confirmed by multiple sources (IRC Watchlist, UCDP, ICG)
+     * - Regular combat casualties
+     * - Armed groups controlling territory
+     *
+     * Countries with political instability, state repression, or post-conflict
+     * tensions are NOT included — GDELT handles those.
+     *
+     * Below 50: removed. GDELT decides. These are insurgencies where media coverage
+     * correlates well enough with intensity.
+     *
+     * >>> CHANGE POINT: replace with ACLED data when budget allows
+     * >>> CHANGE POINT: or calculate from GDELT BigQuery 180-day rolling average
+     */
     private static final Map<String, Integer> CONFLICT_BASELINE = Map.ofEntries(
-            // === ACTIVE WARS (75+) — international military operations ===
-            Map.entry("PSE", 80),  // Gaza war: Israeli siege + famine + ground operations
-            Map.entry("IRN", 78),  // US/Israel war (28 Feb 2026): Khamenei killed, Hormuz blockade, ongoing strikes
-            Map.entry("UKR", 75),  // Russia-Ukraine: full-scale invasion, frontline combat daily
+            // === ACTIVE WARS — international military operations ===
+            Map.entry("PSE", 80),  // Gaza war: siege + ground operations
+            Map.entry("IRN", 78),  // US/Israel war (Feb 2026): Hormuz blockade, ongoing strikes
+            Map.entry("UKR", 75),  // Russia-Ukraine: full-scale invasion
 
-            // === ACTIVE WARS (60-74) — civil wars, multi-front conflicts ===
-            Map.entry("SDN", 70),  // Sudan civil war (SAF vs RSF), famine expanding, 150K+ dead — IRC #1
-            Map.entry("ISR", 70),  // Multi-front war: Gaza + Iran strikes + regional escalation
-            Map.entry("LBN", 65),  // Post-2024 war, 80% poverty, ceasefire fragile
-            Map.entry("MMR", 60),  // Nationwide civil war, junta controls 21% territory — IRC #9
-            Map.entry("SYR", 60),  // Multi-front civil war (ongoing)
-            Map.entry("YEM", 60),  // Houthi conflict + US strikes + Hormuz disruption
+            // === ACTIVE WARS — civil wars, multi-front ===
+            Map.entry("SDN", 70),  // Civil war (SAF vs RSF), 150K+ dead
+            Map.entry("ISR", 70),  // Multi-front: Gaza + Iran
+            Map.entry("LBN", 65),  // Post-2024 war, ceasefire fragile
+            Map.entry("MMR", 60),  // Nationwide civil war, junta controls 21% territory
+            Map.entry("SYR", 60),  // Multi-front civil war
+            Map.entry("YEM", 60),  // Houthi + US strikes + Hormuz
 
-            // === HIGH-INTENSITY CONFLICT (45-59) ===
-            Map.entry("BFA", 55),  // JNIM/IS siege on 40+ towns, 2M besieged, 38 killed Feb 2026 — IRC #6
-            Map.entry("ETH", 55),  // Amhara insurgency (Fano), drone strikes on civilians, 1.55M displaced — IRC #4
-            Map.entry("COD", 55),  // M23 + ADF + multiple armed groups in east — IRC #8
-            Map.entry("HTI", 53),  // Gangs 80-90% Port-au-Prince, expanding nationwide, 1.4M displaced — IRC #5
+            // === HIGH-INTENSITY — verified armed groups controlling territory ===
+            Map.entry("BFA", 55),  // JNIM/IS siege 40+ towns, IRC #6
+            Map.entry("ETH", 55),  // Amhara insurgency (Fano), IRC #4
+            Map.entry("COD", 55),  // M23 + ADF, IRC #8
+            Map.entry("HTI", 53),  // Gangs control 80-90% Port-au-Prince, IRC #5
             Map.entry("SOM", 50),  // Al-Shabaab insurgency
-            Map.entry("SSD", 50),  // Inter-communal violence, Jonglei conflict, fragile state
-            Map.entry("MLI", 50),  // JNIM advancing on Bamako, supply routes cut — IRC #7
-            Map.entry("NGA", 45),  // ISWAP/JNIM intensifying, 35M hunger (record), WFP defunded
-
-            // === ACTIVE INSURGENCY (30-44) ===
-            Map.entry("LBY", 40),  // Armed factions, militia instability
-            Map.entry("CAF", 40),  // Armed groups control large territory
-            Map.entry("AFG", 35),  // Taliban rule, IS-K attacks
-            Map.entry("IRQ", 35),  // Iran-linked militia activity, regional spillover
-            Map.entry("PAK", 30),  // TTP insurgency + regional tensions from Iran conflict
-
-            // === LOW-INTENSITY / POST-CONFLICT (20-29) ===
-            Map.entry("TCD", 30),  // Sudan spillover: border closed Feb 2026, army involved in Darfur, RSF incursions — FSI #10
-            Map.entry("COL", 25),  // FARC remnants, ELN activity
-            Map.entry("MOZ", 25),  // Cabo Delgado insurgency
-            Map.entry("NER", 25),  // Post-coup, jihadist spillover intensifying from BFA/MLI
-            Map.entry("CMR", 20),  // Anglophone crisis, Boko Haram spillover
-            Map.entry("VEN", 20)   // State repression, gang violence, political instability
+            Map.entry("SSD", 50),  // Inter-communal violence
+            Map.entry("MLI", 50)   // JNIM advancing on Bamako, IRC #7
+            // Everything below 50 removed — GDELT handles these:
+            // NGA, LBY, CAF, AFG, IRQ, PAK, TCD, COL, MOZ, NER, CMR, VEN
     );
 
     /**
@@ -839,6 +963,17 @@ public class RiskScoreService {
             }
         } catch (Exception e) {
             log.debug("News briefing unavailable for conflict scoring: {}", e.getMessage());
+        }
+
+        // Cap for countries WITHOUT verified conflict baseline.
+        // GDELT/news can inflate conflict scores for countries with media attention
+        // but no actual armed conflict (Cuba, Peru, El Salvador).
+        // Countries WITH baseline: no cap (war is confirmed, signals add to it).
+        // Countries WITHOUT baseline: max 30 from live signals alone.
+        int baseline = CONFLICT_BASELINE.getOrDefault(iso3, 0);
+        if (baseline == 0 && score > 30) {
+            log.debug("Conflict cap for {} (no baseline): {} → 30", iso3, score);
+            score = 30;
         }
 
         return Math.min(100, score);

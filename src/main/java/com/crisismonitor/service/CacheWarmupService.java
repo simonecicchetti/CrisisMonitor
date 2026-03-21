@@ -12,6 +12,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +46,8 @@ public class CacheWarmupService {
     private final ReliefWebService reliefWebService;
     private final ClimateService climateService;
     private final DTMService dtmService;
+    private final RssService rssService;
+    private final WorldBankService worldBankService;
 
     // Track warmup status
     private final AtomicBoolean warmupComplete = new AtomicBoolean(false);
@@ -104,7 +107,19 @@ public class CacheWarmupService {
                     CompletableFuture<Void> whoFuture = warmupWHO();
                     CompletableFuture<Void> briefingFuture = CompletableFuture.runAsync(this::warmupDailyBriefing);
                     CompletableFuture<Void> dtmFuture = CompletableFuture.runAsync(this::warmupDTM);
-                    return CompletableFuture.allOf(whoFuture, briefingFuture, dtmFuture);
+                    CompletableFuture<Void> newsFuture = CompletableFuture.runAsync(this::warmupNewsHeadlines);
+                    CompletableFuture<Void> wbSfiFuture = CompletableFuture.runAsync(() -> {
+                        try {
+                            var sfi = worldBankService.getSevereFoodInsecurity();
+                            if (sfi != null && !sfi.isEmpty()) {
+                                memoryFallback.put("worldBankSFI", sfi);
+                                log.info("World Bank SFI warmed: {} countries", sfi.size());
+                            }
+                        } catch (Exception e) {
+                            log.debug("World Bank SFI warmup failed: {}", e.getMessage());
+                        }
+                    });
+                    return CompletableFuture.allOf(whoFuture, briefingFuture, dtmFuture, newsFuture, wbSfiFuture);
                 })
                 .thenRun(() -> {
                     warmupRiskScores();
@@ -350,6 +365,63 @@ public class CacheWarmupService {
         }
     }
 
+    private void warmupNewsHeadlines() {
+        try {
+            log.info("Warming up news headlines for intelligence reports...");
+            List<Map<String, String>> allHeadlines = new ArrayList<>();
+
+            // RSS headlines per region
+            for (String region : List.of("AFRICA", "MENA", "ASIA", "LAC", "EUROPE")) {
+                try {
+                    var items = rssService.getRegionHeadlines(region, 10); // More headlines for better country matching
+                    if (items != null) {
+                        for (var item : items) {
+                            Map<String, String> h = new HashMap<>();
+                            h.put("title", item.getTitle());
+                            h.put("source", item.getSource());
+                            h.put("region", region);
+                            h.put("type", item.isHumanitarian() ? "ReliefWeb" : "Media");
+                            if (item.getLink() != null) h.put("url", item.getLink());
+                            allHeadlines.add(h);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("RSS warmup for {}: {}", region, e.getMessage());
+                }
+            }
+
+            // ReliefWeb latest reports (top countries)
+            // Fetch ReliefWeb reports for ALL monitored countries (not just a subset)
+            for (String iso3 : com.crisismonitor.config.MonitoredCountries.CRISIS_COUNTRIES) {
+                try {
+                    var reports = reliefWebService.getLatestReports(iso3, 3, 7);
+                    if (reports != null) {
+                        for (var r : reports) {
+                            Map<String, String> h = new HashMap<>();
+                            h.put("title", r.getTitle());
+                            h.put("source", r.getSource() != null ? r.getSource() : "ReliefWeb");
+                            h.put("iso3", iso3);
+                            h.put("type", "ReliefWeb");
+                            if (r.getUrl() != null) h.put("url", r.getUrl());
+                            if (r.getDate() != null) h.put("date", r.getDate());
+                            allHeadlines.add(h);
+                        }
+                    }
+                    Thread.sleep(100); // gentle rate limit
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                } catch (Exception e) {
+                    log.debug("ReliefWeb warmup for {}: {}", iso3, e.getMessage());
+                }
+            }
+
+            memoryFallback.put("newsHeadlines", allHeadlines);
+            log.info("News headlines warmed: {} total (RSS + ReliefWeb)", allHeadlines.size());
+        } catch (Exception e) {
+            log.error("News headlines warmup failed: {}", e.getMessage());
+        }
+    }
+
     private void warmupDailyBriefing() {
         try {
             log.info("Warming up Daily Briefing cache...");
@@ -429,6 +501,7 @@ public class CacheWarmupService {
         warmupIntelligenceFeed();
         warmupActiveSituations();
         warmupDailyBriefing();
+        warmupNewsHeadlines();
         CompletableFuture.runAsync(() -> {
             try {
                 warmupWHO().join();
@@ -456,12 +529,29 @@ public class CacheWarmupService {
             "fewsAllIPC", "fewsIPC", "foodSecurityMetrics",
             // Intelligence & situations
             "intelligenceFeed", "activeSituationsV2", "dailyBriefing",
+            "topicIntelligence",
+            // AI analysis
+            "aiAnalysisGlobal", "aiAnalysisCountry", "aiAnalysisRegion",
+            "aiAnalysisRegionV2", "claudeSituations",
             // Regional
             "regionalPulseV2", "regionContext", "overviewContext", "regionDetail",
+            "countryProfileAggregated", "countryDataPack",
             // WHO & ReliefWeb
-            "whoDiseaseOutbreaks", "reliefWebReports",
-            // News feed & stories
-            "newsFeed", "storiesV16",
+            "whoDiseaseOutbreaks", "reliefwebReports", "reliefwebHeadlines",
+            "reliefwebDisasters",
+            // News feed, stories & RSS
+            "newsFeed", "storiesV16", "rssGlobal", "rssHeadlines",
+            // DTM (IOM displacement)
+            "dtmCountryData", "dtmByReason", "dtmOperations",
+            // HungerMap
+            "countries", "ipcData", "severityData", "alerts", "foodSecurityMetrics",
+            // WorldBank
+            "countryProfiles", "inflationData", "gdpData", "populationData", "povertyData",
+            // UNHCR
+            "unhcrPopulation", "unhcrGlobalSummary", "unhcrAsylum",
+            "unhcrDemographics", "unhcrSolutions",
+            // Other
+            "hazards", "migrationData",
             // Trend tracking
             "trendHistory"
     );

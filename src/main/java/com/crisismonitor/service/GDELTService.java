@@ -147,6 +147,7 @@ public class GDELTService {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 RATE_LIMIT_LOCK.unlock();
+                return;
             }
         }
     }

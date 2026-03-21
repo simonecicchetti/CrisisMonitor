@@ -108,6 +108,13 @@
             <version>2.0.3</version>
         </dependency>
 
+        <!-- ONNX Runtime for ML model inference -->
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>1.17.0</version>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

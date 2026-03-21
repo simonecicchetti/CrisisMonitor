@@ -67,6 +67,15 @@ public class RiskScore {
     private String trend;                 // "rising", "falling", "stable", "new"
     private String trendIcon;             // "↑", "↓", "→", "●"
 
+    // ===== AI SCORING (Qwen) =====
+    private String foodReason;        // Why this food score
+    private String conflictReason;    // Why this conflict score
+    private String climateReason;     // Why this climate score
+    private String economicReason;    // Why this economic score
+    private String summary;           // AI overall assessment
+    private String scoreSource;       // "qwen" or "formula"
+    private String qwenGeneratedAt;   // When Qwen score was generated
+
     // ===== PERSISTENCE INDICATORS =====
     private String persistenceLabel;      // PERSISTENT, RAPID_DETERIORATION, IMPROVING, STABLE, NEW
     private String persistenceIcon;       // ◆, ⬆, ⬇, →, ●

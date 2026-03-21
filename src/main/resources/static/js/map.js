@@ -1,439 +1,251 @@
 /**
- * Crisis Monitor - Interactive Map
- * Apple Style 2026
+ * Crisis Monitor - Risk Score Map
+ * Displays OUR risk scores, not WFP HungerMap data.
  */
 
-// ============================================
-// MAP CONFIGURATION
-// ============================================
 const MapConfig = {
-  center: [20, 0],
-  zoom: 2,
+  center: [15, 20],
+  zoom: 2.5,
   minZoom: 2,
   maxZoom: 8,
   tileUrl: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
   tileAttribution: '&copy; OpenStreetMap &copy; CARTO'
 };
 
-// Apple-inspired color palette
-const SeverityColors = {
+// Our risk level colors
+const RiskColors = {
   'CRITICAL': '#ff453a',
-  'HIGH': '#ff9f0a',
-  'MEDIUM': '#64d2ff',
-  'LOW': '#30d158',
-  'NO_DATA': 'rgba(255, 255, 255, 0.3)'
+  'ALERT':    '#ff9f0a',
+  'WARNING':  '#ffd60a',
+  'WATCH':    '#64d2ff',
+  'STABLE':   '#30d158'
+};
+
+// Country centroid coordinates
+const CountryCoords = {
+  AFG:[33.93,67.71],AGO:[-11.2,17.87],BDI:[-3.37,29.92],BFA:[12.24,-1.56],BGD:[23.68,90.36],
+  CAF:[6.61,20.94],CMR:[7.37,12.35],COD:[-4.04,21.76],COG:[-0.23,15.83],COL:[4.57,-74.3],
+  CUB:[21.52,-77.78],ECU:[-1.83,-78.18],ETH:[9.15,40.49],GTM:[15.78,-90.23],HND:[15.2,-86.24],
+  HTI:[19.07,-72.29],IRN:[32.43,53.69],IRQ:[33.22,43.68],ISR:[31.05,34.85],KEN:[-0.02,37.91],
+  LBN:[33.85,35.86],LBY:[26.34,17.23],MEX:[23.63,-102.55],MLI:[17.57,-4.0],MMR:[19.76,96.08],
+  MOZ:[-18.67,35.53],NER:[17.61,8.08],NGA:[9.08,8.68],NIC:[12.87,-85.21],PAK:[30.38,69.35],
+  PAN:[8.54,-80.78],PER:[-9.19,-75.02],PSE:[31.95,35.23],RWA:[-1.94,29.87],SDN:[12.86,30.22],
+  SLV:[13.79,-88.9],SOM:[5.15,46.2],SSD:[6.88,31.31],SYR:[34.8,38.99],TCD:[15.45,18.73],
+  UGA:[1.37,32.29],UKR:[48.38,31.17],VEN:[6.42,-66.59],YEM:[15.55,48.52],
 };
 
 const HazardEmoji = {
-  'FLOOD': '🌊',
-  'EARTHQUAKE': '🌍',
-  'CYCLONE': '🌀',
-  'DROUGHT': '☀️',
-  'VOLCANO': '🌋',
-  'WILDFIRE': '🔥',
-  'STORM': '⛈️',
-  'TSUNAMI': '🌊',
-  'DEFAULT': '⚠️'
+  'FLOOD':'🌊','EARTHQUAKE':'🌍','CYCLONE':'🌀','DROUGHT':'☀️',
+  'VOLCANO':'🌋','WILDFIRE':'🔥','STORM':'⛈️','TSUNAMI':'🌊','DEFAULT':'⚠️'
 };
 
-// ============================================
-// MAP INITIALIZATION
-// ============================================
-let map;
-let countryMarkers;
-let hazardMarkers;
-
-let mapInitialized = false;
+let map, riskMarkers, hazardMarkers, mapInitialized = false;
 
 function initMap() {
-  if (mapInitialized) {
-    // Just invalidate size if already initialized
-    if (map) map.invalidateSize();
-    return;
-  }
-
-  const mapContainer = document.getElementById('map');
-  if (!mapContainer) return;
-
-  // Check if container is visible (has dimensions)
-  const rect = mapContainer.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) {
-    // Container is hidden, defer initialization
-    console.log('Map container hidden, deferring initialization...');
-    return;
-  }
+  if (mapInitialized) { if (map) map.invalidateSize(); return; }
+  const el = document.getElementById('map');
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
 
   map = L.map('map', {
-    center: MapConfig.center,
-    zoom: MapConfig.zoom,
-    minZoom: MapConfig.minZoom,
-    maxZoom: MapConfig.maxZoom,
-    worldCopyJump: true,
-    zoomControl: true,
-    attributionControl: false
+    center: MapConfig.center, zoom: MapConfig.zoom,
+    minZoom: MapConfig.minZoom, maxZoom: MapConfig.maxZoom,
+    worldCopyJump: true, zoomControl: true, attributionControl: false
   });
+  L.tileLayer(MapConfig.tileUrl, { subdomains: 'abcd', maxZoom: 19 }).addTo(map);
 
-  // Dark tile layer
-  L.tileLayer(MapConfig.tileUrl, {
-    attribution: MapConfig.tileAttribution,
-    subdomains: 'abcd',
-    maxZoom: 19
-  }).addTo(map);
-
-  // Initialize layer groups
-  countryMarkers = L.layerGroup().addTo(map);
+  riskMarkers = L.layerGroup().addTo(map);
   hazardMarkers = L.layerGroup().addTo(map);
 
-  // Load data
-  loadCountries();
+  loadRiskScores();
   loadHazards();
-
   mapInitialized = true;
 
-  // Auto-refresh every 5 minutes
-  setInterval(() => {
-    loadCountries();
-    loadHazards();
-  }, 5 * 60 * 1000);
+  setInterval(() => { loadRiskScores(); loadHazards(); }, 5 * 60 * 1000);
 }
 
 // ============================================
-// COUNTRY MARKERS
+// RISK SCORE MARKERS (OUR DATA)
 // ============================================
-async function loadCountries() {
+async function loadRiskScores() {
   try {
-    const response = await fetch('/api/countries');
-    const countries = await response.json();
+    const resp = await fetch('/api/risk/scores');
+    const result = await resp.json();
+    const scores = result.data || result.scores || result;
+    if (!Array.isArray(scores)) return;
 
-    countryMarkers.clearLayers();
+    riskMarkers.clearLayers();
 
-    countries.forEach((country, index) => {
-      if (country.latitude && country.longitude) {
-        const color = SeverityColors[country.alertLevel] || SeverityColors['NO_DATA'];
-        const radius = calculateRadius(country.peoplePhase3to5);
+    scores.forEach((s, i) => {
+      const coords = CountryCoords[s.iso3];
+      if (!coords) return;
 
-        // Add glow class based on severity
-        const severityClass = country.alertLevel === 'CRITICAL' ? 'marker-critical pulse-marker' :
-                              country.alertLevel === 'HIGH' ? 'marker-high' : 'marker-default';
+      const color = RiskColors[s.riskLevel] || 'rgba(255,255,255,0.3)';
+      const radius = scoreToRadius(s.score);
+      const pulseClass = s.riskLevel === 'CRITICAL' ? 'pulse-marker' : '';
 
-        const marker = L.circleMarker([country.latitude, country.longitude], {
-          radius: radius,
-          fillColor: color,
-          color: 'rgba(255, 255, 255, 0.5)',
-          weight: 1.5,
-          opacity: 1,
-          fillOpacity: 0.75,
-          className: `country-marker ${severityClass}`
-        });
+      const marker = L.circleMarker(coords, {
+        radius: radius,
+        fillColor: color,
+        color: 'rgba(255,255,255,0.4)',
+        weight: 1.5,
+        opacity: 1,
+        fillOpacity: 0.75,
+        className: `country-marker ${pulseClass}`
+      });
 
-        // Animated entrance (staggered)
-        marker.setStyle({ opacity: 0, fillOpacity: 0 });
-        setTimeout(() => {
-          marker.setStyle({ opacity: 1, fillOpacity: 0.75 });
-        }, index * 10);
+      marker.setStyle({ opacity: 0, fillOpacity: 0 });
+      setTimeout(() => marker.setStyle({ opacity: 1, fillOpacity: 0.75 }), i * 15);
 
-        marker.bindPopup(createCountryPopup(country), {
-          className: 'modern-popup',
-          maxWidth: 300
-        });
+      marker.bindPopup(createRiskPopup(s), { className: 'modern-popup', maxWidth: 320 });
 
-        // Hover effects
-        marker.on('mouseover', function() {
-          this.setStyle({
-            weight: 3,
-            fillOpacity: 0.9
-          });
-          this.setRadius(radius * 1.2);
-        });
+      marker.on('mouseover', function() {
+        this.setStyle({ weight: 3, fillOpacity: 0.9 });
+        this.setRadius(radius * 1.2);
+      });
+      marker.on('mouseout', function() {
+        this.setStyle({ weight: 1.5, fillOpacity: 0.75 });
+        this.setRadius(radius);
+      });
 
-        marker.on('mouseout', function() {
-          this.setStyle({
-            weight: 1.5,
-            fillOpacity: 0.75
-          });
-          this.setRadius(radius);
-        });
-
-        countryMarkers.addLayer(marker);
-      }
+      riskMarkers.addLayer(marker);
     });
-  } catch (error) {
-    console.error('Error loading countries:', error);
+  } catch (e) {
+    console.error('Error loading risk scores for map:', e);
   }
 }
 
-function calculateRadius(peopleAffected) {
-  if (!peopleAffected) return 5;
-  if (peopleAffected > 15000000) return 24;
-  if (peopleAffected > 10000000) return 20;
-  if (peopleAffected > 5000000) return 16;
-  if (peopleAffected > 1000000) return 12;
-  if (peopleAffected > 100000) return 8;
+function scoreToRadius(score) {
+  if (score >= 70) return 18;
+  if (score >= 55) return 14;
+  if (score >= 40) return 11;
+  if (score >= 25) return 8;
   return 6;
 }
 
-function createCountryPopup(country) {
-  const alertColor = SeverityColors[country.alertLevel] || SeverityColors['NO_DATA'];
-  const peopleFormatted = country.peoplePhase3to5
-    ? formatNumber(country.peoplePhase3to5)
-    : 'N/A';
-  const percentFormatted = country.percentPhase3to5
-    ? country.percentPhase3to5.toFixed(1) + '%'
-    : 'N/A';
+function createRiskPopup(s) {
+  const color = RiskColors[s.riskLevel] || '#aaa';
+  const trend = s.trendIcon ? `<span style="margin-left:4px;">${s.trendIcon} ${s.scoreDelta > 0 ? '+' : ''}${s.scoreDelta || ''}</span>` : '';
+  const drivers = (s.drivers || []).map(d => `<span class="popup-tag">${d}</span>`).join('');
+
+  // Component bars
+  const components = [
+    { name: 'Food', value: s.foodSecurityScore, color: '#ff9f0a', reason: s.foodReason },
+    { name: 'Conflict', value: s.conflictScore, color: '#ff453a', reason: s.conflictReason },
+    { name: 'Climate', value: s.climateScore, color: '#64d2ff', reason: s.climateReason },
+    { name: 'Economic', value: s.economicScore, color: '#ffd60a', reason: s.economicReason },
+  ];
+  const bars = components.map(c =>
+    `<div style="display:flex;align-items:center;gap:6px;margin:3px 0;">
+      <span style="width:55px;font-size:0.7rem;color:rgba(255,255,255,0.5);">${c.name}</span>
+      <div style="flex:1;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
+        <div style="width:${c.value}%;height:100%;background:${c.color};border-radius:2px;"></div>
+      </div>
+      <span style="width:24px;font-size:0.7rem;text-align:right;color:rgba(255,255,255,0.6);">${c.value}</span>
+    </div>
+    ${c.reason ? `<div style="font-size:0.58rem;color:rgba(255,255,255,0.35);margin:-1px 0 3px 61px;line-height:1.2;">${c.reason}</div>` : ''}`
+  ).join('');
 
   return `
     <div class="popup-content">
-      <div class="popup-title">${country.name}</div>
-      <div class="popup-divider"></div>
-      <div class="popup-grid">
-        <div class="popup-item">
-          <span class="popup-label">Alert Level</span>
-          <span class="popup-value" style="color: ${alertColor}">${country.alertLevel || 'N/A'}</span>
-        </div>
-        <div class="popup-item">
-          <span class="popup-label">Food Insecure</span>
-          <span class="popup-value">${peopleFormatted}</span>
-        </div>
-        <div class="popup-item">
-          <span class="popup-label">Population %</span>
-          <span class="popup-value">${percentFormatted}</span>
-        </div>
-        ${country.ipcAnalysisPeriod ? `
-        <div class="popup-item full-width">
-          <span class="popup-label">Analysis Period</span>
-          <span class="popup-value">${country.ipcAnalysisPeriod}</span>
-        </div>
-        ` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="popup-title">${s.countryName}</div>
+        <span style="font-size:1.3rem;font-weight:700;color:${color};">${s.score}</span>
       </div>
+      <div style="display:flex;align-items:center;gap:6px;margin:4px 0 8px;">
+        <span style="padding:2px 8px;border-radius:4px;font-size:0.7rem;font-weight:600;background:${color}20;color:${color};">${s.riskLevel}</span>
+        ${trend}
+      </div>
+      <div class="popup-divider"></div>
+      ${bars}
+      ${drivers ? `<div style="display:flex;gap:4px;margin-top:8px;flex-wrap:wrap;">${drivers}</div>` : ''}
+      ${s.summary ? `<div style="font-size:0.65rem;color:rgba(255,255,255,0.45);margin-top:8px;font-style:italic;">${s.summary}</div>` : ''}
+      ${s.scoreSource === 'qwen' ? `<div style="font-size:0.55rem;color:rgba(100,210,255,0.5);margin-top:4px;">AI-assessed · ${s.qwenGeneratedAt || ''}</div>` : ''}
     </div>
   `;
 }
 
 // ============================================
-// HAZARD MARKERS
+// HAZARD MARKERS (keep as-is)
 // ============================================
 async function loadHazards() {
   try {
-    const response = await fetch('/api/hazards');
-    const hazards = await response.json();
-
+    const resp = await fetch('/api/hazards');
+    const hazards = await resp.json();
     hazardMarkers.clearLayers();
 
-    hazards.forEach((hazard, index) => {
-      if (hazard.latitude && hazard.longitude) {
-        const emoji = HazardEmoji[hazard.type] || HazardEmoji['DEFAULT'];
-
-        const marker = L.marker([hazard.latitude, hazard.longitude], {
-          icon: L.divIcon({
-            className: 'hazard-marker',
-            html: `
-              <div class="hazard-marker-inner ${hazard.severity?.toLowerCase() || ''}">
-                <span class="hazard-emoji">${emoji}</span>
-              </div>
-            `,
-            iconSize: [36, 36],
-            iconAnchor: [18, 18]
-          })
-        });
-
-        marker.bindPopup(createHazardPopup(hazard), {
-          className: 'modern-popup',
-          maxWidth: 280
-        });
-
-        hazardMarkers.addLayer(marker);
-      }
+    hazards.forEach(h => {
+      if (!h.latitude || !h.longitude) return;
+      const emoji = HazardEmoji[h.type] || HazardEmoji['DEFAULT'];
+      const marker = L.marker([h.latitude, h.longitude], {
+        icon: L.divIcon({
+          className: 'hazard-marker',
+          html: `<div class="hazard-marker-inner ${(h.severity||'').toLowerCase()}"><span class="hazard-emoji">${emoji}</span></div>`,
+          iconSize: [36, 36], iconAnchor: [18, 18]
+        })
+      });
+      marker.bindPopup(createHazardPopup(h), { className: 'modern-popup', maxWidth: 280 });
+      hazardMarkers.addLayer(marker);
     });
-  } catch (error) {
-    console.error('Error loading hazards:', error);
+  } catch (e) {
+    console.error('Error loading hazards:', e);
   }
 }
 
-function createHazardPopup(hazard) {
-  const emoji = HazardEmoji[hazard.type] || HazardEmoji['DEFAULT'];
-  const severityClass = hazard.severity?.toLowerCase() || '';
-
+function createHazardPopup(h) {
+  const emoji = HazardEmoji[h.type] || HazardEmoji['DEFAULT'];
   return `
     <div class="popup-content">
-      <div class="popup-title">${emoji} ${hazard.name}</div>
+      <div class="popup-title">${emoji} ${h.name}</div>
       <div class="popup-divider"></div>
       <div class="popup-tags">
-        <span class="popup-tag">${hazard.type}</span>
-        <span class="popup-tag ${severityClass}">${hazard.severity}</span>
+        <span class="popup-tag">${h.type}</span>
+        <span class="popup-tag ${(h.severity||'').toLowerCase()}">${h.severity}</span>
       </div>
-      ${hazard.description ? `<p class="popup-description">${hazard.description}</p>` : ''}
+      ${h.description ? `<p class="popup-description">${h.description}</p>` : ''}
     </div>
   `;
 }
 
-// ============================================
-// UTILITIES
-// ============================================
-function formatNumber(num) {
-  if (num >= 1000000) {
-    return (num / 1000000).toFixed(1) + 'M';
-  }
-  if (num >= 1000) {
-    return (num / 1000).toFixed(0) + 'K';
-  }
-  return num.toString();
+function formatNumber(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1)+'M';
+  if (n >= 1e3) return (n/1e3).toFixed(0)+'K';
+  return n.toString();
 }
 
-// ============================================
-// CUSTOM STYLES (injected)
-// ============================================
+// Styles
 const mapStyles = document.createElement('style');
 mapStyles.textContent = `
-  .country-marker {
-    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-  }
-
-  .hazard-marker {
-    filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.4));
-  }
-
-  .hazard-marker-inner {
-    width: 36px;
-    height: 36px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(28, 28, 36, 0.9);
-    backdrop-filter: blur(10px);
-    border-radius: 50%;
-    border: 2px solid rgba(255, 255, 255, 0.2);
-    animation: hazard-pulse 2s ease-in-out infinite;
-  }
-
-  .hazard-marker-inner.warning {
-    border-color: #ff453a;
-    box-shadow: 0 0 20px rgba(255, 69, 58, 0.4);
-  }
-
-  .hazard-marker-inner.watch {
-    border-color: #ff9f0a;
-    box-shadow: 0 0 20px rgba(255, 159, 10, 0.4);
-  }
-
-  .hazard-emoji {
-    font-size: 18px;
-  }
-
-  @keyframes hazard-pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.1); }
-  }
-
-  .modern-popup .leaflet-popup-content-wrapper {
-    background: rgba(28, 28, 36, 0.95);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    padding: 0;
-  }
-
-  .modern-popup .leaflet-popup-content {
-    margin: 0;
-    color: #fff;
-  }
-
-  .modern-popup .leaflet-popup-tip {
-    background: rgba(28, 28, 36, 0.95);
-  }
-
-  .popup-content {
-    padding: 16px;
-  }
-
-  .popup-title {
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-
-  .popup-divider {
-    height: 1px;
-    background: rgba(255, 255, 255, 0.1);
-    margin: 12px 0;
-  }
-
-  .popup-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-
-  .popup-item {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .popup-item.full-width {
-    grid-column: span 2;
-  }
-
-  .popup-label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  .popup-value {
-    font-size: 0.95rem;
-    font-weight: 500;
-  }
-
-  .popup-tags {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-
-  .popup-tag {
-    padding: 4px 10px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    text-transform: uppercase;
-  }
-
-  .popup-tag.warning {
-    background: rgba(255, 69, 58, 0.2);
-    color: #ff453a;
-  }
-
-  .popup-tag.watch {
-    background: rgba(255, 159, 10, 0.2);
-    color: #ff9f0a;
-  }
-
-  .popup-description {
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.7);
-    line-height: 1.5;
-  }
+  .country-marker { transition: all 0.2s cubic-bezier(0.34,1.56,0.64,1); }
+  .pulse-marker { animation: marker-pulse 2s ease-in-out infinite; }
+  @keyframes marker-pulse { 0%,100%{opacity:0.75;} 50%{opacity:1;} }
+  .hazard-marker { filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+  .hazard-marker-inner { width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:rgba(28,28,36,0.9);backdrop-filter:blur(10px);border-radius:50%;border:2px solid rgba(255,255,255,0.2);animation:hazard-pulse 2s ease-in-out infinite; }
+  .hazard-marker-inner.warning { border-color:#ff453a;box-shadow:0 0 20px rgba(255,69,58,0.4); }
+  .hazard-marker-inner.watch { border-color:#ff9f0a;box-shadow:0 0 20px rgba(255,159,10,0.4); }
+  .hazard-emoji { font-size:18px; }
+  @keyframes hazard-pulse { 0%,100%{transform:scale(1);} 50%{transform:scale(1.1);} }
+  .modern-popup .leaflet-popup-content-wrapper { background:rgba(28,28,36,0.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:16px;border:1px solid rgba(255,255,255,0.1);box-shadow:0 20px 60px rgba(0,0,0,0.5);padding:0; }
+  .modern-popup .leaflet-popup-content { margin:0;color:#fff; }
+  .modern-popup .leaflet-popup-tip { background:rgba(28,28,36,0.95); }
+  .popup-content { padding:16px; }
+  .popup-title { font-size:1.1rem;font-weight:600;margin-bottom:4px; }
+  .popup-divider { height:1px;background:rgba(255,255,255,0.1);margin:8px 0; }
+  .popup-tags { display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap; }
+  .popup-tag { padding:3px 8px;background:rgba(255,255,255,0.1);border-radius:6px;font-size:0.7rem;font-weight:500;text-transform:uppercase; }
+  .popup-tag.warning { background:rgba(255,69,58,0.2);color:#ff453a; }
+  .popup-tag.watch { background:rgba(255,159,10,0.2);color:#ff9f0a; }
+  .popup-description { font-size:0.85rem;color:rgba(255,255,255,0.7);line-height:1.5; }
 `;
 document.head.appendChild(mapStyles);
 
-// ============================================
-// INITIALIZATION
-// ============================================
 document.addEventListener('DOMContentLoaded', initMap);
 
-// Export for global access
 window.CrisisMap = {
   init: initMap,
-  loadCountries,
+  loadCountries: loadRiskScores,
   loadHazards,
   map: () => map,
-  invalidateSize: () => {
-    if (map) {
-      map.invalidateSize();
-    }
-  }
+  invalidateSize: () => { if (map) map.invalidateSize(); }
 };

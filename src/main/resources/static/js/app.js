@@ -778,6 +778,7 @@ const DataManager = {
 
     try {
       const response = await fetch(endpoint);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       this.cache.set(endpoint, { data, timestamp: Date.now() });
       return data;
@@ -819,7 +820,9 @@ const ChartManager = {
 
     const labels = Object.keys(data);
     const values = Object.values(data);
+    if (values.length === 0) return;
     const maxValue = Math.max(...values);
+    if (maxValue <= 0) return;
 
     // Create bar chart with CSS
     const container = ctx.parentElement;
@@ -1005,7 +1008,7 @@ const ConflictMonitor = {
       // Format headlines as context chips
       const headlines = spike.topHeadlines && spike.topHeadlines.length > 0
         ? `<div class="headline-chips">${spike.topHeadlines.map(h =>
-            `<span class="headline-chip" title="${h}">${h}</span>`
+            `<span class="headline-chip" title="${Utils.escapeHtml(h)}">${Utils.escapeHtml(h)}</span>`
           ).join('')}</div>`
         : '';
 
@@ -1251,7 +1254,7 @@ const RiskScoreMonitor = {
 
       const drivers = score.drivers && score.drivers.length > 0
         ? `<div class="drivers-list">${score.drivers.slice(0, 3).map(d =>
-            `<span class="driver-chip">${d}</span>`
+            `<span class="driver-chip">${Utils.escapeHtml(d)}</span>`
           ).join('')}</div>`
         : '';
 
@@ -1259,7 +1262,7 @@ const RiskScoreMonitor = {
         <tr class="${rowClass}">
           <td>
             <div class="country-cell">
-              <strong>${score.countryName}</strong>
+              <strong>${Utils.escapeHtml(score.countryName)}</strong>
               ${drivers}
             </div>
           </td>
@@ -1734,10 +1737,8 @@ const OverviewManager = {
     try {
       await Promise.all([
         this.loadLiveNews(),
-        this.loadRegionalPulse()
+        this.loadDailyBrief()
       ]);
-      // Render humanitarian updates after both are done (needs _reliefwebItems from loadLiveNews)
-      this.renderHumanitarianUpdates();
       console.log('[Overview] all blocks loaded');
     } catch (error) {
       console.error('OverviewManager init error:', error);
@@ -1896,18 +1897,18 @@ const OverviewManager = {
           <div class="focus-now-label">Top Deterioration Risk</div>
           <div class="focus-now-content">
             <div class="focus-now-main">
-              <div class="focus-now-country">${top.countryName || 'Unknown'}</div>
+              <div class="focus-now-country">${Utils.escapeHtml(top.countryName || 'Unknown')}</div>
               <div class="focus-now-drivers">
-                ${drivers.map(d => `<span class="focus-driver-tag">${d}</span>`).join('')}
+                ${drivers.map(d => `<span class="focus-driver-tag">${Utils.escapeHtml(d)}</span>`).join('')}
               </div>
             </div>
             <div class="focus-now-score">
               <span class="focus-score-value">${top.score || 0}</span>
-              <span class="focus-score-level">${top.riskLevel || 'HIGH'}</span>
+              <span class="focus-score-level">${Utils.escapeHtml(top.riskLevel || 'HIGH')}</span>
             </div>
-            <div class="focus-now-horizon">${top.horizon || '30-day'} horizon</div>
+            <div class="focus-now-horizon">${Utils.escapeHtml(top.horizon || '30-day')} horizon</div>
           </div>
-          <div class="focus-now-narrative">${narrative}</div>
+          <div class="focus-now-narrative">${Utils.escapeHtml(narrative)}</div>
         `;
       } else {
         console.log('[Overview] Focus Now: no scores in response');
@@ -1925,6 +1926,7 @@ const OverviewManager = {
 
     try {
       const response = await fetch('/api/situations/active');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const result = await response.json();
       const { situations, status } = this.normalizeSituations(result);
 
@@ -2030,9 +2032,9 @@ const OverviewManager = {
           return `
             <div class="top-situation-item">
               <span class="situation-severity ${(s.severity || '').toLowerCase()}"></span>
-              <span class="situation-country">${country}</span>
-              <span class="situation-type">${type}</span>
-              <span class="situation-drivers">${summary.substring(0, 60)}${summary.length > 60 ? '...' : ''}</span>
+              <span class="situation-country">${Utils.escapeHtml(country)}</span>
+              <span class="situation-type">${Utils.escapeHtml(type)}</span>
+              <span class="situation-drivers">${Utils.escapeHtml(summary.substring(0, 60))}${summary.length > 60 ? '...' : ''}</span>
             </div>
           `;
         }).join('');
@@ -2136,6 +2138,7 @@ const OverviewManager = {
     try {
       console.log('[Overview] Regional Pulse: fetching /api/regions/pulse');
       const response = await fetch('/api/regions/pulse');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const pulse = await response.json();
       console.log('[Overview] Regional Pulse: response', pulse);
 
@@ -2187,6 +2190,124 @@ const OverviewManager = {
     } catch (error) {
       console.error('[Overview] Regional pulse error:', error);
       container.innerHTML = '<div class="loading-placeholder">Regional data temporarily unavailable</div>';
+    }
+  },
+
+  async loadDailyBrief(lang) {
+    const container = document.getElementById('daily-brief-container');
+    if (!container) return;
+
+    const briefLang = lang || window._platformLang || localStorage.getItem('notamy-lang') || 'en';
+    try {
+      const response = await fetch('/api/daily-brief?lang=' + briefLang);
+      if (!response.ok) return;
+      const brief = await response.json();
+      if (brief.status === 'none' || !brief.headline) {
+        // No brief yet — try generating on the fly
+        if (!this._briefGenerating) {
+          this._briefGenerating = true;
+          console.log('[Overview] No brief found, generating...');
+          const genResp = await fetch('/api/daily-brief/generate?lang=' + briefLang, { method: 'POST' });
+          this._briefGenerating = false;
+          if (genResp.ok) {
+            const genBrief = await genResp.json();
+            if (genBrief.headline) return this._renderBrief(container, genBrief);
+          }
+        }
+        return;
+      }
+      this._renderBrief(container, brief);
+    } catch (error) {
+      console.debug('[Overview] Daily brief not available:', error.message);
+    }
+
+    // Language is controlled by global selector in top bar
+  },
+
+  _renderBrief(container, brief) {
+    document.getElementById('daily-brief-headline').textContent = brief.headline;
+    document.getElementById('daily-brief-p1').textContent = brief.paragraph1 || '';
+    document.getElementById('daily-brief-p2').textContent = brief.paragraph2 || '';
+
+    const dateEl = document.getElementById('daily-brief-date');
+    if (dateEl && brief.date) {
+      const d = new Date(brief.date + 'T00:00:00');
+      dateEl.textContent = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    }
+
+    const watchContainer = document.getElementById('daily-brief-watch-items');
+    if (watchContainer && brief.watchItems && brief.watchItems.length > 0) {
+      watchContainer.innerHTML = brief.watchItems.map(w =>
+        `<span class="watch-item-btn" data-country="${Utils.escapeHtml(w.country)}" data-situation="${Utils.escapeHtml(w.situation)}" ` +
+        `style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:6px;background:var(--bg-tertiary);font-size:0.78rem;cursor:pointer;transition:background 0.15s;" ` +
+        `onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='var(--bg-tertiary)'">` +
+        `<strong style="color:var(--text-primary);">${Utils.escapeHtml(w.country)}</strong>` +
+        `<span style="color:var(--text-tertiary);">/</span>` +
+        `<span style="color:var(--text-secondary);">${Utils.escapeHtml(w.situation)}</span></span>`
+      ).join('');
+
+      // Click handler for watch items → deep dive
+      watchContainer.querySelectorAll('.watch-item-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const country = btn.dataset.country;
+          const situation = btn.dataset.situation;
+          this._loadDeepDive(country, situation);
+        });
+      });
+    }
+
+    // Close button for deep dive
+    const closeBtn = document.getElementById('deep-dive-close');
+    if (closeBtn && !closeBtn._bound) {
+      closeBtn._bound = true;
+      closeBtn.addEventListener('click', () => {
+        document.getElementById('daily-brief-deep-dive').style.display = 'none';
+      });
+    }
+
+    container.style.display = 'block';
+    console.log('[Overview] Daily Brief loaded [' + (brief.language || 'en') + ']:', brief.headline);
+  },
+
+  async _loadDeepDive(country, situation) {
+    const diveContainer = document.getElementById('daily-brief-deep-dive');
+    if (!diveContainer) return;
+
+    // Show loading state
+    const label = document.getElementById('deep-dive-label');
+    if (label) label.textContent = country + ' — loading...';
+    document.getElementById('deep-dive-headline').textContent = '';
+    document.getElementById('deep-dive-p1').textContent = '';
+    document.getElementById('deep-dive-p2').textContent = '';
+    diveContainer.style.display = 'block';
+
+    // Scroll into view
+    diveContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    const lang = window._platformLang || localStorage.getItem('notamy-lang') || 'en';
+
+    try {
+      const response = await fetch('/api/daily-brief/deep-dive?lang=' + lang, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ country, situation })
+      });
+      const data = await response.json();
+
+      if (data.error || !data.headline) {
+        if (label) label.textContent = country + ' — failed to load';
+        return;
+      }
+
+      if (label) label.textContent = country + ' — ' + Utils.escapeHtml(situation);
+      document.getElementById('deep-dive-headline').textContent = data.headline;
+      document.getElementById('deep-dive-p1').textContent = data.paragraph1 || '';
+      document.getElementById('deep-dive-p2').textContent = data.paragraph2 || '';
+
+      console.log('[Overview] Deep dive loaded:', country, data.headline);
+    } catch (error) {
+      console.error('[Overview] Deep dive error:', error);
+      if (label) label.textContent = country + ' — error';
     }
   },
 
@@ -2382,15 +2503,16 @@ const OverviewManager = {
 
     try {
       const response = await fetch(`/api/analysis/region?region=${encodeURIComponent(regionCode)}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const analysis = await response.json();
 
       const briefContent = analysis.summary || analysis.keyFindings?.[0] || 'No brief available';
 
       modal.querySelector('.regional-brief-body').innerHTML = `
-        <div class="regional-brief-text">${briefContent.replace(/\n/g, '<br>')}</div>
+        <div class="regional-brief-text">${Utils.escapeHtml(briefContent).replace(/\n/g, '<br>')}</div>
         <div class="regional-brief-meta">
           <span>Generated: ${new Date(analysis.generatedAt).toLocaleString()}</span>
-          <span>Model: ${analysis.model || 'AI'}</span>
+          <span>Model: ${Utils.escapeHtml(analysis.model || 'AI')}</span>
         </div>
       `;
     } catch (error) {
@@ -2675,7 +2797,7 @@ const AIAnalysisManager = {
 
     if (!modal) return;
 
-    // Open modal from FAB button
+    // FAB opens Country Intelligence Brief modal
     fab?.addEventListener('click', () => {
       modal.classList.remove('hidden');
       Haptics.medium();
@@ -2701,23 +2823,104 @@ const AIAnalysisManager = {
       }
     });
 
-    // Country select enables/disables briefing button
+    // Country select → load Country Intelligence Brief
     countrySelect?.addEventListener('change', () => {
-      if (briefingBtn) {
-        const selected = countrySelect.value;
-        briefingBtn.disabled = !selected;
-        briefingBtn.textContent = selected ? 'Get Briefing' : 'Select a country above';
+      const iso3 = countrySelect.value;
+      if (!iso3) {
+        document.getElementById('country-brief-scores').style.display = 'none';
+        document.getElementById('country-brief-content').style.display = 'none';
+        return;
       }
+      this.loadCountryBrief(iso3);
     });
 
-    // Briefing button
-    briefingBtn?.addEventListener('click', () => this.analyze());
+    // Legacy briefing button (hidden but functional)
+    briefingBtn?.addEventListener('click', () => {
+      const iso3 = countrySelect?.value;
+      if (iso3) this.loadCountryBrief(iso3);
+    });
+  },
+
+  async loadCountryBrief(iso3) {
+    const scoresEl = document.getElementById('country-brief-scores');
+    const contentEl = document.getElementById('country-brief-content');
+    const loadingEl = document.getElementById('country-brief-loading');
+    const sectionsEl = document.getElementById('country-brief-sections');
+    const titleEl = document.getElementById('country-brief-title');
+
+    // Show loading
+    if (scoresEl) scoresEl.style.display = 'none';
+    if (contentEl) { contentEl.style.display = 'block'; }
+    if (loadingEl) loadingEl.style.display = 'block';
+    if (sectionsEl) sectionsEl.style.display = 'none';
+
+    const lang = window._platformLang || 'en';
+
+    try {
+      const response = await fetch(`/api/country-brief/${iso3}?lang=${lang}`);
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const brief = await response.json();
+
+      if (brief.error) {
+        if (loadingEl) loadingEl.textContent = 'Failed to generate brief. Try again.';
+        return;
+      }
+
+      // Update title
+      if (titleEl) titleEl.textContent = brief.countryName || iso3;
+
+      // Show scores
+      if (scoresEl) {
+        document.getElementById('cb-country-name').textContent = brief.countryName || '';
+        const badge = document.getElementById('cb-risk-badge');
+        if (badge) {
+          badge.textContent = (brief.overallScore || 0) + '/100 ' + (brief.riskLevel || '');
+          const colors = { CRITICAL: '#ff6b61', ALERT: '#f59e0b', WARNING: '#eab308', WATCH: '#60a5fa', STABLE: '#4ade80' };
+          badge.style.background = (colors[brief.riskLevel] || '#888') + '22';
+          badge.style.color = colors[brief.riskLevel] || '#888';
+        }
+        document.getElementById('cb-conflict').textContent = brief.conflictScore || '-';
+        document.getElementById('cb-food').textContent = brief.foodScore || '-';
+        document.getElementById('cb-climate').textContent = brief.climateScore || '-';
+        document.getElementById('cb-economic').textContent = brief.economicScore || '-';
+        scoresEl.style.display = 'block';
+      }
+
+      // Render sections
+      const sectionDefs = [
+        { key: 'security', label: 'Security & Governance', icon: '🛡' },
+        { key: 'economy', label: 'Economy', icon: '📊' },
+        { key: 'foodSecurity', label: 'Food Security', icon: '🌾' },
+        { key: 'displacement', label: 'Displacement & Migration', icon: '🚶' },
+        { key: 'outlook', label: '90-Day Outlook', icon: '🔭' }
+      ];
+
+      if (sectionsEl) {
+        sectionsEl.innerHTML = sectionDefs.map(s => {
+          const text = brief[s.key] || '';
+          if (!text) return '';
+          return `<div style="margin-bottom:14px;">
+            <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--accent-teal);font-weight:600;margin-bottom:4px;">${s.icon} ${s.label}</div>
+            <p style="margin:0;color:var(--text-secondary);line-height:1.6;">${Utils.escapeHtml(text)}</p>
+          </div>`;
+        }).join('');
+        sectionsEl.style.display = 'block';
+      }
+      if (loadingEl) loadingEl.style.display = 'none';
+
+      console.log('[CountryBrief] Loaded:', brief.countryName, brief.riskLevel);
+
+    } catch (error) {
+      console.error('[CountryBrief] Error:', error);
+      if (loadingEl) loadingEl.textContent = 'Error: ' + error.message;
+    }
   },
 
   closeModal() {
     const modal = document.getElementById('ai-modal');
     modal?.classList.add('hidden');
-    // Reset results
+    document.getElementById('country-brief-scores').style.display = 'none';
+    document.getElementById('country-brief-content').style.display = 'none';
     document.getElementById('ai-results')?.classList.add('hidden');
   },
 
@@ -3697,10 +3900,10 @@ const CountryDetailManager = {
     // === SCORE BREAKDOWN: 4-driver bars ===
     if (hasScore) {
       const drivers = [
-        { label: 'Food Security', score: p.foodSecurityScore, weight: '30%', color: 'var(--status-critical)' },
-        { label: 'Climate', score: p.climateScore, weight: '25%', color: '#64d2ff' },
-        { label: 'Conflict', score: p.conflictScore, weight: '25%', color: 'var(--status-high)' },
-        { label: 'Economic', score: p.economicScore, weight: '20%', color: 'var(--accent-purple)' }
+        { label: 'Food Security', score: p.foodSecurityScore, weight: '30%', color: 'var(--status-critical)', reason: p.foodReason },
+        { label: 'Climate', score: p.climateScore, weight: '25%', color: '#64d2ff', reason: p.climateReason },
+        { label: 'Conflict', score: p.conflictScore, weight: '25%', color: 'var(--status-high)', reason: p.conflictReason },
+        { label: 'Economic', score: p.economicScore, weight: '20%', color: 'var(--accent-purple)', reason: p.economicReason }
       ];
       html += `<div class="country-section">
         <h4>Risk Score Breakdown</h4>
@@ -3713,9 +3916,11 @@ const CountryDetailManager = {
               </div>
               <span class="cp-driver-score">${d.score != null ? d.score : '-'}</span>
             </div>
+            ${d.reason ? `<div style="font-size:0.72rem;color:var(--text-tertiary);margin:-4px 0 8px 0;line-height:1.3;padding-left:2px;">${Utils.escapeHtml(d.reason)}</div>` : ''}
           `).join('')}
         </div>
-        ${p.drivers && p.drivers.length ? `<div class="cp-driver-tags">${p.drivers.map(d => `<span class="cp-driver-tag">${Utils.escapeHtml(d)}</span>`).join('')}</div>` : ''}
+        ${p.drivers && p.drivers.length ? `<div class="cp-driver-tags">${p.drivers.map(d => `<span class="cp-driver-tag">${Utils.escapeHtml(d)}</span>`).join('')}${p.scoreSource === 'qwen' ? '<span style="font-size:0.6rem;padding:2px 6px;border-radius:4px;background:rgba(100,210,255,0.15);color:#64d2ff;margin-left:8px;">AI Scored</span>' : ''}</div>` : ''}
+        ${p.summary ? `<div style="margin-top:10px;padding:10px 12px;background:rgba(100,210,255,0.06);border-radius:8px;font-size:0.8rem;color:var(--text-secondary);line-height:1.5;"><span style="font-size:0.65rem;font-weight:600;color:#64d2ff;text-transform:uppercase;margin-right:6px;">AI Assessment</span>${Utils.escapeHtml(p.summary)}</div>` : ''}
       </div>`;
     }
 
@@ -3861,11 +4066,21 @@ const CountryDetailManager = {
     // === ACTION BUTTON ===
     html += `
       <div class="country-actions">
-        <button class="btn-primary" onclick="AIAnalysisManager.analyzeCountry('${Utils.escapeHtml(iso3)}'); CountryDetailManager.close();">
-          Deep Analysis with AI
-        </button>
       </div>
     `;
+
+    // AI Analysis (pre-generated, from Firestore)
+    if (p.aiAnalysis) {
+      html += `
+        <div class="cp-section">
+          <h4 class="cp-section-title">AI Analysis</h4>
+          <div style="font-size:0.85rem;line-height:1.7;color:var(--text-primary);padding:12px 0;">
+            ${p.aiAnalysis.split('\n').filter(line => line.trim()).map(line => '<p style="margin:0 0 10px;">' + line.trim() + '</p>').join('')}
+          </div>
+          <div style="font-size:0.7rem;color:var(--text-tertiary);">Generated: ${Utils.escapeHtml(p.analysisGeneratedAt || '')}</div>
+        </div>
+      `;
+    }
 
     html += `</div>`;
     container.innerHTML = html;
@@ -3930,8 +4145,14 @@ const SidebarManager = {
       });
     }
 
-    // Initialize first section
-    this.loadSectionData('overview');
+    // Restore saved section or default to overview
+    const savedSection = localStorage.getItem('notamy-section') || 'overview';
+    const sectionExists = document.querySelector(`.sidebar-item[data-section="${savedSection}"]`);
+    if (sectionExists && savedSection !== 'overview') {
+      this.switchSection(savedSection);
+    } else {
+      this.loadSectionData('overview');
+    }
   },
 
   switchSection(sectionId) {
@@ -3952,7 +4173,13 @@ const SidebarManager = {
     });
 
     this.currentSection = sectionId;
+    // Persist current section for page refresh
+    try { localStorage.setItem('notamy-section', sectionId); } catch(e) {}
     this.loadSectionData(sectionId);
+    // Re-apply translations after section switch (new elements may be in DOM)
+    if (window._applyTranslations && window._platformLang && window._platformLang !== 'en') {
+      setTimeout(() => window._applyTranslations(window._platformLang), 100);
+    }
 
     // Focus management: move focus to section heading for screen readers
     const activeSection = document.querySelector(`.content-section[data-section="${sectionId}"]`);
@@ -3989,6 +4216,8 @@ const SidebarManager = {
           }, 100);
         }
         StructuralIndicesManager.init();
+        // Regional Pulse lives in Countries now
+        OverviewManager.loadRegionalPulse();
         break;
       case 'early-warning':
         RiskScoreMonitor.init();
@@ -4010,9 +4239,14 @@ const SidebarManager = {
         SituationManager.init();
         break;
       case 'intelligence':
-        // AI Analysis: Ask AI + Topic Reports
+        // AI Analysis: Ask AI + Topic Reports + Humanitarian Updates
         QAManager.init();
         TopicReportGenerator.init();
+        // Humanitarian Updates moved here from Overview
+        OverviewManager.loadLiveNews().then(() => OverviewManager.renderHumanitarianUpdates());
+        break;
+      case 'nowcast':
+        NowcastManager.init();
         break;
     }
 
@@ -4023,6 +4257,7 @@ const SidebarManager = {
     try {
       // Load risk scores
       const response = await fetch('/api/risk/scores');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const result = await response.json();
       const scores = result.data || result;
 
@@ -4109,6 +4344,7 @@ const SidebarManager = {
   async loadExecutiveSummary() {
     try {
       const response = await fetch('/api/analysis/global');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
 
       // Update executive summary
@@ -5618,7 +5854,7 @@ const TopicReportGenerator = {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000);
-      const response = await fetch(`/api/intelligence/topic-report?topic=${this.currentTopic}&region=${this.currentRegion}&days=${this.currentPeriod}`, {
+      const response = await fetch(`/api/intelligence/topic-report?topic=${this.currentTopic}&region=${this.currentRegion}&days=7`, {
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -5633,6 +5869,9 @@ const TopicReportGenerator = {
       try {
         this.renderReport(data);
         if (output) output.style.display = 'block';
+        // Load community reactions + comments
+        var reportKey = this.currentTopic + '_' + (this.currentRegion || 'global');
+        if (typeof window.loadReportCommunity === 'function') window.loadReportCommunity(reportKey);
       } catch (renderError) {
         console.error('Render error:', renderError);
         alert('Error rendering report: ' + renderError.message);
@@ -5671,6 +5910,7 @@ const TopicReportGenerator = {
         increasing: { icon: '↑', label: 'INCREASING', class: 'trend-up' },
         decreasing: { icon: '↓', label: 'DECREASING', class: 'trend-down' },
         stable: { icon: '→', label: 'STABLE', class: 'trend-stable' },
+        critical: { icon: '🔴', label: 'CRITICAL', class: 'trend-up' },
         signal_only: { icon: '📰', label: 'SIGNAL ONLY', class: 'trend-signal' },
         insufficient_data: { icon: '—', label: 'NO DATA', class: 'trend-insufficient' }
       };
@@ -5692,31 +5932,15 @@ const TopicReportGenerator = {
       summary.textContent = `${rs.totalCountries} countries | ${rs.totalMedia} media | ${rs.totalReports} reports`;
     }
 
-    // Regional Stats with Coverage Quality
+    // Coverage stats
     const stats = document.getElementById('report-stats');
     if (stats && data.regionalSummary) {
       const rs = data.regionalSummary;
-      let statsHtml = '';
-
-      // Stock totals
-      if (rs.totalIdps) {
-        statsHtml += `<div class="stat-pill"><span class="stat-value">${rs.totalIdps}</span><span class="stat-label">IDPs (stock)</span></div>`;
-      }
-      if (rs.totalRefugees) {
-        statsHtml += `<div class="stat-pill"><span class="stat-value">${rs.totalRefugees}</span><span class="stat-label">Refugees (stock)</span></div>`;
-      }
-
-      // Coverage quality indicator
-      const qualityClass = rs.coverageQuality === 'HIGH' ? 'quality-high' :
-                          rs.coverageQuality === 'MEDIUM' ? 'quality-med' : 'quality-low';
-      const flowStatus = rs.hasFlowData ? 'Flow: ✓' : 'Flow: n/a';
-      statsHtml += `<div class="coverage-quality ${qualityClass}">
-        <span class="quality-label">Coverage:</span>
-        <span class="quality-value">${rs.coverageQuality}</span>
-        <span class="quality-detail">${flowStatus} | Op: ${rs.totalReports} | Media: ${rs.totalMedia}</span>
+      const totalSources = (rs.totalMedia || 0) + (rs.totalReports || 0) + (data.sources ? data.sources.length : 0);
+      stats.innerHTML = `<div class="coverage-quality">
+        <span class="quality-label">Sources:</span>
+        <span class="quality-value">${totalSources > 0 ? totalSources + ' verified' : 'Loading...'}</span>
       </div>`;
-
-      stats.innerHTML = statsHtml;
     }
 
     // Key Developments (AI-generated)
@@ -5735,6 +5959,17 @@ const TopicReportGenerator = {
       }).join('');
     } else if (developments) {
       developments.innerHTML = '<li class="text-muted">No key developments found for this period.</li>';
+    }
+
+    // Analytical Narrative (replaces country matrix for non-migration topics)
+    const narrativeEl = document.getElementById('report-narrative');
+    if (narrativeEl && data.narrative) {
+      narrativeEl.innerHTML = `<div style="padding:16px;font-size:0.88rem;line-height:1.7;color:var(--text-primary);border-top:1px solid var(--border-color);margin-top:16px;">
+        ${data.narrative.split('\n').filter(p => p.trim()).map(p => `<p style="margin:0 0 12px 0;">${p.trim()}</p>`).join('')}
+      </div>`;
+      narrativeEl.style.display = 'block';
+    } else if (narrativeEl) {
+      narrativeEl.style.display = 'none';
     }
 
     // Country Matrix (Signal, Stock, Flow Δ, Trend, Conf)
@@ -5809,31 +6044,44 @@ const TopicReportGenerator = {
 
     const topicLabel = this.currentTopic.charAt(0).toUpperCase() + this.currentTopic.slice(1).replace('-', ' ');
     const regionLabel = this.currentRegion ? this.currentRegion.toUpperCase() : 'Global';
+    const data = this.reportData;
 
-    let text = `${topicLabel} REPORT - ${regionLabel}\n`;
-    text += `Period: Last ${this.currentPeriod} days\n`;
-    text += `Generated: ${new Date().toLocaleDateString()}\n\n`;
-    text += `KEY DEVELOPMENTS:\n`;
+    let text = `${topicLabel} REPORT — ${regionLabel}\n`;
+    text += `${'='.repeat(50)}\n`;
+    text += `Period: ${data.periodStart || ''} - ${data.periodEnd || ''}\n`;
+    text += `Generated: ${data.generatedAt || new Date().toISOString().split('T')[0]}\n`;
+    text += `Sources: ${(data.sources || []).length} verified\n\n`;
 
-    if (this.reportData.developments) {
-      this.reportData.developments.forEach(dev => {
-        text += `• ${dev.country}: ${dev.summary}\n`;
+    text += `KEY FINDINGS\n${'-'.repeat(30)}\n`;
+    if (data.keyDevelopments && data.keyDevelopments.length > 0) {
+      data.keyDevelopments.forEach(dev => {
+        text += `• ${dev.bullet || ''}\n\n`;
       });
     }
 
-    text += `\nCOUNTRY COVERAGE:\n`;
-    if (this.reportData.countryCoverage) {
-      this.reportData.countryCoverage.forEach(c => {
-        text += `${c.country} (${c.count} mentions)\n`;
+    if (data.narrative) {
+      text += `\nANALYTICAL NARRATIVE\n${'-'.repeat(30)}\n`;
+      text += data.narrative + '\n';
+    }
+
+    if (data.sources && data.sources.length > 0) {
+      text += `\nSOURCES\n${'-'.repeat(30)}\n`;
+      data.sources.forEach(s => {
+        text += `[${s.type || 'Source'}] ${s.title || ''}\n`;
+        if (s.url) text += `  ${s.url}\n`;
       });
     }
 
-    // Download as text file
-    const blob = new Blob([text], { type: 'text/plain' });
+    text += `\n${'='.repeat(50)}\n`;
+    text += `Notamy News\n`;
+    text += `https://crisis-monitor-637266247904.europe-west1.run.app\n`;
+
+    // >>> CHANGE POINT: check subscription before allowing download
+    const blob = new Blob([text], { type: 'text/plain; charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${topicLabel.toLowerCase()}-report-${regionLabel.toLowerCase()}.txt`;
+    a.download = `gri-${topicLabel.toLowerCase().replace(' ','-')}-${regionLabel.toLowerCase()}-${new Date().toISOString().split('T')[0]}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   },
@@ -5843,18 +6091,26 @@ const TopicReportGenerator = {
 
     const topicLabel = this.currentTopic.charAt(0).toUpperCase() + this.currentTopic.slice(1).replace('-', ' ');
     const regionLabel = this.currentRegion ? this.currentRegion.toUpperCase() : 'Global';
+    const data = this.reportData;
 
-    let text = `${topicLabel} REPORT - ${regionLabel}\n\n`;
-    text += `KEY DEVELOPMENTS:\n`;
+    let text = `${topicLabel} REPORT — ${regionLabel}\n\n`;
+    text += `KEY FINDINGS:\n`;
 
-    if (this.reportData.developments) {
-      this.reportData.developments.forEach(dev => {
-        text += `• ${dev.country}: ${dev.summary}\n`;
+    if (data.keyDevelopments && data.keyDevelopments.length > 0) {
+      data.keyDevelopments.forEach(dev => {
+        text += `• ${dev.bullet || ''}\n`;
       });
     }
 
+    if (data.narrative) {
+      text += `\n${data.narrative}\n`;
+    }
+
+    // >>> CHANGE POINT: check subscription before allowing copy
     navigator.clipboard.writeText(text).then(() => {
-      alert('Report copied to clipboard!');
+      // Brief visual feedback instead of alert
+      const btn = document.querySelector('.btn-copy');
+      if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 2000); }
     });
   }
 };
@@ -6118,6 +6374,7 @@ const TopicSearch = {
       }
 
       const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
 
       this.renderResults(data);
@@ -6450,3 +6707,245 @@ const StructuralIndicesManager = {
     return idx.watchlists.map(w => names[w] || w).join(', ');
   }
 };
+
+// ====================================
+// NOWCAST MANAGER
+// ====================================
+const NowcastManager = {
+  data: null,
+  currentFilter: 'all',
+
+  async init() {
+    console.log('[Nowcast] init called, data:', this.data ? 'cached' : 'loading');
+    if (this.data) { this.render(); return; }
+    this.setupFilters();
+    await this.load();
+  },
+
+  setupFilters() {
+    document.querySelectorAll('.nowcast-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.nowcast-filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.currentFilter = btn.dataset.filter;
+        this.render();
+      });
+    });
+  },
+
+  async load() {
+    console.log('[Nowcast] fetching /api/nowcast/food-insecurity...');
+    try {
+      const resp = await fetch('/api/nowcast/food-insecurity');
+      console.log('[Nowcast] response status:', resp.status);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      this.data = await resp.json();
+      console.log('[Nowcast] loaded', this.data.predictions?.length, 'predictions');
+      this.render();
+    } catch (e) {
+      console.error('[Nowcast] failed:', e);
+      const tbody = document.getElementById('nowcast-table-body');
+      if (tbody) tbody.innerHTML =
+        `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--accent-red);">Failed to load: ${e.message}</td></tr>`;
+    }
+  },
+
+  render() {
+    if (!this.data) return;
+    const predictions = this.data.predictions || [];
+
+    // Status badge
+    const statusEl = document.getElementById('nowcast-status');
+    if (statusEl) {
+      statusEl.textContent = this.data.status === 'READY' ? 'Model Active' : this.data.status;
+      statusEl.className = 'badge ' + (this.data.status === 'READY' ? '' : 'high');
+      statusEl.style.cssText = `font-size:0.75rem;background:${this.data.status === 'READY' ? 'rgba(74,222,128,0.15)' : 'rgba(255,107,97,0.15)'};color:${this.data.status === 'READY' ? '#4ade80' : 'var(--accent-red)'};padding:3px 8px;border-radius:6px;`;
+    }
+
+    const noteEl = document.getElementById('nowcast-confidence-note');
+    if (noteEl) {
+      const historyCount = this.data.historyCountries || 0;
+      noteEl.textContent = historyCount > 0 ? `${historyCount} countries tracked` : 'Accumulating history...';
+    }
+
+    // Summary counts
+    let worsening = 0, stable = 0, improving = 0;
+    predictions.forEach(p => {
+      if (p.trend === 'WORSENING') worsening++;
+      else if (p.trend === 'IMPROVING') improving++;
+      else stable++;
+    });
+    const setCount = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setCount('nowcast-worsening-count', worsening);
+    setCount('nowcast-stable-count', stable);
+    setCount('nowcast-improving-count', improving);
+
+    // Load nowcast brief (analytical narrative)
+    if (!this._briefLoaded) {
+      this._briefLoaded = true;
+      fetch('/api/nowcast/brief').then(r => r.json()).then(brief => {
+        if (brief.status === 'none' || !brief.headline) return;
+        const container = document.getElementById('nowcast-brief-container');
+        if (!container) return;
+        document.getElementById('nowcast-brief-headline').textContent = brief.headline;
+        document.getElementById('nowcast-brief-p1').textContent = brief.paragraph1 || '';
+        document.getElementById('nowcast-brief-p2').textContent = brief.paragraph2 || '';
+        // Override counts from brief if available
+        if (brief.worseningCount !== undefined) setCount('nowcast-worsening-count', brief.worseningCount);
+        if (brief.stableCount !== undefined) setCount('nowcast-stable-count', brief.stableCount);
+        if (brief.improvingCount !== undefined) setCount('nowcast-improving-count', brief.improvingCount);
+        container.style.display = 'block';
+      }).catch(() => {});
+    }
+
+    // Filter predictions
+    let filtered = predictions;
+    if (this.currentFilter === 'worsening') filtered = predictions.filter(p => p.predictedChange90d > 0);
+    else if (this.currentFilter === 'improving') filtered = predictions.filter(p => p.predictedChange90d < 0);
+
+    // Table
+    const tbody = document.getElementById('nowcast-table-body');
+    if (!tbody) return;
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-tertiary);">No predictions available</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map(p => {
+      const change = p.predictedChange90d;
+      const changeColor = change > 5 ? 'var(--accent-red)' : change > 0 ? 'var(--accent-orange)' : change < -5 ? '#4ade80' : change < 0 ? '#86efac' : 'var(--text-secondary)';
+      const changeStr = change != null ? (change > 0 ? '+' : '') + change.toFixed(1) + '%' : '-';
+      const trendIcon = change > 5 ? '&#9650;' : change > 0 ? '&#9652;' : change < -5 ? '&#9660;' : change < 0 ? '&#9662;' : '&#8212;';
+      const trendColor = change > 5 ? 'var(--accent-red)' : change > 0 ? 'var(--accent-orange)' : change < -5 ? '#4ade80' : change < 0 ? '#86efac' : 'var(--text-tertiary)';
+      const confDot = p.confidence === 'HIGH' ? '#4ade80' : p.confidence === 'MEDIUM' ? 'var(--accent-orange)' : 'var(--text-tertiary)';
+
+      const proxyVal = p.currentProxy != null ? p.currentProxy.toFixed(1) + '%' : '-';
+      const fcsVal = p.fcsPrevalence != null ? p.fcsPrevalence.toFixed(1) + '%' : '-';
+      const rcsiVal = p.rcsiPrevalence != null ? p.rcsiPrevalence.toFixed(1) + '%' : '-';
+      const projVal = p.projectedProxy != null ? p.projectedProxy.toFixed(1) + '%' : '-';
+
+      return `<tr style="border-bottom:1px solid var(--border-color);transition:background 0.15s;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='transparent'">
+        <td style="padding:10px 12px;font-weight:500;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="width:6px;height:6px;border-radius:50%;background:${confDot};flex-shrink:0;" title="${p.confidence || 'LOW'} confidence"></span>
+            ${p.countryName || p.iso3}
+          </div>
+        </td>
+        <td style="padding:10px 6px;color:var(--text-tertiary);font-size:0.78rem;">${p.region || '-'}</td>
+        <td style="padding:10px 6px;text-align:right;font-variant-numeric:tabular-nums;">${fcsVal}</td>
+        <td style="padding:10px 6px;text-align:right;font-variant-numeric:tabular-nums;">${rcsiVal}</td>
+        <td style="padding:10px 6px;text-align:right;font-weight:500;font-variant-numeric:tabular-nums;">${proxyVal}</td>
+        <td style="padding:10px 6px;text-align:right;font-weight:600;color:${changeColor};font-variant-numeric:tabular-nums;">${changeStr}</td>
+        <td style="padding:10px 6px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-secondary);">${projVal}</td>
+        <td style="padding:10px 12px;text-align:center;color:${trendColor};font-size:0.9rem;">${trendIcon}</td>
+      </tr>`;
+    }).join('');
+  }
+};
+
+// Auto-init nowcast when its section becomes visible (backup trigger)
+(function() {
+  const observer = new MutationObserver(() => {
+    const section = document.querySelector('.content-section[data-section="nowcast"]');
+    if (section && section.classList.contains('active') && !NowcastManager.data) {
+      console.log('[Nowcast] Section became visible, auto-initializing');
+      NowcastManager.init();
+    }
+  });
+  document.addEventListener('DOMContentLoaded', () => {
+    const main = document.getElementById('main-content');
+    if (main) observer.observe(main, { attributes: true, subtree: true, attributeFilter: ['class'] });
+  });
+})();
+
+// ====================================
+// AUTHENTICATION MANAGER (Firebase Google Sign-In)
+// ====================================
+// >>> CHANGE POINT: add credit check logic here when paywall implemented
+// >>> CHANGE POINT: send auth token to backend for protected API calls
+const AuthManager = {
+  user: null,
+
+  init() {
+    firebase.auth().onAuthStateChanged((user) => {
+      this.user = user;
+      this.updateUI(user);
+      if (user) {
+        console.log('[Auth] Signed in:', user.email);
+        // Register with backend and get subscription tier
+        user.getIdToken().then(idToken => {
+          fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idToken: idToken })
+          })
+          .then(r => r.json())
+          .then(data => {
+            this.userTier = data.tier || 'free';
+            console.log('[Auth] Backend login:', data.tier);
+            // >>> CHANGE POINT: update UI based on tier (show/hide premium content)
+          })
+          .catch(e => console.error('[Auth] Backend login failed:', e));
+        });
+      } else {
+        console.log('[Auth] Signed out');
+      }
+    });
+  },
+
+  async signIn() {
+    try {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      await firebase.auth().signInWithPopup(provider);
+    } catch (e) {
+      console.error('[Auth] Sign in failed:', e);
+      if (e.code !== 'auth/popup-closed-by-user') {
+        alert('Sign in failed: ' + e.message);
+      }
+    }
+  },
+
+  async signOut() {
+    try {
+      await firebase.auth().signOut();
+    } catch (e) {
+      console.error('[Auth] Sign out failed:', e);
+    }
+  },
+
+  updateUI(user) {
+    const loginBtn = document.getElementById('auth-login-btn');
+    const userInfo = document.getElementById('auth-user-info');
+    const userName = document.getElementById('auth-user-name');
+    const userPhoto = document.getElementById('auth-user-photo');
+
+    if (user) {
+      if (loginBtn) loginBtn.style.display = 'none';
+      if (userInfo) userInfo.style.display = 'flex';
+      if (userName) userName.textContent = user.displayName || user.email;
+      if (userPhoto) userPhoto.src = user.photoURL || '';
+      if (userPhoto && !user.photoURL) userPhoto.style.display = 'none';
+    } else {
+      if (loginBtn) loginBtn.style.display = 'flex';
+      if (userInfo) userInfo.style.display = 'none';
+    }
+  },
+
+  // >>> CHANGE POINT: use this to get auth token for protected API calls
+  async getToken() {
+    if (!this.user) return null;
+    return await this.user.getIdToken();
+  },
+
+  isLoggedIn() {
+    return this.user !== null;
+  }
+};
+
+// Initialize auth on page load
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof firebase !== 'undefined' && firebase.auth) {
+    AuthManager.init();
+  }
+});

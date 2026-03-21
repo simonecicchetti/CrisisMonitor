@@ -346,4 +346,63 @@ public class WorldBankService {
 
         return profiles;
     }
+
+    // ==========================================
+    // SEVERE FOOD INSECURITY (% population)
+    // ==========================================
+
+    private static final String SEVERE_FOOD_INSECURITY = "SN.ITK.SVFI.ZS";
+
+    /**
+     * Get severe food insecurity prevalence (% population) for all countries.
+     * Source: World Bank, indicator SN.ITK.SVFI.ZS
+     * Returns most recent value per country (annual data, ~1-2 year lag).
+     * Public API, no auth needed.
+     *
+     * Used as one of 3 food security data sources (max of all 3 used).
+     */
+    @Cacheable("worldBankSFI")
+    public Map<String, Double> getSevereFoodInsecurity() {
+        log.info("Fetching World Bank Severe Food Insecurity data...");
+        try {
+            int currentYear = Year.now().getValue();
+            String dateRange = (currentYear - 5) + ":" + currentYear;
+
+            JsonNode response = worldBankClient.get()
+                    .uri("/country/all/indicator/" + SEVERE_FOOD_INSECURITY + "?format=json&per_page=5000&date=" + dateRange)
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .timeout(Duration.ofSeconds(20))
+                    .block();
+
+            if (response == null || !response.isArray() || response.size() < 2) {
+                log.warn("Invalid response from World Bank SFI API");
+                return Collections.emptyMap();
+            }
+
+            // Get most recent non-null value per country
+            Map<String, Double> results = new HashMap<>();
+            Map<String, Integer> resultYears = new HashMap<>();
+
+            for (JsonNode record : response.get(1)) {
+                String iso3 = record.path("countryiso3code").asText("");
+                if (iso3.isEmpty() || record.path("value").isNull()) continue;
+
+                double value = record.path("value").asDouble();
+                int year = record.path("date").asInt();
+
+                if (!results.containsKey(iso3) || year > resultYears.get(iso3)) {
+                    results.put(iso3, value);
+                    resultYears.put(iso3, year);
+                }
+            }
+
+            log.info("World Bank SFI: {} countries with data", results.size());
+            return results;
+
+        } catch (Exception e) {
+            log.warn("Failed to fetch World Bank SFI: {}", e.getMessage());
+            return Collections.emptyMap();
+        }
+    }
 }

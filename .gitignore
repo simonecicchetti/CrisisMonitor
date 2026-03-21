@@ -28,6 +28,9 @@ Thumbs.db
 application-local.properties
 application-local.yml
 
+# ML training data (3.7GB) — ONNX models in src/main/resources/ml/ are committed
+/ml/
+
 # Firebase credentials - NEVER commit
 src/main/resources/firebase/service-account.json
 **/firebase-adminsdk*.json

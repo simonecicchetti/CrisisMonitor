@@ -37,7 +37,8 @@ public class ExportService {
 
         // Header
         sb.append("Country,ISO3,ISO2,Score,Risk Level,Food Security,Climate,Conflict,Economic,");
-        sb.append("Drivers,Trend,Confidence,Horizon,IPC Phase,GDELT Z-Score,Currency 30d %,Calculated At\n");
+        sb.append("Drivers,Trend,Confidence,Horizon,IPC Phase,GDELT Z-Score,Currency 30d %,Calculated At,");
+        sb.append("Score Source,Food Reason,Conflict Reason,Climate Reason,Economic Reason,AI Summary\n");
 
         // Data rows
         for (RiskScore s : scores) {
@@ -57,7 +58,13 @@ public class ExportService {
             sb.append(s.getIpcPhase() != null ? s.getIpcPhase() : "").append(',');
             sb.append(s.getGdeltZScore() != null ? String.format("%.2f", s.getGdeltZScore()) : "").append(',');
             sb.append(s.getCurrencyChange30d() != null ? String.format("%.2f", s.getCurrencyChange30d()) : "").append(',');
-            sb.append(s.getCalculatedAt() != null ? s.getCalculatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) : "");
+            sb.append(s.getCalculatedAt() != null ? s.getCalculatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) : "").append(',');
+            sb.append(csvEscape(s.getScoreSource() != null ? s.getScoreSource() : "formula")).append(',');
+            sb.append(csvEscape(s.getFoodReason() != null ? s.getFoodReason() : "")).append(',');
+            sb.append(csvEscape(s.getConflictReason() != null ? s.getConflictReason() : "")).append(',');
+            sb.append(csvEscape(s.getClimateReason() != null ? s.getClimateReason() : "")).append(',');
+            sb.append(csvEscape(s.getEconomicReason() != null ? s.getEconomicReason() : "")).append(',');
+            sb.append(csvEscape(s.getSummary() != null ? s.getSummary() : ""));
             sb.append('\n');
         }
 

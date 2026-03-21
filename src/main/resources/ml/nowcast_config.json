@@ -1,0 +1,37 @@
+{
+  "features": [
+    "proxy_current",
+    "fcg_current",
+    "rcsi_current",
+    "proxy_lag_7d",
+    "proxy_lag_14d",
+    "proxy_lag_30d",
+    "proxy_lag_60d",
+    "proxy_lag_90d",
+    "proxy_rolling_mean_7d",
+    "proxy_rolling_mean_14d",
+    "proxy_rolling_mean_30d",
+    "proxy_rolling_mean_60d",
+    "proxy_rolling_mean_90d",
+    "proxy_rolling_std_7d",
+    "proxy_rolling_std_14d",
+    "proxy_rolling_std_30d",
+    "proxy_rolling_std_60d",
+    "proxy_rolling_std_90d",
+    "proxy_change_7d",
+    "proxy_change_14d",
+    "proxy_change_30d",
+    "proxy_trend_30d",
+    "proxy_volatility_30d",
+    "month_sin",
+    "month_cos",
+    "sample_quality"
+  ],
+  "target": "target_pct_change_90d",
+  "model_type": "lightgbm_autoregressive",
+  "description": "Nowcasts 90-day % change in food insecurity proxy (avg FCG<=2% and rCSI>=19%)",
+  "input_shape": [
+    1,
+    26
+  ]
+}

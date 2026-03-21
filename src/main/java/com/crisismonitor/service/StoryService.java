@@ -317,11 +317,6 @@ public class StoryService {
             List<MediaSpike> spikes = cacheWarmupService.getFallback("gdeltAllSpikes");
 
             if (spikes == null || spikes.isEmpty()) {
-                // Fallback to cache/API call
-                spikes = gdeltService.getAllConflictSpikes();
-            }
-
-            if (spikes == null || spikes.isEmpty()) {
                 log.info("No GDELT spikes available yet");
                 return headlines;
             }
@@ -1211,9 +1206,6 @@ public class StoryService {
         try {
             @SuppressWarnings("unchecked")
             List<MediaSpike> spikes = cacheWarmupService.getFallback("gdeltAllSpikes");
-            if (spikes == null || spikes.isEmpty()) {
-                spikes = gdeltService.getAllConflictSpikes();
-            }
             if (spikes == null || spikes.isEmpty()) {
                 log.info("No GDELT spikes available for news feed");
                 return items;

@@ -172,7 +172,13 @@ public class CountryProfileService {
                        .persistenceLabel(risk.getPersistenceLabel())
                        .persistenceDays(risk.getPersistenceDays())
                        .horizon(risk.getHorizon())
-                       .horizonReason(risk.getHorizonReason());
+                       .horizonReason(risk.getHorizonReason())
+                       .foodReason(risk.getFoodReason())
+                       .conflictReason(risk.getConflictReason())
+                       .climateReason(risk.getClimateReason())
+                       .economicReason(risk.getEconomicReason())
+                       .summary(risk.getSummary())
+                       .scoreSource(risk.getScoreSource());
             }
         } catch (Exception e) {
             log.debug("No risk score for {}: {}", iso3, e.getMessage());

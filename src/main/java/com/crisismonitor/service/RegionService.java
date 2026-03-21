@@ -100,13 +100,13 @@ public class RegionService {
                     ? null : topCountries.get(0).getDrivers().get(0);
         }
 
-        // War override: if majority of top-5 countries list Conflict as their #1 driver,
-        // the region is at war. Conflict must be the dominant driver.
+        // War override: if 2+ top-5 countries list Conflict as their #1 driver,
+        // the region has active armed conflict. Conflict must be the dominant driver.
         long conflictFirstCount = top5.stream()
                 .filter(c -> c.getDrivers() != null && !c.getDrivers().isEmpty()
                         && "Conflict".equals(c.getDrivers().get(0)))
                 .count();
-        if (conflictFirstCount >= 3) {
+        if (conflictFirstCount >= 2) {
             return "Conflict";
         }
 

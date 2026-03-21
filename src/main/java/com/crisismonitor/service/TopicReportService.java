@@ -41,6 +41,14 @@ public class TopicReportService {
     private final UNHCRService unhcrService;
     private final CacheWarmupService cacheWarmupService;
     private final ObjectMapper objectMapper;
+    private final RiskScoreService riskScoreService;
+    private final NowcastService nowcastService;
+    private final HungerMapService hungerMapService;
+    private final CurrencyService currencyService;
+    private final WHODiseaseOutbreakService whoDiseaseOutbreakService;
+    private final SituationDetectionService situationDetectionService;
+    private final StoryService storyService;
+    private final FAOFoodPriceService faoFoodPriceService;
 
     @Value("${anthropic.api.key:}")
     private String apiKey;
@@ -53,6 +61,9 @@ public class TopicReportService {
             .build();
 
     private final WebClient bingClient = WebClient.builder().build();
+
+    // Temporary storage for narrative between generateKeyDevelopments and generateReport
+    private volatile String lastNarrative;
 
     // Topic to search keywords mapping
     private static final Map<String, List<String>> TOPIC_KEYWORDS = new LinkedHashMap<>();
@@ -85,6 +96,73 @@ public class TopicReportService {
             "economic crisis", "inflation", "currency", "unemployment", "poverty",
             "fuel shortage", "sanctions", "financial", "prices"
         ));
+    }
+
+    // Topic-specific analytical prompts for Claude
+    private static final Map<String, String> TOPIC_PROMPTS = new LinkedHashMap<>();
+    static {
+        TOPIC_PROMPTS.put("conflict", """
+            You are a senior conflict analyst at a global intelligence platform.
+            Analyze the data below. Focus on:
+            - Which conflicts are ESCALATING vs de-escalating (use risk scores and GDELT z-scores)
+            - Connections between conflicts in the region (spillover, proxy dynamics)
+            - Read between the lines of news headlines — what do they reveal about trajectory?
+            - Cascade risks: how could one conflict trigger others?
+            Write 3-5 analytical bullets. Be specific with data. Think like an analyst who needs to brief a decision-maker.""");
+
+        TOPIC_PROMPTS.put("food-crisis", """
+            You are a food security analyst with access to proprietary nowcasting data.
+            Analyze the data below. Focus on:
+            - Which countries are on a WORSENING trajectory (use our 90-day nowcast predictions)
+            - The gap between current food insecurity levels and projected levels
+            - Seasonal factors (lean season, harvest, monsoon) that could accelerate deterioration
+            - Cross-cutting risks: conflict-driven hunger, climate-driven crop failure, economic-driven food inflation
+            Write 3-5 analytical bullets. Cite the nowcast predictions as evidence — this is unique data no one else has.""");
+
+        TOPIC_PROMPTS.put("climate", """
+            You are a climate-humanitarian analyst.
+            Analyze the data below. Focus on:
+            - Drought vs flood risk balance across the region
+            - Impact on food production and vulnerable populations
+            - Compounding dynamics: climate + conflict = accelerated displacement
+            - Seasonal outlook: what's coming in the next 30-90 days?
+            Write 3-5 analytical bullets. Use precipitation anomaly % and NDVI data as evidence.""");
+
+        TOPIC_PROMPTS.put("health", """
+            You are an epidemiological intelligence analyst.
+            Analyze the data below. Focus on:
+            - Active outbreak trajectory: expanding, contained, or unclear?
+            - Cross-border transmission risk
+            - Healthcare system capacity in affected countries
+            - Interaction with conflict/displacement (disease in camp settings)
+            Write 3-5 analytical bullets. Reference specific outbreaks and affected countries.""");
+
+        TOPIC_PROMPTS.put("economic", """
+            You are a macro-economic crisis analyst focused on humanitarian impact.
+            Analyze the data below. Focus on:
+            - Currency devaluation velocity and its impact on food imports
+            - Which countries are in economic free-fall vs gradual decline?
+            - Sanctions, trade disruptions, or structural factors driving the crisis
+            - Cascading effects: currency collapse → food inflation → food insecurity
+            Write 3-5 analytical bullets. Cite currency change percentages and economic risk scores.""");
+
+        TOPIC_PROMPTS.put("political", """
+            You are a political risk analyst.
+            Analyze the data below. Focus on:
+            - Governance instability: coup risk, election violence, regime fragility
+            - Political factors driving humanitarian crises
+            - Sanctions, diplomatic isolation, or international pressure
+            - How political dynamics interact with conflict, food security, and displacement
+            Write 3-5 analytical bullets. Ground analysis in specific events and countries.""");
+
+        TOPIC_PROMPTS.put("migration", """
+            You are a humanitarian intelligence analyst specializing in displacement.
+            Analyze the data below. Focus on:
+            - Major displacement stocks and any available flow indicators
+            - Drivers of displacement: conflict, climate, economic
+            - Protection risks for displaced populations
+            - Regional dynamics: cross-border movement patterns
+            Write 3-5 analytical bullets. Cite IDP/refugee numbers where available.""");
     }
 
     // ReliefWeb themes for topic filtering
@@ -233,12 +311,16 @@ public class TopicReportService {
             keywords = Collections.singletonList(topic);
         }
 
-        // Get region countries - log warning if region not found
+        // Get region countries - or single country if ISO3
         List<String> targetCountries;
         if (region != null && !region.isEmpty()) {
             if (REGION_COUNTRIES.containsKey(region)) {
                 targetCountries = REGION_COUNTRIES.get(region);
                 log.info("Region '{}' has {} countries", region, targetCountries.size());
+            } else if (region.length() == 3 && region.equals(region.toLowerCase())) {
+                // Single country ISO3 (e.g., "irn", "sdn")
+                targetCountries = Collections.singletonList(region.toUpperCase());
+                log.info("Single country report: {}", region.toUpperCase());
             } else {
                 log.warn("Unknown region '{}', using global default countries", region);
                 targetCountries = Collections.emptyList();
@@ -295,7 +377,7 @@ public class TopicReportService {
         log.info("Using GDELT keywords for {}: {}", topic, gdeltKeywords);
 
         // Track if we're limiting data
-        int maxReliefWebCountries = 12;  // Increased from 6
+        int maxReliefWebCountries = 5;  // Reduced to avoid timeout
         boolean isDataLimited = false;
 
         // Use ONLY cached GDELT spikes — NEVER make live GDELT API calls from topic reports
@@ -303,9 +385,6 @@ public class TopicReportService {
         try {
             @SuppressWarnings("unchecked")
             List<MediaSpike> cachedSpikes = cacheWarmupService.getFallback("gdeltAllSpikes");
-            if (cachedSpikes == null && cacheWarmupService.isCacheReady("conflict")) {
-                cachedSpikes = gdeltService.getAllConflictSpikes();
-            }
             if (cachedSpikes != null) {
                 for (var spike : cachedSpikes) {
                     String iso3 = spike.getIso3();
@@ -336,61 +415,9 @@ public class TopicReportService {
             log.warn("Error reading cached GDELT data: {}", e.getMessage());
         }
 
-        // Bing News: single fast query for topic + region (always works, <2s)
-        try {
-            String regionLabel = region != null ? region.replace("-", " ") : "";
-            String bingQuery = String.join(" ", keywords.subList(0, Math.min(3, keywords.size()))) + " " + regionLabel;
-            List<BingNewsItem> bingItems = fetchBingNews(bingQuery.trim(), 8);
-            log.info("Bing News for topic report '{}': {} results", bingQuery.trim(), bingItems.size());
-
-            for (BingNewsItem item : bingItems) {
-                allSources.add(new SourceItem(
-                    "Media",
-                    item.title,
-                    item.url,
-                    item.source,
-                    "Recent"
-                ));
-            }
-        } catch (Exception e) {
-            log.warn("Bing News failed for topic report: {}", e.getMessage());
-        }
-
-        // Fetch ReliefWeb reports with correct timeframe
-        for (String iso3 : countriesToSearch.subList(0, Math.min(maxReliefWebCountries, countriesToSearch.size()))) {
-            try {
-                // Pass days parameter to ReliefWeb
-                var reports = reliefWebService.getLatestReports(iso3, 5, days);
-                if (reports != null) {
-                    CountryData cd = countryDataMap.computeIfAbsent(iso3, k -> new CountryData(iso3));
-
-                    for (var r : reports) {
-                        // Check theme OR keyword match
-                        boolean themeMatch = matchesReliefWebTheme(r, topic);
-                        boolean keywordMatch = matchesTopic(r.getTitle(), keywords);
-
-                        if (themeMatch || keywordMatch) {
-                            cd.reportsCount++;
-                            cd.reports.add(r.getTitle());
-
-                            allSources.add(new SourceItem(
-                                "ReliefWeb",
-                                r.getTitle(),
-                                r.getUrl(),
-                                r.getSource(),
-                                r.getDate() != null ? r.getDate() : "Recent"
-                            ));
-                        }
-                    }
-                }
-                // Small delay to avoid rate limiting
-                Thread.sleep(50);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            } catch (Exception e) {
-                log.debug("Error fetching ReliefWeb for {}: {}", iso3, e.getMessage());
-            }
-        }
+        // Sources come from GDELT spikes (already in memory fallback) — NO live API calls
+        // Additional sources populated in buildTopicSpecificContext via risk scores, nowcast, etc.
+        log.info("Sources from GDELT headlines: {}, building report with topic-specific data", allSources.size());
 
         // ========================================
         // LAYER 4: Build Country Matrix (Stock vs Flow)
@@ -488,10 +515,21 @@ public class TopicReportService {
         // Calculate Overall Trend & Coverage Quality
         // ========================================
 
-        // Overall trend: ONLY if we have flow data, otherwise "signal_only"
+        // Overall trend: use flow data if available, fall back to risk scores for high-conflict countries
         String overallTrend;
-        if (!anyFlowDelta) {
+        @SuppressWarnings("unchecked")
+        List<com.crisismonitor.model.RiskScore> trendScores = cacheWarmupService.getFallback("allRiskScores");
+        boolean hasHighConflict = trendScores != null && trendScores.stream()
+            .filter(rs -> countriesToSearch.contains(rs.getIso3()))
+            .anyMatch(rs -> rs.getConflictScore() >= 50);
+        if (!anyFlowDelta && !hasHighConflict) {
             overallTrend = "signal_only";  // Honest: we have signal but no flow data to compute trend
+        } else if (!anyFlowDelta && hasHighConflict) {
+            // No flow data but high conflict — active war, not "signal only"
+            boolean anyCritical = trendScores.stream()
+                .filter(rs -> countriesToSearch.contains(rs.getIso3()))
+                .anyMatch(rs -> rs.getScore() >= 60);
+            overallTrend = anyCritical ? "critical" : "increasing";
         } else {
             int trendingUp = (int) countryMatrix.stream().filter(c -> "increasing".equals(c.getTrend())).count();
             int trendingDown = (int) countryMatrix.stream().filter(c -> "decreasing".equals(c.getTrend())).count();
@@ -539,8 +577,12 @@ public class TopicReportService {
         // LAYER 3: AI Synthesis (Key Developments)
         // ========================================
 
-        List<KeyDevelopment> keyDevelopments = generateKeyDevelopments(topic, region, countryMatrix, allSources);
+        List<KeyDevelopment> keyDevelopments = generateKeyDevelopments(topic, region, countryMatrix, allSources, countriesToSearch);
         report.setKeyDevelopments(keyDevelopments);
+        if (lastNarrative != null && !lastNarrative.isBlank()) {
+            report.setNarrative(lastNarrative);
+            lastNarrative = null;
+        }
 
         // Dedupe and limit sources
         Set<String> seenUrls = new HashSet<>();
@@ -557,48 +599,357 @@ public class TopicReportService {
     }
 
     /**
-     * Generate 3 key development bullets using Claude AI
+     * Build topic-specific context by pulling data from relevant services.
+     */
+    private String buildTopicSpecificContext(String topic, String region, List<String> countries,
+            List<CountryMetrics> countryMatrix, List<SourceItem> sources) {
+
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("Topic: ").append(topic.toUpperCase()).append("\n");
+        ctx.append("Region: ").append(region != null ? region.toUpperCase() : "Global").append("\n");
+        ctx.append("Date: ").append(LocalDate.now()).append("\n\n");
+
+        // Inject verified conflict info for countries in this report
+        Map<String, String> verifiedConflicts = Map.ofEntries(
+            Map.entry("PSE", "Active war: Israeli military operations in Gaza, siege, ground invasion"),
+            Map.entry("IRN", "Active war: US/Israel-Iran military conflict since Feb 2026, Hormuz blockade, ongoing airstrikes"),
+            Map.entry("UKR", "Active war: Russia-Ukraine full-scale invasion since Feb 2022"),
+            Map.entry("SDN", "Civil war: SAF vs RSF, 150K+ estimated dead, widespread displacement"),
+            Map.entry("ISR", "Multi-front conflict: Gaza operations + Iran war"),
+            Map.entry("LBN", "Post-2024 war, fragile ceasefire, border tensions"),
+            Map.entry("MMR", "Nationwide civil war: resistance forces vs military junta"),
+            Map.entry("SYR", "Multi-front civil war, post-Assad transition instability"),
+            Map.entry("YEM", "Houthi conflict + US strikes + Red Sea/Hormuz maritime operations")
+        );
+        boolean hasVerified = false;
+        for (String iso3 : countries) {
+            String info = verifiedConflicts.get(iso3);
+            if (info != null) {
+                if (!hasVerified) {
+                    ctx.append("VERIFIED ARMED CONFLICTS (analyst-confirmed ground truth):\n");
+                    hasVerified = true;
+                }
+                ctx.append("  ").append(com.crisismonitor.config.MonitoredCountries.getName(iso3))
+                   .append(": ").append(info).append("\n");
+            }
+        }
+        if (hasVerified) ctx.append("\n");
+
+        // Load risk scores once (used by multiple topics)
+        @SuppressWarnings("unchecked")
+        List<com.crisismonitor.model.RiskScore> riskScores = cacheWarmupService.getFallback("allRiskScores");
+
+        try {
+            switch (topic) {
+                case "conflict" -> {
+                    // Pull risk scores with conflict detail
+                    // riskScores loaded before switch
+                    if (riskScores != null) {
+                        ctx.append("RISK SCORES (conflict focus):\n");
+                        riskScores.stream()
+                            .filter(rs -> countries.contains(rs.getIso3()))
+                            .sorted((a, b) -> b.getConflictScore() - a.getConflictScore())
+                            .limit(10)
+                            .forEach(rs -> {
+                                ctx.append(String.format("  %s: overall=%d/100 (%s), conflict=%d, food=%d, climate=%d, econ=%d, trend=%s%s\n",
+                                    rs.getCountryName(), rs.getScore(), rs.getRiskLevel(),
+                                    rs.getConflictScore(), rs.getFoodSecurityScore(), rs.getClimateScore(), rs.getEconomicScore(),
+                                    rs.getTrendIcon() != null ? rs.getTrendIcon() : "—",
+                                    rs.getGdeltZScore() != null ? String.format(", mediaZ=%.1f", rs.getGdeltZScore()) : ""));
+                                if (rs.getSummary() != null) ctx.append("    AI: ").append(rs.getSummary()).append("\n");
+                            });
+                    }
+
+                    // Active situations (from warmup fallback)
+                    try {
+                        @SuppressWarnings("unchecked")
+                        var sitReport = (SituationDetectionService.SituationReport) cacheWarmupService.getFallback("activeSituations");
+                        if (sitReport != null && sitReport.getSituations() != null) {
+                            ctx.append("\nACTIVE CRISIS SITUATIONS:\n");
+                            sitReport.getSituations().stream().limit(5).forEach(sit ->
+                                ctx.append("  - ").append(sit.getCountryName() != null ? sit.getCountryName() : "").append(": ").append(sit.getSituationLabel() != null ? sit.getSituationLabel() : "").append(" (").append(sit.getSeverity() != null ? sit.getSeverity() : "").append(")\n"));
+                        }
+                    } catch (Exception e) { /* skip */ }
+
+                    // GDELT spikes
+                    @SuppressWarnings("unchecked")
+                    List<MediaSpike> spikes = cacheWarmupService.getFallback("gdeltAllSpikes");
+                    if (spikes != null) {
+                        ctx.append("\nMEDIA CONFLICT SPIKES (GDELT):\n");
+                        spikes.stream()
+                            .filter(s -> countries.contains(s.getIso3()) && s.getZScore() != null && s.getZScore() > 0.5)
+                            .sorted((a, b) -> Double.compare(b.getZScore(), a.getZScore()))
+                            .limit(8)
+                            .forEach(s -> ctx.append(String.format("  %s: z=%.1f, articles7d=%d, spike=%s\n",
+                                s.getIso3(), s.getZScore(), s.getArticlesLast7Days() != null ? s.getArticlesLast7Days() : 0,
+                                s.getSpikeLevel() != null ? s.getSpikeLevel() : "none")));
+                    }
+                }
+
+                case "food-crisis" -> {
+                    // FAO Food Price Index (global context)
+                    try {
+                        var faoLatest = faoFoodPriceService.getLatest();
+                        if (faoLatest != null) {
+                            ctx.append("GLOBAL FOOD PRICES (FAO FFPI, base 2014-2016=100):\n");
+                            ctx.append(String.format("  Food Index: %.1f", faoLatest.getFoodIndex()));
+                            if (faoLatest.getFoodYoY() != null) ctx.append(String.format(" (YoY: %+.1f%%)", faoLatest.getFoodYoY()));
+                            ctx.append(String.format("\n  Cereals: %.1f", faoLatest.getCerealsIndex()));
+                            if (faoLatest.getCerealsYoY() != null) ctx.append(String.format(" (YoY: %+.1f%%)", faoLatest.getCerealsYoY()));
+                            ctx.append(String.format("\n  Oils: %.1f, Dairy: %.1f, Meat: %.1f, Sugar: %.1f\n",
+                                faoLatest.getOilsIndex(), faoLatest.getDairyIndex(), faoLatest.getMeatIndex(), faoLatest.getSugarIndex()));
+                            ctx.append("  Date: ").append(faoLatest.getDate()).append("\n\n");
+                        }
+                    } catch (Exception e) { /* skip */ }
+
+                    // Nowcast predictions (our unique data)
+                    var nowcasts = nowcastService.getNowcastAll();
+                    if (nowcasts != null && !nowcasts.isEmpty()) {
+                        ctx.append("FOOD INSECURITY NOWCAST (90-day predictions, proprietary model):\n");
+                        nowcasts.stream()
+                            .filter(n -> countries.isEmpty() || countries.contains(n.getIso3()))
+                            .sorted((a, b) -> Double.compare(
+                                b.getPredictedChange90d() != null ? b.getPredictedChange90d() : 0,
+                                a.getPredictedChange90d() != null ? a.getPredictedChange90d() : 0))
+                            .limit(12)
+                            .forEach(n -> ctx.append(String.format("  %s: current=%.1f%%, predicted90d=%+.1f%%, projected=%.1f%%, trend=%s, FCS=%.1f%%, rCSI=%s\n",
+                                n.getCountryName(),
+                                n.getCurrentProxy() != null ? n.getCurrentProxy() : 0,
+                                n.getPredictedChange90d() != null ? n.getPredictedChange90d() : 0,
+                                n.getProjectedProxy() != null ? n.getProjectedProxy() : 0,
+                                n.getTrend() != null ? n.getTrend() : "—",
+                                n.getFcsPrevalence() != null ? n.getFcsPrevalence() : 0,
+                                n.getRcsiPrevalence() != null ? String.format("%.1f%%", n.getRcsiPrevalence()) : "N/A")));
+                    }
+
+                    // Risk scores food component
+                    // riskScores loaded before switch
+                    if (riskScores != null) {
+                        ctx.append("\nFOOD SECURITY RISK SCORES:\n");
+                        riskScores.stream()
+                            .filter(rs -> countries.contains(rs.getIso3()) && rs.getFoodSecurityScore() > 30)
+                            .sorted((a, b) -> b.getFoodSecurityScore() - a.getFoodSecurityScore())
+                            .limit(8)
+                            .forEach(rs -> ctx.append(String.format("  %s: food=%d/100, overall=%d (%s)\n",
+                                rs.getCountryName(), rs.getFoodSecurityScore(), rs.getScore(), rs.getRiskLevel())));
+                    }
+                }
+
+                case "climate" -> {
+                    // Risk scores climate component
+                    // riskScores loaded before switch
+                    if (riskScores != null) {
+                        ctx.append("CLIMATE RISK SCORES:\n");
+                        riskScores.stream()
+                            .filter(rs -> countries.contains(rs.getIso3()) && rs.getClimateScore() > 15)
+                            .sorted((a, b) -> b.getClimateScore() - a.getClimateScore())
+                            .limit(10)
+                            .forEach(rs -> {
+                                ctx.append(String.format("  %s: climate=%d/100", rs.getCountryName(), rs.getClimateScore()));
+                                if (rs.getPrecipitationAnomaly() != null)
+                                    ctx.append(String.format(", precipAnomaly=%+.0f%%", rs.getPrecipitationAnomaly()));
+                                ctx.append(String.format(", overall=%d (%s)\n", rs.getScore(), rs.getRiskLevel()));
+                            });
+                    }
+                }
+
+                case "health" -> {
+                    // WHO outbreaks (from warmup fallback)
+                    try {
+                        @SuppressWarnings("unchecked")
+                        var outbreaks = (List<WHODiseaseOutbreakService.DiseaseOutbreak>) cacheWarmupService.getFallback("whoDiseaseOutbreaks");
+                        if (outbreaks != null) {
+                            ctx.append("WHO DISEASE OUTBREAKS:\n");
+                            outbreaks.stream().limit(10).forEach(o ->
+                                ctx.append(String.format("  - %s (%s) — %s\n",
+                                    o.getTitle() != null ? o.getTitle() : "Unknown",
+                                    o.getCountryIso3() != null ? o.getCountryIso3() : "Global",
+                                    o.getTimeAgo() != null ? o.getTimeAgo() : "recent")));
+                        }
+                    } catch (Exception e) { /* skip */ }
+                }
+
+                case "economic" -> {
+                    // FAO Food Price Index (global food inflation context)
+                    try {
+                        var faoLatest = faoFoodPriceService.getLatest();
+                        if (faoLatest != null) {
+                            ctx.append("GLOBAL FOOD PRICES (FAO FFPI):\n");
+                            ctx.append(String.format("  Food Index: %.1f", faoLatest.getFoodIndex()));
+                            if (faoLatest.getFoodYoY() != null) ctx.append(String.format(" (YoY: %+.1f%%)", faoLatest.getFoodYoY()));
+                            ctx.append(String.format("\n  Cereals: %.1f, Oils: %.1f (%s)\n\n",
+                                faoLatest.getCerealsIndex(), faoLatest.getOilsIndex(), faoLatest.getDate()));
+                        }
+                    } catch (Exception e) { /* skip */ }
+
+                    // Risk scores economic component
+                    // riskScores loaded before switch
+                    if (riskScores != null) {
+                        ctx.append("ECONOMIC RISK SCORES:\n");
+                        riskScores.stream()
+                            .filter(rs -> countries.contains(rs.getIso3()) && rs.getEconomicScore() > 15)
+                            .sorted((a, b) -> b.getEconomicScore() - a.getEconomicScore())
+                            .limit(10)
+                            .forEach(rs -> {
+                                ctx.append(String.format("  %s: econ=%d/100", rs.getCountryName(), rs.getEconomicScore()));
+                                if (rs.getCurrencyChange30d() != null)
+                                    ctx.append(String.format(", currency30d=%+.1f%%", rs.getCurrencyChange30d()));
+                                ctx.append(String.format(", overall=%d (%s)\n", rs.getScore(), rs.getRiskLevel()));
+                            });
+                    }
+                }
+
+                case "political" -> {
+                    // Political: risk scores + active situations
+                    if (riskScores != null) {
+                        ctx.append("RISK SCORES (political context):\n");
+                        riskScores.stream()
+                            .filter(rs -> countries.contains(rs.getIso3()))
+                            .sorted((a, b) -> b.getScore() - a.getScore())
+                            .limit(10)
+                            .forEach(rs -> ctx.append(String.format("  %s: overall=%d/100 (%s), conflict=%d, food=%d, econ=%d, trend=%s\n",
+                                rs.getCountryName(), rs.getScore(), rs.getRiskLevel(),
+                                rs.getConflictScore(), rs.getFoodSecurityScore(), rs.getEconomicScore(),
+                                rs.getTrendIcon() != null ? rs.getTrendIcon() : "—")));
+                    }
+                    // Active situations
+                    try {
+                        @SuppressWarnings("unchecked")
+                        var sitReport = (SituationDetectionService.SituationReport) cacheWarmupService.getFallback("activeSituations");
+                        if (sitReport != null && sitReport.getSituations() != null) {
+                            ctx.append("\nACTIVE SITUATIONS:\n");
+                            sitReport.getSituations().stream()
+                                .filter(s -> countries.contains(s.getIso3()))
+                                .limit(5)
+                                .forEach(sit -> ctx.append("  - ").append(sit.getCountryName() != null ? sit.getCountryName() : "").append(": ").append(sit.getSituationLabel() != null ? sit.getSituationLabel() : "").append(" (").append(sit.getSeverity() != null ? sit.getSeverity() : "").append(")\n"));
+                        }
+                    } catch (Exception e) { /* skip */ }
+                }
+
+                case "migration" -> {
+                    // Migration: IDPs + refugees (the original template makes sense here)
+                    ctx.append("DISPLACEMENT DATA:\n");
+                    for (CountryMetrics cm : countryMatrix.stream().limit(10).collect(Collectors.toList())) {
+                        ctx.append(String.format("  %s: stock=%s, signal=%d\n",
+                            cm.getCountry(), cm.getStockData(), cm.getSignalCount()));
+                    }
+                }
+
+                default -> {
+                    // Generic fallback with risk scores
+                    if (riskScores != null) {
+                        ctx.append("RISK SCORES:\n");
+                        riskScores.stream()
+                            .filter(rs -> countries.contains(rs.getIso3()))
+                            .sorted((a, b) -> b.getScore() - a.getScore())
+                            .limit(8)
+                            .forEach(rs -> ctx.append(String.format("  %s: score=%d (%s)\n",
+                                rs.getCountryName(), rs.getScore(), rs.getRiskLevel())));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Error building topic context for {}: {}", topic, e.getMessage());
+        }
+
+        // Add real news headlines from cached RSS + ReliefWeb
+        @SuppressWarnings("unchecked")
+        List<Map<String, String>> cachedHeadlines = cacheWarmupService.getFallback("newsHeadlines");
+        if (cachedHeadlines != null && !cachedHeadlines.isEmpty()) {
+            // Filter by region — for single-country reports, also match by country name in title
+            String regionUpper = region != null ? region.toUpperCase().replace("-", "_").replace(" ", "_") : "";
+            boolean isSingleCountry = countries.size() == 1 && region != null && region.length() == 3;
+            Set<String> countryNames = isSingleCountry
+                ? countries.stream()
+                    .map(iso -> com.crisismonitor.config.MonitoredCountries.getName(iso))
+                    .filter(Objects::nonNull)
+                    .map(String::toLowerCase)
+                    .collect(Collectors.toSet())
+                : Collections.emptySet();
+
+            List<Map<String, String>> regionNews = cachedHeadlines.stream()
+                .filter(h -> {
+                    String hRegion = h.getOrDefault("region", "");
+                    String hIso3 = h.getOrDefault("iso3", "");
+                    String hTitle = h.getOrDefault("title", "").toLowerCase();
+                    // Match by: region code, iso3, or country name in headline title
+                    return regionUpper.isEmpty()
+                        || hRegion.toUpperCase().contains(regionUpper.replace("_", ""))
+                        || countries.stream().anyMatch(c -> c.equals(hIso3))
+                        || countryNames.stream().anyMatch(hTitle::contains);
+                })
+                .collect(Collectors.toList());
+
+            // Further filter by topic keywords
+            List<String> topicKw = TOPIC_KEYWORDS.getOrDefault(topic, Collections.emptyList());
+            List<Map<String, String>> topicNews = regionNews.stream()
+                .filter(h -> {
+                    String title = h.getOrDefault("title", "").toLowerCase();
+                    return topicKw.isEmpty() || topicKw.stream().anyMatch(kw -> title.contains(kw.toLowerCase()));
+                })
+                .collect(Collectors.toList());
+
+            // Use topic-filtered if enough, otherwise use region-filtered
+            List<Map<String, String>> newsToUse = topicNews.size() >= 3 ? topicNews : regionNews;
+
+            ctx.append("\nREAL-TIME NEWS (RSS + ReliefWeb):\n");
+            newsToUse.stream().limit(12).forEach(h ->
+                ctx.append("  [").append(h.getOrDefault("type", "Media")).append("] ")
+                   .append(h.getOrDefault("title", "")).append(" (")
+                   .append(h.getOrDefault("source", "")).append(")\n"));
+
+            // Also add these as report sources
+            newsToUse.stream().limit(15).forEach(h ->
+                sources.add(new SourceItem(
+                    h.getOrDefault("type", "Media"),
+                    h.getOrDefault("title", ""),
+                    h.get("url"),
+                    h.getOrDefault("source", ""),
+                    h.getOrDefault("date", "Recent")
+                )));
+
+            log.info("Added {} news headlines to context ({} topic-matched, {} region-matched)",
+                newsToUse.size(), topicNews.size(), regionNews.size());
+        } else {
+            ctx.append("\nNEWS: No cached headlines available yet (warmup in progress)\n");
+        }
+
+        return ctx.toString();
+    }
+
+    /**
+     * Generate key development bullets using Claude AI with topic-specific analysis
      */
     private List<KeyDevelopment> generateKeyDevelopments(String topic, String region,
-            List<CountryMetrics> countryMatrix, List<SourceItem> sources) {
+            List<CountryMetrics> countryMatrix, List<SourceItem> sources,
+            List<String> countries) {
 
         List<KeyDevelopment> developments = new ArrayList<>();
 
-        // Build context for Claude
-        StringBuilder context = new StringBuilder();
-        context.append("Topic: ").append(topic).append("\n");
-        context.append("Region: ").append(region != null ? region.toUpperCase() : "Global").append("\n\n");
+        // Build topic-specific context
+        String context = buildTopicSpecificContext(topic, region, countries, countryMatrix, sources);
 
-        context.append("Country data (NOTE: Stock=latest snapshot, NOT movement data. Flow Δ=n/a means no trend data):\n");
-        for (CountryMetrics cm : countryMatrix.stream().limit(5).collect(Collectors.toList())) {
-            context.append(String.format("- %s: signal=%d (media+reports), stock=%s, flowDelta=%s\n",
-                cm.getCountry(), cm.getSignalCount(), cm.getStockData(), cm.getFlowDelta()));
-            if (cm.getTopHeadline() != null) {
-                context.append("  Headline: ").append(cm.getTopHeadline()).append("\n");
-            }
-        }
+        // Call Claude with topic-specific prompt
+        String synthesis = callClaudeForSynthesis(topic, context);
 
-        context.append("\nTop headlines:\n");
-        for (SourceItem s : sources.stream().filter(s -> "GDELT".equals(s.getType())).limit(5).collect(Collectors.toList())) {
-            context.append("- ").append(s.getTitle()).append("\n");
-        }
-
-        context.append("\nOperational reports:\n");
-        for (SourceItem s : sources.stream().filter(s -> "ReliefWeb".equals(s.getType())).limit(3).collect(Collectors.toList())) {
-            context.append("- ").append(s.getTitle()).append("\n");
-        }
-
-        // Call Claude for synthesis
-        String synthesis = callClaudeForSynthesis(topic, context.toString());
+        String narrative = null;
 
         if (synthesis != null && !synthesis.isEmpty()) {
-            // Parse Claude response into bullets
-            String[] lines = synthesis.split("\n");
+            // Split bullets and narrative
+            String bulletsPart = synthesis;
+            if (synthesis.contains("---NARRATIVE---")) {
+                int idx = synthesis.indexOf("---NARRATIVE---");
+                bulletsPart = synthesis.substring(0, idx);
+                narrative = synthesis.substring(idx + "---NARRATIVE---".length()).trim();
+            }
+
+            // Parse bullets
+            String[] lines = bulletsPart.split("\n");
             for (String line : lines) {
                 line = line.trim();
                 if (line.startsWith("-") || line.startsWith("•") || line.startsWith("1") || line.startsWith("2") || line.startsWith("3")) {
-                    line = line.replaceFirst("^[-•123]\\.?\\s*", "").trim();
-                    if (!line.isEmpty() && developments.size() < 3) {
+                    line = line.replaceFirst("^[-•12345]\\.?\\s*", "").trim();
+                    if (!line.isEmpty() && developments.size() < 5) {
                         KeyDevelopment kd = new KeyDevelopment();
                         kd.setBullet(line);
 
@@ -642,6 +993,8 @@ public class TopicReportService {
             }
         }
 
+        // Store narrative for caller to retrieve
+        this.lastNarrative = narrative;
         return developments;
     }
 
@@ -654,43 +1007,54 @@ public class TopicReportService {
             return null;
         }
 
-        String prompt = String.format("""
-            You are a humanitarian intelligence analyst writing a SIGNAL-ONLY report (limited evidence period).
+        // Use topic-specific analytical prompt
+        String analyticalLens = TOPIC_PROMPTS.getOrDefault(topic,
+            "You are a humanitarian intelligence analyst. Analyze the data below and write 3-5 key analytical bullets.");
 
-            CONTEXT: This is a %s report. Flow delta (movement change) is NOT AVAILABLE, so you cannot claim trends.
+        // Sanitize context: remove characters that could break JSON
+        String safeContext = context.replace("\\", "\\\\").replace("\"", "'").replace("\t", " ");
+        // Truncate if too long (avoid token limits)
+        if (safeContext.length() > 6000) {
+            safeContext = safeContext.substring(0, 6000) + "\n[...truncated]";
+        }
 
-            YOUR TASK: Write exactly 3 bullets that accurately describe what signal exists.
+        String prompt = analyticalLens + """
 
-            FORMAT:
-            - Bullet 1: What media signal shows (topic + country + source count)
-            - Bullet 2: Operational reporting status (count + specificity note)
-            - Bullet 3: Flow/trend status (explain n/a, note stock data if relevant)
+            APPROACH:
+            - You have the DATA below from our real-time monitoring platform
+            - You ALSO have your own knowledge of world events, geopolitics, and humanitarian context
+            - USE BOTH: combine platform data with your knowledge to produce deep analysis
+            - When news headlines reference events (wars, blockades, elections), you know the context — USE IT
 
-            STRICT RULES:
+            FORMAT — Write in TWO sections:
+
+            SECTION 1 - KEY FINDINGS (3-5 bullets):
             - Start each bullet with "-"
-            - Keep under 90 characters per bullet
-            - Cite exact counts: "(2 headlines)", "(1 report)"
-            - NO speculation, NO trend claims without flow data
-            - If limited: say "Limited signal" not "No data"
-            - Sound like an analyst, not an apology
+            - Each bullet 100-200 characters — analytical depth, not generic
+            - Cite specific numbers from the data
 
-            EXAMPLES OF GOOD BULLETS:
-            - "Media signal concentrated on Haiti TPS legal status (2 headlines)"
-            - "Operational reporting limited for LAC migration this period (1 ReliefWeb)"
-            - "Flow data unavailable; trend not computed. Stock: 1.4M IDPs (DTM latest)"
+            SECTION 2 - ANALYTICAL NARRATIVE:
+            Write a 250-300 word analytical narrative that:
+            - Synthesizes all data points into a coherent picture
+            - Explains WHY things are happening, not just what
+            - Connects dots between countries and indicators
+            - Uses your geopolitical knowledge to provide context
+            - Identifies trajectory: where is this heading in the next 30-90 days?
+            - Reads like a senior analyst briefing, not a news summary
+            Start the narrative section with "---NARRATIVE---" on its own line.
 
-            EXAMPLES OF BAD BULLETS (don't write these):
-            - "Insufficient evidence base for analysis" (too negative)
-            - "Migration flows appear to be decreasing" (speculation without flow data)
+            RULES:
+            - Be bold in analysis but grounded in evidence
+            - NO generic filler like "the situation remains concerning" — be SPECIFIC about WHY
+            - Cross-reference platform data with your knowledge to reveal hidden patterns
 
             DATA:
-            %s
-            """, topic, context);
+            """ + safeContext;
 
         try {
             Map<String, Object> request = Map.of(
                 "model", model,
-                "max_tokens", 300,
+                "max_tokens", 1200,
                 "messages", List.of(Map.of("role", "user", "content", prompt))
             );
 
@@ -702,14 +1066,18 @@ public class TopicReportService {
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(String.class)
-                .timeout(Duration.ofSeconds(30))
+                .timeout(Duration.ofSeconds(20))
                 .block();
 
             JsonNode root = objectMapper.readTree(response);
             return root.path("content").get(0).path("text").asText();
 
+        } catch (org.springframework.web.reactive.function.client.WebClientResponseException e) {
+            log.warn("Claude synthesis failed: {} — body: {}", e.getMessage(),
+                e.getResponseBodyAsString().substring(0, Math.min(300, e.getResponseBodyAsString().length())));
+            return null;
         } catch (Exception e) {
-            log.debug("Claude synthesis failed: {}", e.getMessage());
+            log.warn("Claude synthesis failed: {}", e.getMessage());
             return null;
         }
     }
@@ -811,6 +1179,7 @@ public class TopicReportService {
         private List<KeyDevelopment> keyDevelopments;
         private List<CountryMetrics> countryMatrix;
         private List<SourceItem> sources;
+        private String narrative;  // 250-300 word analytical narrative from Claude
     }
 
     @Data

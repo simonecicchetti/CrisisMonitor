@@ -296,4 +296,50 @@ public class HungerMapService {
             return Collections.emptyList();
         }
     }
+
+    /**
+     * Fetch food security metrics for N days ago (for bootstrapping nowcast history).
+     */
+    public List<FoodSecurityMetrics> getFoodSecurityMetricsForDaysAgo(int daysAgo) {
+        try {
+            JsonNode response = hungerMapClient.get()
+                    .uri("/v1/foodsecurity/country?days_ago=" + daysAgo)
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block();
+
+            if (response == null || !response.has("body")) {
+                return Collections.emptyList();
+            }
+
+            JsonNode countries = response.get("body").get("countries");
+            List<FoodSecurityMetrics> result = new ArrayList<>();
+
+            for (JsonNode node : countries) {
+                JsonNode countryNode = node.get("country");
+                JsonNode metricsNode = node.get("metrics");
+
+                FoodSecurityMetrics.FoodSecurityMetricsBuilder builder = FoodSecurityMetrics.builder()
+                        .iso3(countryNode.get("iso3").asText())
+                        .name(countryNode.get("name").asText());
+
+                if (metricsNode.has("fcs")) {
+                    JsonNode fcs = metricsNode.get("fcs");
+                    if (fcs.has("prevalence")) builder.fcsPrevalence(fcs.get("prevalence").asDouble());
+                    if (fcs.has("people")) builder.fcsPeople(fcs.get("people").asLong());
+                }
+                if (metricsNode.has("rcsi")) {
+                    JsonNode rcsi = metricsNode.get("rcsi");
+                    if (rcsi.has("prevalence")) builder.rcsiPrevalence(rcsi.get("prevalence").asDouble());
+                    if (rcsi.has("people")) builder.rcsiPeople(rcsi.get("people").asLong());
+                }
+
+                result.add(builder.build());
+            }
+            return result;
+        } catch (Exception e) {
+            log.debug("Error fetching food security for days_ago={}: {}", daysAgo, e.getMessage());
+            return Collections.emptyList();
+        }
+    }
 }
