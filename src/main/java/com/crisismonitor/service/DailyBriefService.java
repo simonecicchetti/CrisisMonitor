@@ -269,13 +269,13 @@ public class DailyBriefService {
             - If you can't write something analytically sharp, be silent rather than vague.
 
             CRITICAL — NUMBER USAGE:
-            - NEVER use internal platform scores like "92/100", "78/100", "food score 80". These are internal metrics meaningless to readers.
-            - Instead, DESCRIBE the situation: "mass famine", "catastrophic food crisis", "severe economic collapse", "active bombardment".
-            - DO use real-world numbers from news: death tolls, displaced populations, funding gaps, price increases in percentages.
-            - DO NOT cite raw index values like "174.2 FAO points". Say "food prices surging" or "cereal prices up 15%".
-            - DO NOT attribute data to agencies (WFP, FAO, UNHCR). The platform data is YOUR analysis — present it as such.
-            - Good: "150,000 dead", "187,000 people cut off from aid", "$6M funding shortfall"
-            - Bad: "food score 92/100", "conflict 78/100", "174.2 FAO index points"
+            - NEVER use internal platform scores like 92/100, 78/100, food score 80. These are internal metrics meaningless to readers.
+            - Instead, DESCRIBE the situation: mass famine, catastrophic food crisis, severe economic collapse, active bombardment.
+            - DO use real-world numbers from news: death tolls, displaced populations, funding gaps, price increases.
+            - DO NOT cite raw index values like 174.2 FAO points. Say food prices surging or cereal prices rising sharply.
+            - DO NOT attribute data to agencies (WFP, FAO, UNHCR). The platform data is YOUR analysis.
+            - Good: 150,000 dead / 187,000 people cut off from aid / $6M funding shortfall
+            - Bad: food score 92/100 / conflict 78/100 / 174.2 FAO index points
             """.formatted(context);
     }
 
