@@ -248,15 +248,15 @@ public class DailyBriefService {
             - Countries at war ARE at war. Not "showing elevated indicators."
 
             PLATFORM DATA:
-            %s
+            """ + context + """
 
             RESPOND IN EXACTLY THIS JSON FORMAT (no markdown, no backticks):
             {
-              "headline": "<12-16 word analytical thesis about today's global risk picture — declarative, sharp, no clichés>",
-              "paragraph1": "<80-110 words: what is happening RIGHT NOW. Name countries, describe situations concretely. Open with the strongest fact.>",
-              "paragraph2": "<80-110 words: SO WHAT — what this means for humanitarian operations. Connect dots between crises. One forward-looking sentence about what breaks next.>",
+              "headline": "<12-16 word analytical thesis about today's global risk picture>",
+              "paragraph1": "<80-110 words: what is happening RIGHT NOW. Name countries, describe situations concretely.>",
+              "paragraph2": "<80-110 words: SO WHAT for humanitarian operations. Connect dots between crises.>",
               "watch": [
-                {"country": "<country>", "situation": "<6-10 words: specific operational concern, not generic>"},
+                {"country": "<country>", "situation": "<6-10 words: specific operational concern>"},
                 {"country": "<country>", "situation": "<6-10 words: specific operational concern>"},
                 {"country": "<country>", "situation": "<6-10 words: specific operational concern>"}
               ]
@@ -264,19 +264,16 @@ public class DailyBriefService {
 
             QUALITY BAR:
             - Every sentence must carry new information. Zero filler.
-            - No "remains to be seen", "situation continues", "international community must act"
-            - Specific > general. "Sudan's RSF advance on El Fasher" > "conflict in Sudan"
-            - If you can't write something analytically sharp, be silent rather than vague.
+            - No remains to be seen, situation continues, international community must act.
+            - Specific over general. Sudan RSF advance on El Fasher over conflict in Sudan.
 
             CRITICAL — NUMBER USAGE:
-            - NEVER use internal platform scores like 92/100, 78/100, food score 80. These are internal metrics meaningless to readers.
-            - Instead, DESCRIBE the situation: mass famine, catastrophic food crisis, severe economic collapse, active bombardment.
-            - DO use real-world numbers from news: death tolls, displaced populations, funding gaps, price increases.
-            - DO NOT cite raw index values like 174.2 FAO points. Say food prices surging or cereal prices rising sharply.
-            - DO NOT attribute data to agencies (WFP, FAO, UNHCR). The platform data is YOUR analysis.
-            - Good: 150,000 dead / 187,000 people cut off from aid / $6M funding shortfall
-            - Bad: food score 92/100 / conflict 78/100 / 174.2 FAO index points
-            """.formatted(context);
+            - NEVER use internal platform scores like 92/100 or 78/100 or food score 80. These are internal metrics meaningless to readers.
+            - DESCRIBE the situation instead: mass famine, catastrophic food crisis, severe economic collapse, active bombardment.
+            - DO use real-world numbers: death tolls, displaced populations, funding gaps.
+            - DO NOT cite raw index values. Say food prices surging, not 174 FAO points.
+            - DO NOT attribute data to agencies (WFP, FAO, UNHCR). Present as your analysis.
+            """;
     }
 
     /**
