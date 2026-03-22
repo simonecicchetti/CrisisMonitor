@@ -1139,6 +1139,10 @@ public class DailyBriefService {
             }
             if (enCols == null) return null;
             cols = translateColumns(enCols, lang);
+            if (cols == null) {
+                log.warn("Editorial column translation to {} failed, returning English", lang);
+                return enCols;
+            }
         }
 
         if (cols != null) {

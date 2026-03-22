@@ -2110,6 +2110,11 @@ const OverviewManager = {
 
       // Setup clicks on news cards
       this.setupLiveNewsClicks();
+      // Translate headlines if language is not English
+      const lang = window._platformLang || localStorage.getItem('notamy-lang') || 'en';
+      if (lang !== 'en' && typeof window._translateHeadlines === 'function') {
+        setTimeout(() => window._translateHeadlines(lang), 200);
+      }
     } catch (error) {
       console.error('[Overview] Live News error:', error);
       container.innerHTML = '<div class="loading-placeholder">Unable to load news — try refresh</div>';
@@ -2295,9 +2300,9 @@ const OverviewManager = {
       document.getElementById('col-fd-headline').textContent = cols.fieldDispatchHeadline || '';
       document.getElementById('col-fd-body').textContent = cols.fieldDispatchBody || '';
       container.style.display = 'block';
-      console.log('[Overview] Editorial columns loaded');
+      console.log('[Overview] Editorial columns loaded [' + (cols.language || 'en') + ']');
     } catch (error) {
-      console.debug('[Overview] Editorial columns not available:', error.message);
+      console.warn('[Overview] Editorial columns error:', error.message);
     }
   },
 
