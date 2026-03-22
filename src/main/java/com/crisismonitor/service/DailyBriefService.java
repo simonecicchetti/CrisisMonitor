@@ -468,6 +468,7 @@ public class DailyBriefService {
 
     /**
      * Get today's brief for a language. Returns null if not yet generated.
+     * If the requested language doesn't exist but English does, translates on the fly.
      */
     public DailyBrief getTodayBrief(String language) {
         String lang = resolveLanguage(language);
@@ -476,12 +477,20 @@ public class DailyBriefService {
         if (data != null) {
             return objectMapper.convertValue(data, DailyBrief.class);
         }
-        // English fallback: if requested language doesn't exist, try English
+        // Translate from English on the fly if English brief exists
         if (!"en".equals(lang)) {
             String enDocId = LocalDate.now() + "_en";
             data = firestoreService.getDocument("dailyBriefs", enDocId);
             if (data != null) {
-                return objectMapper.convertValue(data, DailyBrief.class);
+                DailyBrief enBrief = objectMapper.convertValue(data, DailyBrief.class);
+                log.info("Translating Daily Brief on the fly: en → {}", lang);
+                DailyBrief translated = translateBrief(enBrief, lang);
+                if (translated != null) {
+                    saveBrief(translated, docId);
+                    return translated;
+                }
+                log.warn("Translation to {} failed, returning English fallback", lang);
+                return enBrief;
             }
         }
         return null;

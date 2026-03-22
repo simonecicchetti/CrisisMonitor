@@ -3304,15 +3304,21 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .content-section {
-  display: none;
+  display: none !important;
   opacity: 0;
   transform: translateY(10px);
+  overflow: hidden;
+  height: 0;
+  pointer-events: none;
 }
 
 .content-section.active {
-  display: block;
+  display: block !important;
   opacity: 1;
   transform: translateY(0);
+  overflow: visible;
+  height: auto;
+  pointer-events: auto;
   animation: pageSlideIn 0.3s ease-out;
 }
 
@@ -3976,6 +3982,30 @@ h1, h2, h3, h4, h5, h6 {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: var(--space-lg);
+}
+
+/* ============================================
+   NOWCAST LAYOUT (Brief + Table side by side)
+   ============================================ */
+.nowcast-layout {
+  display: grid;
+  grid-template-columns: 35% 1fr;
+  gap: var(--space-md);
+  align-items: start;
+}
+
+.nowcast-brief-panel {
+  position: sticky;
+  top: var(--space-md);
+}
+
+.nowcast-table-panel {
+  min-width: 0;
+}
+
+.nowcast-table-panel .card-body {
+  max-height: 70vh;
+  overflow-y: auto;
 }
 
 /* ============================================
@@ -5900,6 +5930,18 @@ h1, h2, h3, h4, h5, h6 {
 
   .countries-layout {
     grid-template-columns: 1fr;
+  }
+
+  .nowcast-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .nowcast-brief-panel {
+    position: static;
+  }
+
+  .nowcast-table-panel .card-body {
+    max-height: none;
   }
 
   .countries-decision-layout {

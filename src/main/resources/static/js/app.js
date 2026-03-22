@@ -2199,30 +2199,39 @@ const OverviewManager = {
     if (!container) return;
 
     const briefLang = lang || window._platformLang || localStorage.getItem('notamy-lang') || 'en';
+    console.log('[Overview] Loading Daily Brief, lang=' + briefLang);
     try {
       const response = await fetch('/api/daily-brief?lang=' + briefLang);
-      if (!response.ok) return;
+      if (!response.ok) {
+        console.warn('[Overview] Daily Brief fetch failed: HTTP ' + response.status);
+        return;
+      }
       const brief = await response.json();
+      console.log('[Overview] Daily Brief response:', brief.language || 'unknown', brief.headline ? 'has headline' : 'no headline');
       if (brief.status === 'none' || !brief.headline) {
         // No brief yet — try generating on the fly
         if (!this._briefGenerating) {
           this._briefGenerating = true;
-          console.log('[Overview] No brief found, generating...');
+          console.log('[Overview] No brief found, generating for lang=' + briefLang);
           const genResp = await fetch('/api/daily-brief/generate?lang=' + briefLang, { method: 'POST' });
           this._briefGenerating = false;
           if (genResp.ok) {
             const genBrief = await genResp.json();
             if (genBrief.headline) return this._renderBrief(container, genBrief);
+          } else {
+            console.warn('[Overview] Brief generation failed: HTTP ' + genResp.status);
           }
         }
         return;
       }
+      // Warn if backend returned a different language than requested (fallback)
+      if (brief.language && brief.language !== briefLang) {
+        console.warn('[Overview] Requested lang=' + briefLang + ' but got lang=' + brief.language + ' (translation may be in progress)');
+      }
       this._renderBrief(container, brief);
     } catch (error) {
-      console.debug('[Overview] Daily brief not available:', error.message);
+      console.warn('[Overview] Daily brief error:', error.message);
     }
-
-    // Language is controlled by global selector in top bar
   },
 
   _renderBrief(container, brief) {
