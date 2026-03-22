@@ -23,7 +23,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
     <!-- Custom CSS -->
-    <link rel="stylesheet" th:href="@{/css/style.css(v=96)}"/>
+    <link rel="stylesheet" th:href="@{/css/style.css(v=97)}"/>
 
     <!-- Preconnect for performance -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -69,14 +69,17 @@
                 </svg>
             </button>
             <!-- Global Language Selector -->
-            <select id="global-lang-select" title="Platform language" style="font-size:0.72rem;padding:3px 6px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-secondary);color:var(--text-secondary);cursor:pointer;appearance:none;-webkit-appearance:none;padding-right:16px;background-image:url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%226%22><path d=%22M0 0l5 6 5-6z%22 fill=%22%23888%22/></svg>');background-repeat:no-repeat;background-position:right 4px center;">
-                <option value="en">EN</option>
-                <option value="it">IT</option>
-                <option value="fr">FR</option>
-                <option value="es">ES</option>
-                <option value="zh">ZH</option>
-                <option value="ar">AR</option>
-            </select>
+            <div class="lang-selector-wrap" style="display:flex;align-items:center;gap:4px;">
+                <span style="font-size:0.8rem;line-height:1;" aria-hidden="true">&#127760;</span>
+                <select id="global-lang-select" title="Platform language" class="lang-select">
+                    <option value="en">EN</option>
+                    <option value="it">IT</option>
+                    <option value="fr">FR</option>
+                    <option value="es">ES</option>
+                    <option value="zh">ZH</option>
+                    <option value="ar">AR</option>
+                </select>
+            </div>
             <!-- Auth: Sign In / User Menu -->
             <div id="auth-container" style="display:flex;align-items:center;gap:8px;position:relative;z-index:100;">
                 <button id="auth-login-btn" style="padding:5px 12px;font-size:0.78rem;border-radius:8px;border:1px solid var(--border-color);background:transparent;color:var(--text-primary);cursor:pointer;display:flex;align-items:center;gap:6px;">

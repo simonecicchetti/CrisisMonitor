@@ -10121,6 +10121,42 @@ h1, h2, h3, h4, h5, h6 {
 .flag-count-5 { color: var(--critical, #e74c3c); font-weight: 800; text-shadow: 0 0 4px rgba(231,76,60,0.3); }
 
 /* ==========================================
+   LANGUAGE SELECTOR
+   ========================================== */
+.lang-select {
+    font-size: 0.75rem;
+    padding: 4px 20px 4px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6"><path d="M0 0l5 6 5-6z" fill="%23888"/></svg>');
+    background-repeat: no-repeat;
+    background-position: right 5px center;
+    min-height: 28px;
+}
+
+.lang-select:focus {
+    outline: 1px solid var(--accent-teal);
+    border-color: var(--accent-teal);
+}
+
+@media (max-width: 768px) {
+    .lang-select {
+        font-size: 0.82rem;
+        padding: 8px 24px 8px 10px;
+        min-height: 36px;
+        border-radius: 8px;
+    }
+    .lang-selector-wrap span {
+        font-size: 1rem !important;
+    }
+}
+
+/* ==========================================
    MOBILE BOTTOM NAVIGATION
    ========================================== */
 .mobile-bottom-nav {
