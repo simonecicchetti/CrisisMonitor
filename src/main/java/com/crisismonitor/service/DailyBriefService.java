@@ -47,8 +47,16 @@ public class DailyBriefService {
     @Value("${anthropic.model:claude-sonnet-4-20250514}")
     private String model;
 
+    @Value("${DASHSCOPE_API_KEY:}")
+    private String dashscopeApiKey;
+
     private final WebClient claudeClient = WebClient.builder()
             .baseUrl("https://api.anthropic.com/v1")
+            .codecs(c -> c.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
+            .build();
+
+    private final WebClient qwenClient = WebClient.builder()
+            .baseUrl("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
             .codecs(c -> c.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
             .build();
 
@@ -1137,6 +1145,204 @@ public class DailyBriefService {
 
         } catch (Exception e) {
             log.error("Nowcast brief generation failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    // ==========================================
+    // EDITORIAL COLUMNS — Global Pulse + Field Dispatch
+    // ==========================================
+
+    @Data
+    public static class EditorialColumns {
+        private String globalPulseHeadline;
+        private String globalPulseBody;
+        private String fieldDispatchHeadline;
+        private String fieldDispatchBody;
+        private String language;
+        private String generatedAt;
+    }
+
+    /**
+     * Get or generate the two editorial columns for Overview.
+     */
+    public EditorialColumns getEditorialColumns(String language) {
+        String lang = resolveLanguage(language);
+        String docId = "columns_" + LocalDate.now() + "_" + lang;
+
+        Map<String, Object> cached = firestoreService.getDocument("editorialColumns", docId);
+        if (cached != null) {
+            return objectMapper.convertValue(cached, EditorialColumns.class);
+        }
+
+        // Generate English, translate if needed
+        EditorialColumns cols;
+        if ("en".equals(lang)) {
+            cols = generateColumns();
+        } else {
+            String enDocId = "columns_" + LocalDate.now() + "_en";
+            Map<String, Object> enCached = firestoreService.getDocument("editorialColumns", enDocId);
+            EditorialColumns enCols;
+            if (enCached != null) {
+                enCols = objectMapper.convertValue(enCached, EditorialColumns.class);
+            } else {
+                enCols = generateColumns();
+                if (enCols != null) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> d = objectMapper.convertValue(enCols, Map.class);
+                    d.put("timestamp", System.currentTimeMillis());
+                    firestoreService.saveDocument("editorialColumns", enDocId, d);
+                }
+            }
+            if (enCols == null) return null;
+            cols = translateColumns(enCols, lang);
+        }
+
+        if (cols != null) {
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = objectMapper.convertValue(cols, Map.class);
+                data.put("timestamp", System.currentTimeMillis());
+                firestoreService.saveDocument("editorialColumns", docId, data);
+            } catch (Exception e) { log.error("Failed to save columns: {}", e.getMessage()); }
+        }
+        return cols;
+    }
+
+    private EditorialColumns generateColumns() {
+        if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) return null;
+
+        // Gather media headlines and ReliefWeb reports separately
+        @SuppressWarnings("unchecked")
+        List<Map<String, String>> allHeadlines = cacheWarmupService.getFallback("newsHeadlines");
+        if (allHeadlines == null || allHeadlines.isEmpty()) return null;
+
+        StringBuilder mediaCtx = new StringBuilder("TODAY'S MEDIA HEADLINES:\n");
+        StringBuilder reliefCtx = new StringBuilder("TODAY'S HUMANITARIAN REPORTS:\n");
+
+        for (Map<String, String> h : allHeadlines) {
+            String type = h.getOrDefault("type", "");
+            String title = h.getOrDefault("title", "");
+            String source = h.getOrDefault("source", "");
+            if ("ReliefWeb".equals(type)) {
+                reliefCtx.append("  - ").append(title).append(" (").append(source).append(")\n");
+            } else {
+                mediaCtx.append("  - ").append(title).append(" (").append(source).append(")\n");
+            }
+        }
+
+        // Generate both columns with a single Qwen call
+        String prompt = "You are Notamy News editorial desk. Write TWO analytical columns from the data below.\n\n" +
+            "COLUMN 1 — GLOBAL PULSE (from media headlines):\n" +
+            mediaCtx + "\n" +
+            "COLUMN 2 — FIELD DISPATCH (from humanitarian field reports):\n" +
+            reliefCtx + "\n" +
+            "RESPOND IN JSON (no markdown, no backticks):\n" +
+            "{\n" +
+            "  \"globalPulseHeadline\": \"<8-12 word headline summarizing what global media is focused on today>\",\n" +
+            "  \"globalPulseBody\": \"<80-100 words: synthesis of the media narrative. What story dominates? What are media missing? What pattern emerges?>\",\n" +
+            "  \"fieldDispatchHeadline\": \"<8-12 word headline summarizing field operations today>\",\n" +
+            "  \"fieldDispatchBody\": \"<80-100 words: what humanitarian operations report from the ground. Access issues, displacement, funding gaps, response capacity.>\"\n" +
+            "}\n\n" +
+            "RULES:\n" +
+            "- Global Pulse: analytical media reading, not a news summary. What does media coverage REVEAL about the crisis landscape?\n" +
+            "- Field Dispatch: operational intelligence. What do humanitarians on the ground need to know TODAY?\n" +
+            "- NEVER use internal scores. Describe situations concretely.\n" +
+            "- No agency citations. This is YOUR editorial voice.\n" +
+            "- Dense, analytical, zero filler. Every sentence carries information.";
+
+        try {
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("model", "qwen3.5-plus");
+            request.put("max_tokens", 600);
+            request.put("enable_search", true);
+            request.put("messages", List.of(
+                Map.of("role", "system", "content", "You are a humanitarian intelligence editorial desk. Write sharp analytical prose."),
+                Map.of("role", "user", "content", prompt)
+            ));
+
+            String response = qwenClient.post()
+                    .uri("/chat/completions")
+                    .header("Authorization", "Bearer " + dashscopeApiKey)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(45))
+                    .block();
+
+            JsonNode root = objectMapper.readTree(response);
+            String content = "";
+            if (root.has("choices") && root.path("choices").size() > 0) {
+                content = root.path("choices").path(0).path("message").path("content").asText("");
+            }
+            if (content.isBlank()) return null;
+
+            int js = content.indexOf('{');
+            int je = content.lastIndexOf('}');
+            if (js < 0 || je <= js) return null;
+            JsonNode json = objectMapper.readTree(content.substring(js, je + 1));
+
+            EditorialColumns cols = new EditorialColumns();
+            cols.setGlobalPulseHeadline(json.path("globalPulseHeadline").asText(""));
+            cols.setGlobalPulseBody(json.path("globalPulseBody").asText(""));
+            cols.setFieldDispatchHeadline(json.path("fieldDispatchHeadline").asText(""));
+            cols.setFieldDispatchBody(json.path("fieldDispatchBody").asText(""));
+            cols.setLanguage("en");
+            cols.setGeneratedAt(java.time.Instant.now().toString());
+
+            if (cols.getGlobalPulseHeadline().isBlank()) return null;
+            log.info("Editorial columns generated: {} / {}", cols.getGlobalPulseHeadline(), cols.getFieldDispatchHeadline());
+            return cols;
+
+        } catch (Exception e) {
+            log.error("Editorial columns generation failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private EditorialColumns translateColumns(EditorialColumns en, String targetLang) {
+        String langName = SUPPORTED_LANGUAGES.getOrDefault(targetLang, targetLang);
+        String source = "globalPulseHeadline: " + en.getGlobalPulseHeadline() + "\n" +
+            "globalPulseBody: " + en.getGlobalPulseBody() + "\n" +
+            "fieldDispatchHeadline: " + en.getFieldDispatchHeadline() + "\n" +
+            "fieldDispatchBody: " + en.getFieldDispatchBody();
+
+        String prompt = "Translate this editorial content from English to " + langName + ".\n" +
+            "Keep analytical tone, numbers as-is.\n\n" + source + "\n\n" +
+            "RESPOND IN JSON (no markdown):\n" +
+            "{\"globalPulseHeadline\":\"...\",\"globalPulseBody\":\"...\",\"fieldDispatchHeadline\":\"...\",\"fieldDispatchBody\":\"...\"}";
+
+        try {
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("model", "qwen3.5-plus");
+            request.put("max_tokens", 600);
+            request.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+
+            String response = qwenClient.post()
+                    .uri("/chat/completions")
+                    .header("Authorization", "Bearer " + dashscopeApiKey)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(request).retrieve().bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(30)).block();
+
+            JsonNode root = objectMapper.readTree(response);
+            String content = root.has("choices") && root.path("choices").size() > 0
+                ? root.path("choices").path(0).path("message").path("content").asText("") : "";
+            int js = content.indexOf('{'); int je = content.lastIndexOf('}');
+            if (js < 0 || je <= js) return null;
+            JsonNode json = objectMapper.readTree(content.substring(js, je + 1));
+
+            EditorialColumns cols = new EditorialColumns();
+            cols.setGlobalPulseHeadline(json.path("globalPulseHeadline").asText(""));
+            cols.setGlobalPulseBody(json.path("globalPulseBody").asText(""));
+            cols.setFieldDispatchHeadline(json.path("fieldDispatchHeadline").asText(""));
+            cols.setFieldDispatchBody(json.path("fieldDispatchBody").asText(""));
+            cols.setLanguage(targetLang);
+            cols.setGeneratedAt(java.time.Instant.now().toString());
+            return cols;
+        } catch (Exception e) {
+            log.error("Column translation failed: {}", e.getMessage());
             return null;
         }
     }

@@ -1737,7 +1737,8 @@ const OverviewManager = {
     try {
       await Promise.all([
         this.loadLiveNews(),
-        this.loadDailyBrief()
+        this.loadDailyBrief(),
+        this.loadEditorialColumns()
       ]);
       console.log('[Overview] all blocks loaded');
     } catch (error) {
@@ -2267,6 +2268,28 @@ const OverviewManager = {
 
     container.style.display = 'block';
     console.log('[Overview] Daily Brief loaded [' + (brief.language || 'en') + ']:', brief.headline);
+  },
+
+  async loadEditorialColumns() {
+    const container = document.getElementById('editorial-columns');
+    if (!container) return;
+
+    const lang = window._platformLang || localStorage.getItem('notamy-lang') || 'en';
+    try {
+      const response = await fetch('/api/editorial-columns?lang=' + lang);
+      if (!response.ok) return;
+      const cols = await response.json();
+      if (cols.status === 'none' || !cols.globalPulseHeadline) return;
+
+      document.getElementById('col-gp-headline').textContent = cols.globalPulseHeadline;
+      document.getElementById('col-gp-body').textContent = cols.globalPulseBody || '';
+      document.getElementById('col-fd-headline').textContent = cols.fieldDispatchHeadline || '';
+      document.getElementById('col-fd-body').textContent = cols.fieldDispatchBody || '';
+      container.style.display = 'block';
+      console.log('[Overview] Editorial columns loaded');
+    } catch (error) {
+      console.debug('[Overview] Editorial columns not available:', error.message);
+    }
   },
 
   async _loadDeepDive(country, situation) {

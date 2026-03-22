@@ -23,7 +23,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
     <!-- Custom CSS -->
-    <link rel="stylesheet" th:href="@{/css/style.css(v=93)}"/>
+    <link rel="stylesheet" th:href="@{/css/style.css(v=94)}"/>
 
     <!-- Preconnect for performance -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -210,11 +210,14 @@
                     localStorage.setItem('notamy-lang', lang);
                     window._platformLang = lang;
                     applyTranslations(lang);
-                    // Reload Daily Brief in new language
-                    if (window.OverviewManager && typeof window.OverviewManager.loadDailyBrief === 'function') {
-                        var container = document.getElementById('daily-brief-container');
-                        if (container) container.style.display = 'none';
-                        window.OverviewManager.loadDailyBrief(lang);
+                    // Reload Daily Brief + Editorial Columns in new language
+                    if (window.OverviewManager) {
+                        var briefC = document.getElementById('daily-brief-container');
+                        if (briefC) briefC.style.display = 'none';
+                        var colsC = document.getElementById('editorial-columns');
+                        if (colsC) colsC.style.display = 'none';
+                        if (typeof window.OverviewManager.loadDailyBrief === 'function') window.OverviewManager.loadDailyBrief(lang);
+                        if (typeof window.OverviewManager.loadEditorialColumns === 'function') window.OverviewManager.loadEditorialColumns();
                     }
                 });
             })();
@@ -324,6 +327,23 @@
                 </div>
             </div>
 
+            <!-- Editorial Columns: Global Pulse + Field Dispatch -->
+            <div id="editorial-columns" style="display:none; margin-bottom: var(--space-md);">
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-md);">
+                    <!-- Global Pulse -->
+                    <div class="glass-card" style="padding: 18px 20px; border-top: 2px solid var(--accent-teal);">
+                        <span style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent-teal); font-weight:600;">Global Pulse</span>
+                        <h4 id="col-gp-headline" style="font-size:0.92rem; font-weight:600; line-height:1.4; margin:8px 0 10px; color:var(--text-primary);"></h4>
+                        <p id="col-gp-body" style="font-size:0.82rem; line-height:1.6; color:var(--text-secondary); margin:0;"></p>
+                    </div>
+                    <!-- Field Dispatch -->
+                    <div class="glass-card" style="padding: 18px 20px; border-top: 2px solid #f59e0b;">
+                        <span style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:#f59e0b; font-weight:600;">Field Dispatch</span>
+                        <h4 id="col-fd-headline" style="font-size:0.92rem; font-weight:600; line-height:1.4; margin:8px 0 10px; color:var(--text-primary);"></h4>
+                        <p id="col-fd-body" style="font-size:0.82rem; line-height:1.6; color:var(--text-secondary); margin:0;"></p>
+                    </div>
+                </div>
+            </div>
 
         </section>
 

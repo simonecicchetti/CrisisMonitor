@@ -879,6 +879,13 @@ public class ApiController {
     // DAILY BRIEF
     // ==========================================
 
+    @GetMapping("/editorial-columns")
+    public Object getEditorialColumns(@RequestParam(defaultValue = "en") String lang) {
+        var cols = dailyBriefService.getEditorialColumns(lang);
+        if (cols != null) return cols;
+        return Map.of("status", "none");
+    }
+
     @GetMapping("/daily-brief")
     public Object getDailyBrief(@RequestParam(defaultValue = "en") String lang) {
         var brief = dailyBriefService.getTodayBrief(lang);
