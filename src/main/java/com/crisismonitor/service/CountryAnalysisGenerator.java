@@ -34,6 +34,7 @@ public class CountryAnalysisGenerator {
 
     private final CacheWarmupService cacheWarmupService;
     private final NowcastService nowcastService;
+    private final FAOFoodPriceService faoFoodPriceService;
     private final FirestoreService firestoreService;
     private final ObjectMapper objectMapper;
 
@@ -154,6 +155,33 @@ public class CountryAnalysisGenerator {
                     countrySits.forEach(s -> ctx.append("  - ").append(s.getSituationLabel() != null ? s.getSituationLabel() : "")
                         .append(" (").append(s.getSeverity() != null ? s.getSeverity() : "").append(")\n"));
                 }
+            }
+        } catch (Exception e) { /* skip */ }
+
+        // Verified armed conflicts (single source of truth)
+        String conflictInfo = com.crisismonitor.config.VerifiedConflicts.getDescription(iso3);
+        if (conflictInfo != null) {
+            ctx.append("\nVERIFIED ARMED CONFLICT (analyst-confirmed):\n");
+            ctx.append("  ").append(conflictInfo).append("\n");
+        }
+
+        // FAO food prices (global context)
+        try {
+            var fao = faoFoodPriceService.getLatest();
+            if (fao != null) {
+                ctx.append("\nGLOBAL FOOD PRICES (latest): Food=")
+                   .append(String.format("%.1f", fao.getFoodIndex()))
+                   .append(", Cereals=").append(String.format("%.1f", fao.getCerealsIndex()))
+                   .append("\n");
+            }
+        } catch (Exception e) { /* skip */ }
+
+        // World Bank Severe Food Insecurity
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Double> wbSfi = cacheWarmupService.getFallback("worldBankSFI");
+            if (wbSfi != null && wbSfi.containsKey(iso3)) {
+                ctx.append("Severe food insecurity: ").append(String.format("%.1f", wbSfi.get(iso3))).append("% of population\n");
             }
         } catch (Exception e) { /* skip */ }
 

@@ -48,6 +48,7 @@ public class CacheWarmupService {
     private final DTMService dtmService;
     private final RssService rssService;
     private final WorldBankService worldBankService;
+    private final HungerMapService hungerMapService;
 
     // Track warmup status
     private final AtomicBoolean warmupComplete = new AtomicBoolean(false);
@@ -245,9 +246,32 @@ public class CacheWarmupService {
                 log.info("Warming up food security cache...");
                 var data = fewsNetService.getAllIPCAlerts();
                 memoryFallback.put("fewsAllIPC", data);
+                log.info("FEWS NET IPC warmed: {} entries", data != null ? data.size() : 0);
+
+                // HungerMap live food security metrics (FCS/rCSI)
+                try {
+                    var fcsMetrics = hungerMapService.getFoodSecurityMetrics();
+                    if (fcsMetrics != null) {
+                        memoryFallback.put("foodSecurityMetrics", fcsMetrics);
+                        log.info("HungerMap food security metrics warmed: {} countries", fcsMetrics.size());
+                    }
+                } catch (Exception e) {
+                    log.debug("HungerMap FCS metrics warmup: {}", e.getMessage());
+                }
+
+                // HungerMap severity data
+                try {
+                    var severity = hungerMapService.getSeverityData();
+                    if (severity != null) {
+                        memoryFallback.put("severityData", severity);
+                        log.info("HungerMap severity data warmed: {} entries", severity.size());
+                    }
+                } catch (Exception e) {
+                    log.debug("HungerMap severity warmup: {}", e.getMessage());
+                }
+
                 cacheStatus.put("foodSecurity", true);
                 lastRefresh.put("foodSecurity", LocalDateTime.now());
-                log.info("Food security cache warmed: {} entries", data != null ? data.size() : 0);
             } catch (Exception e) {
                 log.error("Food security warmup failed: {}", e.getMessage());
                 cacheStatus.put("foodSecurity", false);

@@ -223,15 +223,11 @@ public class DailyBriefService {
                    .append(" (").append(h.getOrDefault("source", "")).append(")\n"));
         }
 
-        // Verified conflicts — ground truth
+        // Verified conflicts — single source of truth
         ctx.append("\nVERIFIED ARMED CONFLICTS (analyst-confirmed):\n");
-        ctx.append("  Palestine: Israeli military operations in Gaza, siege, ground invasion\n");
-        ctx.append("  Iran: US/Israel-Iran war since Feb 2026, Hormuz blockade, ongoing airstrikes\n");
-        ctx.append("  Ukraine: Russia full-scale invasion since 2022\n");
-        ctx.append("  Sudan: Civil war SAF vs RSF, 150K+ estimated dead\n");
-        ctx.append("  Myanmar: Nationwide civil war, junta controls ~21% of territory\n");
-        ctx.append("  Yemen: Houthi conflict + US/coalition strikes, Red Sea disruption\n");
-        ctx.append("  Syria: Post-Assad transition instability, multi-faction\n");
+        com.crisismonitor.config.VerifiedConflicts.CONFLICTS.forEach((iso, desc) ->
+            ctx.append("  ").append(com.crisismonitor.config.MonitoredCountries.getName(iso))
+               .append(": ").append(desc).append("\n"));
 
         return ctx.toString();
     }
@@ -577,18 +573,8 @@ public class DailyBriefService {
             }
         }
 
-        // Verified conflicts
-        Map<String, String> conflicts = Map.of(
-            "PSE", "Active war: Israeli military operations in Gaza",
-            "IRN", "Active war: US/Israel-Iran military conflict since Feb 2026",
-            "UKR", "Active war: Russia full-scale invasion since 2022",
-            "SDN", "Civil war: SAF vs RSF, 150K+ dead",
-            "ISR", "Multi-front: Gaza + Iran war",
-            "MMR", "Nationwide civil war: resistance vs junta",
-            "YEM", "Houthi conflict + US strikes + Red Sea disruption",
-            "SYR", "Post-Assad transition instability"
-        );
-        String conflict = conflicts.get(iso3);
+        // Verified conflicts — single source of truth
+        String conflict = com.crisismonitor.config.VerifiedConflicts.getDescription(iso3);
         if (conflict != null) {
             ctx.append("VERIFIED CONFLICT: ").append(conflict).append("\n\n");
         }
@@ -788,17 +774,25 @@ public class DailyBriefService {
                 });
         }
 
-        // News about this country
+        // News about this country — resolve name to ISO3 for proper matching
         @SuppressWarnings("unchecked")
         List<Map<String, String>> headlines = cacheWarmupService.getFallback("newsHeadlines");
         if (headlines != null) {
             String countryLower = country.toLowerCase();
+            // Try to resolve country name to ISO3 for headline matching
+            String resolvedIso3 = com.crisismonitor.config.MonitoredCountries.CRISIS_COUNTRIES.stream()
+                .filter(iso -> {
+                    String name = com.crisismonitor.config.MonitoredCountries.getName(iso);
+                    return name != null && name.equalsIgnoreCase(country);
+                })
+                .findFirst().orElse(null);
+
             var countryNews = headlines.stream()
                 .filter(h -> {
                     String title = h.getOrDefault("title", "").toLowerCase();
                     String hIso3 = h.getOrDefault("iso3", "");
-                    // Match by country name in title OR exact ISO3 match
-                    return title.contains(countryLower) || countryLower.equalsIgnoreCase(hIso3);
+                    return title.contains(countryLower)
+                        || (resolvedIso3 != null && resolvedIso3.equals(hIso3));
                 })
                 .limit(10)
                 .collect(Collectors.toList());

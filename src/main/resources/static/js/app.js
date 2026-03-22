@@ -1988,20 +1988,20 @@ const OverviewManager = {
     if (!container) return;
 
     try {
-      // Try Claude cache first (more accurate)
+      // Try AI cache first (more accurate)
       let situations = [];
       let status = 'OK';
 
-      const claudeResponse = await fetch('/api/situations/claude-cached', { cache: 'no-store' });
-      if (claudeResponse.ok) {
-        const claudeData = await claudeResponse.json();
-        if (claudeData && claudeData.status === 'OK' && claudeData.situations && claudeData.situations.length > 0) {
-          situations = claudeData.situations;
-          console.log('[Overview] Using Claude cached situations:', situations.length);
+      const aiResponse = await fetch('/api/situations/cached', { cache: 'no-store' });
+      if (aiResponse.ok) {
+        const aiData = await aiResponse.json();
+        if (aiData && aiData.status === 'OK' && aiData.situations && aiData.situations.length > 0) {
+          situations = aiData.situations;
+          console.log('[Overview] Using AI cached situations:', situations.length);
         }
       }
 
-      // Fall back to keyword-based if Claude cache empty
+      // Fall back to keyword-based if AI cache empty
       if (situations.length === 0) {
         const response = await fetch('/api/situations/active');
         const result = await response.json();
@@ -3358,7 +3358,7 @@ const AIAnalysisManager = {
 };
 
 // ============================================
-// DEEP ANALYSIS MANAGER - CLAUDE CONTEXTUAL SCORING
+// DEEP ANALYSIS MANAGER - AI CONTEXTUAL SCORING
 // ============================================
 const DeepAnalysisManager = {
   isLoading: false,
@@ -3569,7 +3569,7 @@ const DeepAnalysisManager = {
 };
 
 // ============================================
-// SITUATION DETECTION MANAGER - CLAUDE-NATIVE
+// SITUATION DETECTION MANAGER - AI-NATIVE
 // ============================================
 const SituationDetectionManager = {
   isLoading: false,
@@ -4792,7 +4792,7 @@ const SituationManager = {
   loaded: false,
   data: null,
   currentFilter: 'critical,high', // Default: Critical + High
-  isClaudeData: false, // Track if we're showing Claude data
+  isAIData: false, // Track if we're showing AI data
 
   async init() {
     if (this.loaded && this.data) {
@@ -4804,16 +4804,16 @@ const SituationManager = {
     this.initFilterChips();
 
     try {
-      // Try Claude cached results first (they're more accurate)
-      const claudeResponse = await fetch('/api/situations/claude-cached', { cache: 'no-store' });
-      if (claudeResponse.ok) {
-        const claudeData = await claudeResponse.json();
-        console.log('Claude cached situations:', claudeData);
+      // Try AI cached results first (they're more accurate)
+      const aiResponse = await fetch('/api/situations/cached', { cache: 'no-store' });
+      if (aiResponse.ok) {
+        const aiData = await aiResponse.json();
+        console.log('AI cached situations:', aiData);
 
-        // If Claude has cached results with situations, use them
-        if (claudeData && claudeData.status === 'OK' && claudeData.situations && claudeData.situations.length > 0) {
-          this.data = this.transformClaudeData(claudeData);
-          this.isClaudeData = true;
+        // If AI has cached results with situations, use them
+        if (aiData && aiData.status === 'OK' && aiData.situations && aiData.situations.length > 0) {
+          this.data = this.transformAIData(aiData);
+          this.isAIData = true;
           this.renderAll(this.data);
           this.loaded = true;
           return;
@@ -4838,12 +4838,12 @@ const SituationManager = {
 
       if (data && data.status === 'READY') {
         this.data = data;
-        this.isClaudeData = false;
+        this.isAIData = false;
         this.renderAll(data);
         this.loaded = true;
       } else if (data && data.situations && data.situations.length === 0) {
-        // Show prompt to use Claude detection
-        this.showClaudePrompt();
+        // Show prompt to use AI detection
+        this.showAIPrompt();
       }
     } catch (error) {
       console.error('Failed to load situations:', error);
@@ -4851,23 +4851,23 @@ const SituationManager = {
     }
   },
 
-  // Transform Claude data to match the expected format
-  transformClaudeData(claudeData) {
+  // Transform AI data to match the expected format
+  transformAIData(aiData) {
     return {
       status: 'READY',
-      timestamp: claudeData.generatedAt,
+      timestamp: aiData.generatedAt,
       date: new Date().toISOString().split('T')[0],
-      todaySummary: [claudeData.globalContext || 'AI-analyzed situations'],
-      situations: claudeData.situations.map(s => ({
+      todaySummary: [aiData.globalContext || 'AI-analyzed situations'],
+      situations: aiData.situations.map(s => ({
         iso3: s.iso3,
         countryName: s.countryName,
         situationType: s.type,
         situationLabel: s.type.replace(/_/g, ' '),
         summary: s.summary,
         severity: s.severity,
-        riskScore: 0, // Not available in Claude data
-        articlesCount: 0, // Not available in Claude data
-        reportsCount: 0, // Not available in Claude data
+        riskScore: 0, // Not available in AI data
+        articlesCount: 0, // Not available in AI data
+        reportsCount: 0, // Not available in AI data
         signals: [s.summary],
         evidence: s.evidence ? s.evidence.map(e => ({
           source: 'AI',
@@ -4878,14 +4878,14 @@ const SituationManager = {
         trajectory: s.trajectory,
         confidence: s.confidence
       })),
-      totalSituations: claudeData.situations.length,
-      isClaudeData: true,
-      model: claudeData.model,
-      analyzedCountries: claudeData.analyzedCountries
+      totalSituations: aiData.situations.length,
+      isAIData: true,
+      model: aiData.model,
+      analyzedCountries: aiData.analyzedCountries
     };
   },
 
-  showClaudePrompt() {
+  showAIPrompt() {
     const list = document.getElementById('situations-list');
     const count = document.getElementById('situations-count');
 
@@ -4978,7 +4978,7 @@ const SituationManager = {
       return;
     }
 
-    const isClaudeData = this.data?.isClaudeData || false;
+    const isAIData = this.data?.isAIData || false;
 
     container.innerHTML = filtered.map((situation, idx) => {
       const severityClass = (situation.severity || '').toLowerCase();
@@ -4993,7 +4993,7 @@ const SituationManager = {
       // Evidence count
       const evidenceCount = (situation.evidence || []).length;
 
-      // Claude-specific fields
+      // AI-specific fields
       const trajectory = situation.trajectory || '';
       const confidence = situation.confidence || '';
       const summary = situation.summary || '';
@@ -5010,10 +5010,10 @@ const SituationManager = {
               <div class="situation-badges">
                 <span class="situation-badge severity ${severityClass}">${situation.severity}</span>
                 ${situation.trajectory ? `<span class="situation-badge trajectory ${(situation.trajectory || '').toLowerCase()}" title="${Utils.escapeHtml(situation.trajectoryReason || '')}">${situation.trajectory}</span>` : ''}
-                ${isClaudeData && confidence ? `<span class="situation-badge confidence">${confidence} conf.</span>` : ''}
-                ${!isClaudeData && riskScore > 0 ? `<span class="situation-badge">Risk ${riskScore}</span>` : ''}
-                ${!isClaudeData && articlesCount > 0 ? `<span class="situation-badge ${articlesCapped ? 'capped' : ''}">${articlesDisplay} articles${articlesCapped ? ' (capped)' : ''}</span>` : ''}
-                ${!isClaudeData && reportsCount > 0 ? `<span class="situation-badge">${reportsCount} reports</span>` : ''}
+                ${isAIData && confidence ? `<span class="situation-badge confidence">${confidence} conf.</span>` : ''}
+                ${!isAIData && riskScore > 0 ? `<span class="situation-badge">Risk ${riskScore}</span>` : ''}
+                ${!isAIData && articlesCount > 0 ? `<span class="situation-badge ${articlesCapped ? 'capped' : ''}">${articlesDisplay} articles${articlesCapped ? ' (capped)' : ''}</span>` : ''}
+                ${!isAIData && reportsCount > 0 ? `<span class="situation-badge">${reportsCount} reports</span>` : ''}
               </div>
               ${situation.relatedCountries && situation.relatedCountries.length > 0 ? `
                 <div class="situation-related">Also affected: ${situation.relatedCountries.map(c => Utils.escapeHtml(c)).join(', ')}</div>
@@ -5029,7 +5029,7 @@ const SituationManager = {
               <div class="situation-evidence-content">
                 ${situation.evidence.slice(0, 6).map(e => `
                   <div class="evidence-item">
-                    <span class="evidence-source ${(e.source || 'claude').toLowerCase()}">${e.source || 'Evidence'}</span>
+                    <span class="evidence-source ${(e.source || 'ai').toLowerCase()}">${e.source || 'Evidence'}</span>
                     ${e.url ? `<a href="${e.url}" target="_blank" class="evidence-link">${Utils.escapeHtml(e.title)}</a>` : `<span class="evidence-text">${Utils.escapeHtml(e.title)}</span>`}
                   </div>
                 `).join('')}
@@ -5338,12 +5338,12 @@ const EWSituationManager = {
     this.initFilters();
 
     try {
-      // Try Claude cache first
-      const claudeResp = await fetch('/api/situations/claude-cached', { cache: 'no-store' });
-      if (claudeResp.ok) {
-        const claudeData = await claudeResp.json();
-        if (claudeData && claudeData.status === 'OK' && claudeData.situations && claudeData.situations.length > 0) {
-          this.data = SituationManager.transformClaudeData(claudeData);
+      // Try AI cache first
+      const aiResp = await fetch('/api/situations/cached', { cache: 'no-store' });
+      if (aiResp.ok) {
+        const aiData = await aiResp.json();
+        if (aiData && aiData.status === 'OK' && aiData.situations && aiData.situations.length > 0) {
+          this.data = SituationManager.transformAIData(aiData);
           this.renderAll(this.data);
           this.loaded = true;
           return;

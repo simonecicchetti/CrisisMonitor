@@ -1877,7 +1877,7 @@ Weights must sum to 100. Consider cascade effects and non-linear amplification.
     }
 
     // ========================================
-    // SITUATION DETECTION - CLAUDE-NATIVE
+    // SITUATION DETECTION - AI-NATIVE
     // ========================================
 
     /**
