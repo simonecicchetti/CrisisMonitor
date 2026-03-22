@@ -1,0 +1,172 @@
+{
+  "nav": {
+    "overview": "Overview",
+    "countries": "Countries",
+    "earlyWarning": "Early Warning",
+    "newsFeed": "News Feed",
+    "drivers": "Drivers",
+    "intelligence": "Intelligence",
+    "nowcast": "Nowcast"
+  },
+  "auth": {
+    "signIn": "Sign in",
+    "signOut": "Sign out"
+  },
+  "common": {
+    "loading": "Loading...",
+    "noData": "No data available",
+    "error": "Error",
+    "retry": "Retry",
+    "all": "All",
+    "viewAll": "View all",
+    "generate": "Generate",
+    "export": "Export",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "close": "Close",
+    "live": "Live",
+    "ready": "Ready",
+    "countries": "countries",
+    "country": "Country",
+    "region": "Region"
+  },
+  "overview": {
+    "latest": "Latest",
+    "dailyBrief": "Daily Brief",
+    "watchToday": "Watch today",
+    "globalPulse": "Global Pulse",
+    "fieldDispatch": "Field Dispatch",
+    "loadingNews": "Loading latest news..."
+  },
+  "countries": {
+    "countryAnalysis": "Country Analysis",
+    "csv": "CSV",
+    "pdf": "PDF",
+    "whereToLook": "Where should I look?",
+    "topCountries": "Top Countries",
+    "riskScore": "Risk Score",
+    "loadingRegional": "Loading regional data..."
+  },
+  "earlyWarning": {
+    "title": "Predictive Early Warning",
+    "horizon": "30-day horizon",
+    "critical": "CRITICAL",
+    "alert": "ALERT",
+    "warning": "WARNING",
+    "riskScores": "Risk Scores",
+    "warningPlus": "WARNING+",
+    "selectCountry": "Select a country to view details",
+    "analyzeWithAI": "Analyze with AI",
+    "analyzing": "Analyzing...",
+    "multiIndicatorConfirmed": "multi-indicator confirmed"
+  },
+  "newsFeedSection": {
+    "title": "News Feed",
+    "multiSource": "Multi-source news from humanitarian agencies and global media",
+    "media": "Media",
+    "reliefWeb": "ReliefWeb",
+    "allRegions": "All Regions",
+    "africa": "Africa",
+    "latinAmerica": "Latin America",
+    "middleEast": "Middle East",
+    "asiaPacific": "Asia Pacific",
+    "europe": "Europe",
+    "northAmerica": "North America",
+    "allTopics": "All Topics",
+    "conflict": "Conflict",
+    "migration": "Migration",
+    "foodSecurity": "Food Security",
+    "climate": "Climate",
+    "health": "Health",
+    "humanitarian": "Humanitarian"
+  },
+  "drivers": {
+    "title": "Crisis Drivers",
+    "multiSource": "Multi-Source",
+    "climate": "Climate",
+    "conflict": "Conflict",
+    "economy": "Economy",
+    "displacement": "Displacement",
+    "health": "Health",
+    "precipAnomalies": "Precipitation Anomalies",
+    "precipSubtitle": "30-day vs 5yr avg",
+    "ndviStress": "NDVI Climate Stress",
+    "vegetationIndex": "Vegetation Index",
+    "alert": "Alert",
+    "mediaSpikeAlerts": "Media Spike Alerts",
+    "howSpikesWork": "How Spikes Work",
+    "currencyDevaluation": "Currency Devaluation",
+    "vsUSD": "vs USD",
+    "idps": "Internally Displaced Persons",
+    "whoOutbreaks": "WHO Disease Outbreaks"
+  },
+  "intelligence": {
+    "topicReports": "Topic Reports",
+    "humanitarianUpdates": "Humanitarian Updates",
+    "migration": "Migration",
+    "foodCrisis": "Food Crisis",
+    "conflict": "Conflict",
+    "political": "Political",
+    "climate": "Climate",
+    "health": "Health",
+    "economic": "Economic",
+    "allRegions": "All Regions",
+    "keyDevelopments": "Key Developments",
+    "sources": "Sources"
+  },
+  "nowcast": {
+    "title": "Food Insecurity Nowcast",
+    "modelActive": "Model Active",
+    "countriesTracked": "countries tracked",
+    "proxy": "Proxy",
+    "target": "Target",
+    "ensemble": "4-Model Ensemble",
+    "nowcastAnalysis": "Nowcast Analysis",
+    "worsening": "worsening",
+    "stable": "stable",
+    "improving": "improving",
+    "countryPredictions": "Country Predictions",
+    "change90d": "90d Change",
+    "projected": "Projected",
+    "trend": "Trend"
+  },
+  "countryBrief": {
+    "title": "Country Intelligence",
+    "selectCountry": "Select a country...",
+    "generating": "Generating intelligence brief...",
+    "security": "Security & Governance",
+    "economy": "Economy",
+    "foodSecurity": "Food Security",
+    "displacement": "Displacement & Migration",
+    "outlook": "90-Day Outlook"
+  },
+  "community": {
+    "useful": "Useful",
+    "insightful": "Insightful",
+    "verify": "Verify",
+    "addComment": "Add a comment...",
+    "post": "Post",
+    "noComments": "No comments yet. Be the first to share your analysis.",
+    "signInToComment": "Please sign in to comment",
+    "signInToReact": "Please sign in to react"
+  },
+  "hazards": {
+    "title": "Active Natural Hazards",
+    "active": "Active"
+  },
+  "situations": {
+    "title": "Situational Intelligence",
+    "operationsMode": "Operations Mode",
+    "detectAI": "Detect Situations (AI)",
+    "criticalHigh": "Critical + High",
+    "critical": "Critical",
+    "high": "High",
+    "elevated": "Elevated",
+    "watch": "Watch"
+  },
+  "footer": {
+    "platform": "Notamy News Platform",
+    "rights": "All rights reserved.",
+    "contact": "Contact"
+  }
+}

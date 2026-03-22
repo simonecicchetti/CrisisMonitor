@@ -1,0 +1,172 @@
+{
+  "nav": {
+    "overview": "نظرة عامة",
+    "countries": "الدول",
+    "earlyWarning": "إنذار مبكر",
+    "newsFeed": "الأخبار",
+    "drivers": "العوامل",
+    "intelligence": "الاستخبارات",
+    "nowcast": "التوقعات"
+  },
+  "auth": {
+    "signIn": "تسجيل الدخول",
+    "signOut": "تسجيل الخروج"
+  },
+  "common": {
+    "loading": "جاري التحميل...",
+    "noData": "لا توجد بيانات",
+    "error": "خطأ",
+    "retry": "إعادة المحاولة",
+    "all": "الكل",
+    "viewAll": "عرض الكل",
+    "generate": "إنشاء",
+    "export": "تصدير",
+    "copy": "نسخ",
+    "copied": "تم النسخ!",
+    "close": "إغلاق",
+    "live": "مباشر",
+    "ready": "جاهز",
+    "countries": "دول",
+    "country": "الدولة",
+    "region": "المنطقة"
+  },
+  "overview": {
+    "latest": "الأخيرة",
+    "dailyBrief": "الموجز اليومي",
+    "watchToday": "للمراقبة اليوم",
+    "globalPulse": "نبض العالم",
+    "fieldDispatch": "تقارير الميدان",
+    "loadingNews": "جاري تحميل آخر الأخبار..."
+  },
+  "countries": {
+    "countryAnalysis": "تحليل البلد",
+    "csv": "CSV",
+    "pdf": "PDF",
+    "whereToLook": "أين ننظر؟",
+    "topCountries": "الدول الرئيسية",
+    "riskScore": "درجة المخاطر",
+    "loadingRegional": "جاري تحميل البيانات الإقليمية..."
+  },
+  "earlyWarning": {
+    "title": "إنذار مبكر تنبؤي",
+    "horizon": "أفق 30 يوماً",
+    "critical": "حرج",
+    "alert": "تنبيه",
+    "warning": "تحذير",
+    "riskScores": "درجات المخاطر",
+    "warningPlus": "تحذير+",
+    "selectCountry": "اختر دولة لعرض التفاصيل",
+    "analyzeWithAI": "تحليل بالذكاء الاصطناعي",
+    "analyzing": "جاري التحليل...",
+    "multiIndicatorConfirmed": "مؤكد متعدد المؤشرات"
+  },
+  "newsFeedSection": {
+    "title": "موجز الأخبار",
+    "multiSource": "أخبار متعددة المصادر من الوكالات الإنسانية والإعلام العالمي",
+    "media": "إعلام",
+    "reliefWeb": "ReliefWeb",
+    "allRegions": "جميع المناطق",
+    "africa": "أفريقيا",
+    "latinAmerica": "أمريكا اللاتينية",
+    "middleEast": "الشرق الأوسط",
+    "asiaPacific": "آسيا والمحيط الهادئ",
+    "europe": "أوروبا",
+    "northAmerica": "أمريكا الشمالية",
+    "allTopics": "جميع المواضيع",
+    "conflict": "نزاع",
+    "migration": "هجرة",
+    "foodSecurity": "أمن غذائي",
+    "climate": "مناخ",
+    "health": "صحة",
+    "humanitarian": "إنساني"
+  },
+  "drivers": {
+    "title": "عوامل الأزمة",
+    "multiSource": "متعدد المصادر",
+    "climate": "المناخ",
+    "conflict": "النزاع",
+    "economy": "الاقتصاد",
+    "displacement": "النزوح",
+    "health": "الصحة",
+    "precipAnomalies": "شذوذ هطول الأمطار",
+    "precipSubtitle": "30 يوم مقابل متوسط 5 سنوات",
+    "ndviStress": "إجهاد مناخي NDVI",
+    "vegetationIndex": "مؤشر الغطاء النباتي",
+    "alert": "تنبيه",
+    "mediaSpikeAlerts": "تنبيهات ذروة إعلامية",
+    "howSpikesWork": "كيف تعمل الذروات",
+    "currencyDevaluation": "انخفاض قيمة العملة",
+    "vsUSD": "مقابل الدولار",
+    "idps": "نازحون داخلياً",
+    "whoOutbreaks": "أوبئة منظمة الصحة العالمية"
+  },
+  "intelligence": {
+    "topicReports": "تقارير موضوعية",
+    "humanitarianUpdates": "التحديثات الإنسانية",
+    "migration": "هجرة",
+    "foodCrisis": "أزمة غذائية",
+    "conflict": "نزاع",
+    "political": "سياسة",
+    "climate": "مناخ",
+    "health": "صحة",
+    "economic": "اقتصاد",
+    "allRegions": "جميع المناطق",
+    "keyDevelopments": "التطورات الرئيسية",
+    "sources": "المصادر"
+  },
+  "nowcast": {
+    "title": "توقعات انعدام الأمن الغذائي",
+    "modelActive": "النموذج نشط",
+    "countriesTracked": "دولة مراقبة",
+    "proxy": "مؤشر بديل",
+    "target": "الهدف",
+    "ensemble": "مجموعة 4 نماذج",
+    "nowcastAnalysis": "تحليل التوقعات",
+    "worsening": "تدهور",
+    "stable": "مستقر",
+    "improving": "تحسن",
+    "countryPredictions": "توقعات الدول",
+    "change90d": "تغيير 90 يوم",
+    "projected": "متوقع",
+    "trend": "الاتجاه"
+  },
+  "countryBrief": {
+    "title": "استخبارات البلد",
+    "selectCountry": "اختر دولة...",
+    "generating": "جاري إنشاء الموجز الاستخباراتي...",
+    "security": "الأمن والحوكمة",
+    "economy": "الاقتصاد",
+    "foodSecurity": "الأمن الغذائي",
+    "displacement": "النزوح والهجرة",
+    "outlook": "التوقعات لـ 90 يوماً"
+  },
+  "community": {
+    "useful": "مفيد",
+    "insightful": "ثاقب",
+    "verify": "تحقق",
+    "addComment": "أضف تعليقاً...",
+    "post": "نشر",
+    "noComments": "لا توجد تعليقات. كن أول من يشارك تحليله.",
+    "signInToComment": "سجل الدخول للتعليق",
+    "signInToReact": "سجل الدخول للتفاعل"
+  },
+  "hazards": {
+    "title": "أخطار طبيعية نشطة",
+    "active": "نشطة"
+  },
+  "situations": {
+    "title": "استخبارات الوضع",
+    "operationsMode": "وضع العمليات",
+    "detectAI": "كشف المواقف (ذكاء اصطناعي)",
+    "criticalHigh": "حرج + مرتفع",
+    "critical": "حرج",
+    "high": "مرتفع",
+    "elevated": "مرتفع",
+    "watch": "مراقبة"
+  },
+  "footer": {
+    "platform": "منصة Notamy News",
+    "rights": "جميع الحقوق محفوظة.",
+    "contact": "اتصل بنا"
+  }
+}

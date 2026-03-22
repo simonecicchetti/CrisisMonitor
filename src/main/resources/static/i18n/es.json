@@ -1,0 +1,172 @@
+{
+  "nav": {
+    "overview": "Resumen",
+    "countries": "Países",
+    "earlyWarning": "Alerta Temprana",
+    "newsFeed": "Noticias",
+    "drivers": "Factores",
+    "intelligence": "Inteligencia",
+    "nowcast": "Pronóstico"
+  },
+  "auth": {
+    "signIn": "Iniciar sesión",
+    "signOut": "Cerrar sesión"
+  },
+  "common": {
+    "loading": "Cargando...",
+    "noData": "Sin datos disponibles",
+    "error": "Error",
+    "retry": "Reintentar",
+    "all": "Todos",
+    "viewAll": "Ver todo",
+    "generate": "Generar",
+    "export": "Exportar",
+    "copy": "Copiar",
+    "copied": "¡Copiado!",
+    "close": "Cerrar",
+    "live": "En vivo",
+    "ready": "Listo",
+    "countries": "países",
+    "country": "País",
+    "region": "Región"
+  },
+  "overview": {
+    "latest": "Últimas",
+    "dailyBrief": "Informe Diario",
+    "watchToday": "A vigilar",
+    "globalPulse": "Global Pulse",
+    "fieldDispatch": "Field Dispatch",
+    "loadingNews": "Cargando últimas noticias..."
+  },
+  "countries": {
+    "countryAnalysis": "Análisis País",
+    "csv": "CSV",
+    "pdf": "PDF",
+    "whereToLook": "¿Dónde mirar?",
+    "topCountries": "Países Principales",
+    "riskScore": "Puntuación de Riesgo",
+    "loadingRegional": "Cargando datos regionales..."
+  },
+  "earlyWarning": {
+    "title": "Alerta Temprana Predictiva",
+    "horizon": "horizonte 30 días",
+    "critical": "CRÍTICO",
+    "alert": "ALERTA",
+    "warning": "ADVERTENCIA",
+    "riskScores": "Puntuaciones de Riesgo",
+    "warningPlus": "ADVERTENCIA+",
+    "selectCountry": "Seleccione un país para ver detalles",
+    "analyzeWithAI": "Analizar con IA",
+    "analyzing": "Analizando...",
+    "multiIndicatorConfirmed": "confirmado multi-indicador"
+  },
+  "newsFeedSection": {
+    "title": "Noticias",
+    "multiSource": "Noticias multi-fuente de agencias humanitarias y medios globales",
+    "media": "Medios",
+    "reliefWeb": "ReliefWeb",
+    "allRegions": "Todas las Regiones",
+    "africa": "África",
+    "latinAmerica": "América Latina",
+    "middleEast": "Oriente Medio",
+    "asiaPacific": "Asia Pacífico",
+    "europe": "Europa",
+    "northAmerica": "Norteamérica",
+    "allTopics": "Todos los Temas",
+    "conflict": "Conflicto",
+    "migration": "Migración",
+    "foodSecurity": "Seguridad Alimentaria",
+    "climate": "Clima",
+    "health": "Salud",
+    "humanitarian": "Humanitario"
+  },
+  "drivers": {
+    "title": "Factores de Crisis",
+    "multiSource": "Multi-Fuente",
+    "climate": "Clima",
+    "conflict": "Conflicto",
+    "economy": "Economía",
+    "displacement": "Desplazamiento",
+    "health": "Salud",
+    "precipAnomalies": "Anomalías de Precipitación",
+    "precipSubtitle": "30 días vs prom. 5 años",
+    "ndviStress": "Estrés Climático NDVI",
+    "vegetationIndex": "Índice de Vegetación",
+    "alert": "Alerta",
+    "mediaSpikeAlerts": "Alertas de Picos Mediáticos",
+    "howSpikesWork": "Cómo Funcionan los Picos",
+    "currencyDevaluation": "Devaluación Monetaria",
+    "vsUSD": "vs USD",
+    "idps": "Desplazados Internos",
+    "whoOutbreaks": "Brotes OMS"
+  },
+  "intelligence": {
+    "topicReports": "Informes Temáticos",
+    "humanitarianUpdates": "Actualizaciones Humanitarias",
+    "migration": "Migración",
+    "foodCrisis": "Crisis Alimentaria",
+    "conflict": "Conflicto",
+    "political": "Política",
+    "climate": "Clima",
+    "health": "Salud",
+    "economic": "Economía",
+    "allRegions": "Todas las Regiones",
+    "keyDevelopments": "Desarrollos Clave",
+    "sources": "Fuentes"
+  },
+  "nowcast": {
+    "title": "Pronóstico Inseguridad Alimentaria",
+    "modelActive": "Modelo Activo",
+    "countriesTracked": "países monitoreados",
+    "proxy": "Proxy",
+    "target": "Objetivo",
+    "ensemble": "Ensemble 4 Modelos",
+    "nowcastAnalysis": "Análisis de Pronóstico",
+    "worsening": "empeorando",
+    "stable": "estable",
+    "improving": "mejorando",
+    "countryPredictions": "Predicciones País",
+    "change90d": "Cambio 90d",
+    "projected": "Proyectado",
+    "trend": "Tendencia"
+  },
+  "countryBrief": {
+    "title": "Inteligencia País",
+    "selectCountry": "Seleccione un país...",
+    "generating": "Generando informe...",
+    "security": "Seguridad y Gobernanza",
+    "economy": "Economía",
+    "foodSecurity": "Seguridad Alimentaria",
+    "displacement": "Desplazamiento y Migración",
+    "outlook": "Perspectivas 90 Días"
+  },
+  "community": {
+    "useful": "Útil",
+    "insightful": "Perspicaz",
+    "verify": "Verificar",
+    "addComment": "Agregar un comentario...",
+    "post": "Publicar",
+    "noComments": "Sin comentarios. Sé el primero en compartir tu análisis.",
+    "signInToComment": "Inicie sesión para comentar",
+    "signInToReact": "Inicie sesión para reaccionar"
+  },
+  "hazards": {
+    "title": "Riesgos Naturales Activos",
+    "active": "Activos"
+  },
+  "situations": {
+    "title": "Inteligencia Situacional",
+    "operationsMode": "Modo Operativo",
+    "detectAI": "Detectar Situaciones (IA)",
+    "criticalHigh": "Críticos + Altos",
+    "critical": "Críticos",
+    "high": "Altos",
+    "elevated": "Elevados",
+    "watch": "Vigilancia"
+  },
+  "footer": {
+    "platform": "Plataforma Notamy News",
+    "rights": "Todos los derechos reservados.",
+    "contact": "Contacto"
+  }
+}

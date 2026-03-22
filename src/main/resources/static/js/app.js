@@ -4200,8 +4200,8 @@ const SidebarManager = {
     try { localStorage.setItem('notamy-section', sectionId); } catch(e) {}
     this.loadSectionData(sectionId);
     // Re-apply translations after section switch (new elements may be in DOM)
-    if (window._applyTranslations && window._platformLang && window._platformLang !== 'en') {
-      setTimeout(() => window._applyTranslations(window._platformLang), 100);
+    if (typeof I18n !== 'undefined' && I18n.loaded && I18n.currentLang !== 'en') {
+      setTimeout(() => I18n.apply(), 100);
     }
 
     // Focus management: move focus to section heading for screen readers

@@ -23,7 +23,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
     <!-- Custom CSS -->
-    <link rel="stylesheet" th:href="@{/css/style.css(v=94)}"/>
+    <link rel="stylesheet" th:href="@{/css/style.css(v=95)}"/>
 
     <!-- Preconnect for performance -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -147,70 +147,30 @@
             })();
             </script>
             <script>
-            // Global language + UI translations
+            // Global language selector — uses I18n system from /js/i18n.js
             (function() {
                 var sel = document.getElementById('global-lang-select');
                 if (!sel) return;
 
-                // UI translations map
-                var T = {
-                    en: { overview:'Overview', countries:'Countries', earlyWarning:'Early Warning', newsFeed:'News Feed', drivers:'Drivers', intelligence:'Intelligence', nowcast:'Nowcast', latest:'Latest', watchToday:'Watch today', countryAnalysis:'Country Analysis', foodInsecurityNowcast:'Food Insecurity Nowcast', countryPredictions:'Country Predictions', topicReports:'Topic Reports', humanitarianUpdates:'Humanitarian Updates', dailyBrief:'Daily Brief', predictiveEW:'Predictive Early Warning', crisisDrivers:'Crisis Drivers', nowcastAnalysis:'Nowcast Analysis', topCountries:'Top Countries', riskScore:'Risk Score' },
-                    it: { overview:'Panoramica', countries:'Paesi', earlyWarning:'Allerta Precoce', newsFeed:'Notizie', drivers:'Fattori', intelligence:'Intelligence', nowcast:'Previsioni', latest:'Ultime', watchToday:'Da monitorare', countryAnalysis:'Analisi Paese', foodInsecurityNowcast:'Previsione Insicurezza Alimentare', countryPredictions:'Previsioni Paese', topicReports:'Rapporti Tematici', humanitarianUpdates:'Aggiornamenti Umanitari', dailyBrief:'Briefing Giornaliero', predictiveEW:'Allerta Precoce Predittiva', crisisDrivers:'Fattori di Crisi', nowcastAnalysis:'Analisi Previsioni', topCountries:'Paesi Principali', riskScore:'Punteggio Rischio' },
-                    fr: { overview:'Aperçu', countries:'Pays', earlyWarning:'Alerte Précoce', newsFeed:'Actualités', drivers:'Facteurs', intelligence:'Intelligence', nowcast:'Prévisions', latest:'Dernières', watchToday:'À surveiller', countryAnalysis:'Analyse Pays', foodInsecurityNowcast:'Prévision Insécurité Alimentaire', countryPredictions:'Prévisions Pays', topicReports:'Rapports Thématiques', humanitarianUpdates:'Mises à Jour Humanitaires', dailyBrief:'Brief Quotidien', predictiveEW:'Alerte Précoce Prédictive', crisisDrivers:'Facteurs de Crise', nowcastAnalysis:'Analyse des Prévisions', topCountries:'Pays Principaux', riskScore:'Score de Risque' },
-                    es: { overview:'Resumen', countries:'Países', earlyWarning:'Alerta Temprana', newsFeed:'Noticias', drivers:'Factores', intelligence:'Inteligencia', nowcast:'Pronóstico', latest:'Últimas', watchToday:'A vigilar', countryAnalysis:'Análisis País', foodInsecurityNowcast:'Pronóstico Inseguridad Alimentaria', countryPredictions:'Predicciones País', topicReports:'Informes Temáticos', humanitarianUpdates:'Actualizaciones Humanitarias', dailyBrief:'Informe Diario', predictiveEW:'Alerta Temprana Predictiva', crisisDrivers:'Factores de Crisis', nowcastAnalysis:'Análisis de Pronóstico', topCountries:'Países Principales', riskScore:'Puntuación de Riesgo' },
-                    zh: { overview:'概览', countries:'国家', earlyWarning:'预警', newsFeed:'新闻', drivers:'驱动因素', intelligence:'情报', nowcast:'即时预测', latest:'最新', watchToday:'今日关注', countryAnalysis:'国家分析', foodInsecurityNowcast:'粮食不安全预测', countryPredictions:'国家预测', topicReports:'专题报告', humanitarianUpdates:'人道主义动态', dailyBrief:'每日简报', predictiveEW:'预测性预警', crisisDrivers:'危机驱动因素', nowcastAnalysis:'即时预测分析', topCountries:'重点国家', riskScore:'风险评分' },
-                    ar: { overview:'نظرة عامة', countries:'الدول', earlyWarning:'إنذار مبكر', newsFeed:'الأخبار', drivers:'العوامل', intelligence:'الاستخبارات', nowcast:'التوقعات', latest:'الأخيرة', watchToday:'للمراقبة اليوم', countryAnalysis:'تحليل البلد', foodInsecurityNowcast:'توقعات انعدام الأمن الغذائي', countryPredictions:'توقعات البلدان', topicReports:'تقارير موضوعية', humanitarianUpdates:'التحديثات الإنسانية', dailyBrief:'الموجز اليومي', predictiveEW:'إنذار مبكر تنبؤي', crisisDrivers:'عوامل الأزمة', nowcastAnalysis:'تحليل التوقعات', topCountries:'الدول الرئيسية', riskScore:'درجة المخاطر' }
-                };
-
-                function applyTranslations(lang) {
-                    var t = T[lang] || T.en;
-                    // Sidebar labels
-                    document.querySelectorAll('.sidebar-item').forEach(function(btn) {
-                        var section = btn.dataset.section;
-                        var label = btn.querySelector('.sidebar-label');
-                        if (!label) return;
-                        var key = section === 'early-warning' ? 'earlyWarning' : section === 'news-feed' ? 'newsFeed' : section;
-                        if (t[key]) label.textContent = t[key];
-                    });
-                    // Section titles and labels
-                    var titleMap = {
-                        'daily-brief-label': 'dailyBrief',
-                        'section-title-latest': 'latest',
-                        'section-title-countries': 'countryAnalysis',
-                        'section-title-ew': 'predictiveEW',
-                        'section-title-drivers': 'crisisDrivers',
-                        'section-title-reports': 'topicReports',
-                        'nowcast-section-title': 'foodInsecurityNowcast',
-                        'nowcast-predictions-title': 'countryPredictions'
-                    };
-                    for (var id in titleMap) {
-                        var el = document.getElementById(id);
-                        if (el && t[titleMap[id]]) el.textContent = t[titleMap[id]];
-                    }
-                }
-
                 var saved = localStorage.getItem('notamy-lang') || 'en';
                 sel.value = saved;
                 window._platformLang = saved;
-                // Make applyTranslations globally accessible
-                window._applyTranslations = applyTranslations;
 
-                // Apply on DOM ready (sidebar not yet in DOM when this script runs)
-                if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', function() {
-                        if (saved !== 'en') applyTranslations(saved);
-                    });
-                } else {
-                    // DOM already loaded (unlikely but safe)
-                    if (saved !== 'en') applyTranslations(saved);
-                }
+                // Init I18n on DOMContentLoaded (i18n.js loads before app.js)
+                document.addEventListener('DOMContentLoaded', function() {
+                    if (typeof I18n !== 'undefined') {
+                        I18n.init();
+                    }
+                });
 
                 sel.addEventListener('change', function() {
                     var lang = sel.value;
-                    localStorage.setItem('notamy-lang', lang);
                     window._platformLang = lang;
-                    applyTranslations(lang);
-                    // Reload Daily Brief + Editorial Columns in new language
+                    // Switch language via I18n system
+                    if (typeof I18n !== 'undefined') {
+                        I18n.switchTo(lang);
+                    }
+                    // Reload AI-generated content in new language
                     if (window.OverviewManager) {
                         var briefC = document.getElementById('daily-brief-container');
                         if (briefC) briefC.style.display = 'none';
@@ -281,7 +241,7 @@
             <!-- BLOCK 1: LATEST NEWS (Media RSS only) -->
             <div class="overview-brief">
                 <div class="brief-header">
-                    <h2 id="section-title-latest">Latest</h2>
+                    <h2 id="section-title-latest" data-i18n="overview.latest">Latest</h2>
                     <div class="brief-header-right">
                         <button id="overview-refresh-btn" class="refresh-btn" title="Refresh data">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -300,7 +260,7 @@
             <div id="daily-brief-container" class="overview-block" style="display:none; margin-bottom: var(--space-md);">
                 <div class="glass-card" style="padding: 20px 24px; border-left: 3px solid var(--accent-teal);">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
-                        <span id="daily-brief-label" style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-teal); font-weight: 600;">Daily Brief</span>
+                        <span id="daily-brief-label" style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-teal); font-weight: 600;" data-i18n="overview.dailyBrief">Daily Brief</span>
                         <span id="daily-brief-date" style="font-size: 0.7rem; color: var(--text-tertiary);"></span>
                     </div>
                     <h3 id="daily-brief-headline" style="font-size: 1.05rem; font-weight: 600; line-height: 1.4; margin-bottom: 14px; color: var(--text-primary);"></h3>
@@ -309,7 +269,7 @@
                         <p id="daily-brief-p2" style="margin-bottom: 0;"></p>
                     </div>
                     <div id="daily-brief-watch" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-color);">
-                        <span style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary); font-weight: 500;">Watch today</span>
+                        <span style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary); font-weight: 500;" data-i18n="overview.watchToday">Watch today</span>
                         <div id="daily-brief-watch-items" style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 8px;"></div>
                     </div>
                     <!-- Deep Dive expansion -->
@@ -332,13 +292,13 @@
                 <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-md);">
                     <!-- Global Pulse -->
                     <div class="glass-card" style="padding: 18px 20px; border-top: 2px solid var(--accent-teal);">
-                        <span style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent-teal); font-weight:600;">Global Pulse</span>
+                        <span style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent-teal); font-weight:600;" data-i18n="overview.globalPulse">Global Pulse</span>
                         <h4 id="col-gp-headline" style="font-size:0.92rem; font-weight:600; line-height:1.4; margin:8px 0 10px; color:var(--text-primary);"></h4>
                         <p id="col-gp-body" style="font-size:0.82rem; line-height:1.6; color:var(--text-secondary); margin:0;"></p>
                     </div>
                     <!-- Field Dispatch -->
                     <div class="glass-card" style="padding: 18px 20px; border-top: 2px solid #f59e0b;">
-                        <span style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:#f59e0b; font-weight:600;">Field Dispatch</span>
+                        <span style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:#f59e0b; font-weight:600;" data-i18n="overview.fieldDispatch">Field Dispatch</span>
                         <h4 id="col-fd-headline" style="font-size:0.92rem; font-weight:600; line-height:1.4; margin:8px 0 10px; color:var(--text-primary);"></h4>
                         <p id="col-fd-body" style="font-size:0.82rem; line-height:1.6; color:var(--text-secondary); margin:0;"></p>
                     </div>
@@ -351,7 +311,7 @@
         <section class="content-section" data-section="countries">
 
             <div class="section-header-bar">
-                <h2 id="section-title-countries">Country Analysis</h2>
+                <h2 id="section-title-countries" data-i18n="countries.countryAnalysis">Country Analysis</h2>
                 <div class="section-header-actions">
                     <div class="export-buttons">
                         <a href="/api/export/csv" class="export-btn" title="Export CSV">
@@ -393,7 +353,7 @@
                 <!-- Risk Cards (40%) -->
                 <div class="countries-cards-panel">
                     <div class="cards-panel-header">
-                        <h3>Top Countries</h3>
+                        <h3 data-i18n="countries.topCountries">Top Countries</h3>
                         <span class="badge critical">Risk Score</span>
                     </div>
                     <div class="risk-cards-list" id="risk-cards-list">
@@ -478,8 +438,8 @@
             <!-- Hero: Prediction Summary with clickable counters -->
             <div class="ew-hero">
                 <div class="ew-hero-title">
-                    <h2 id="section-title-ew">Predictive Early Warning</h2>
-                    <span class="badge critical">30-day horizon</span>
+                    <h2 id="section-title-ew" data-i18n="earlyWarning.title">Predictive Early Warning</h2>
+                    <span class="badge critical" data-i18n="earlyWarning.horizon">30-day horizon</span>
                 </div>
                 <div class="ew-hero-stats" id="ew-hero-stats">
                     <div class="ew-stat ew-stat-clickable" data-level="CRITICAL">
@@ -510,7 +470,7 @@
                 <div class="ew-split-panel">
                     <div class="ew-split-left">
                         <div class="ew-split-header">
-                            <h3>Risk Scores</h3>
+                            <h3 data-i18n="earlyWarning.riskScores">Risk Scores</h3>
                             <div class="ew-list-controls">
                                 <button class="ew-filter-toggle active" id="ew-filter-warning" data-filter="warning">WARNING+</button>
                                 <button class="ew-filter-toggle" id="ew-filter-all" data-filter="all">All</button>
@@ -584,7 +544,7 @@
         <section class="content-section" data-section="drivers">
 
             <div class="section-header-bar">
-                <h2 id="section-title-drivers">Crisis Drivers</h2>
+                <h2 id="section-title-drivers" data-i18n="drivers.title">Crisis Drivers</h2>
                 <span class="badge">Multi-Source</span>
             </div>
 
@@ -605,7 +565,7 @@
                     <div class="grid grid-cols-2" style="gap: var(--space-lg);">
                         <div class="glass-card">
                             <div class="card-header">
-                                <h3>Precipitation Anomalies</h3>
+                                <h3 data-i18n="drivers.precipAnomalies">Precipitation Anomalies</h3>
                                 <span class="badge high">30-day vs 5yr avg</span>
                             </div>
                             <div class="card-body no-padding">
@@ -618,7 +578,7 @@
                         </div>
                         <div class="glass-card">
                             <div class="card-header">
-                                <h3>NDVI Climate Stress</h3>
+                                <h3 data-i18n="drivers.ndviStress">NDVI Climate Stress</h3>
                                 <span class="badge">Vegetation Index</span>
                             </div>
                             <div class="card-body no-padding">
@@ -656,7 +616,7 @@
                     <div class="grid grid-cols-2" style="gap: var(--space-lg);">
                         <div class="glass-card">
                             <div class="card-header">
-                                <h3>Media Spike Alerts</h3>
+                                <h3 data-i18n="drivers.mediaSpikeAlerts">Media Spike Alerts</h3>
                                 <span class="badge high">Z-Score &gt; 1.0</span>
                             </div>
                             <div class="card-body no-padding">
@@ -707,7 +667,7 @@
                     <div style="max-width: 800px;">
                         <div class="glass-card">
                             <div class="card-header">
-                                <h3>Currency Devaluation</h3>
+                                <h3 data-i18n="drivers.currencyDevaluation">Currency Devaluation</h3>
                                 <span class="badge critical">vs USD</span>
                             </div>
                             <div class="card-body no-padding">
@@ -726,7 +686,7 @@
                     <div style="max-width: 800px;">
                         <div class="glass-card">
                             <div class="card-header">
-                                <h3>Internally Displaced Persons</h3>
+                                <h3 data-i18n="drivers.idps">Internally Displaced Persons</h3>
                                 <span class="badge high" th:text="${!#lists.isEmpty(dtmData) ? dtmData[0].source : 'IOM DTM'}">IOM DTM</span>
                             </div>
                             <div class="card-body no-padding">
@@ -762,7 +722,7 @@
                     <div style="max-width: 800px;">
                         <div class="glass-card">
                             <div class="card-header">
-                                <h3>WHO Disease Outbreaks</h3>
+                                <h3 data-i18n="drivers.whoOutbreaks">WHO Disease Outbreaks</h3>
                                 <span class="badge" style="background: var(--danger);">DON</span>
                             </div>
                             <div class="card-body no-padding">
@@ -847,7 +807,7 @@
                 <!-- Topic Report Generator -->
                 <div class="glass-card intel-card">
                     <div class="card-header">
-                        <h3 id="section-title-reports">Topic Reports</h3>
+                        <h3 id="section-title-reports" data-i18n="intelligence.topicReports">Topic Reports</h3>
                         <span class="badge" id="report-status">Ready</span>
                     </div>
                     <div class="card-body intel-report-body">
@@ -939,7 +899,7 @@
             <!-- Humanitarian Updates (ReliefWeb) -->
             <div class="glass-card" style="margin-top: var(--space-md); padding: 16px 20px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
-                    <h4 style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); margin:0;">Humanitarian Updates</h4>
+                    <h4 style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); margin:0;" data-i18n="intelligence.humanitarianUpdates">Humanitarian Updates</h4>
                     <span style="font-size: 0.7rem; color: var(--text-tertiary);">ReliefWeb</span>
                 </div>
                 <div class="humanitarian-updates-list" id="humanitarian-updates-list">
@@ -1006,7 +966,7 @@
                     <!-- Comments -->
                     <div id="report-comments-section" style="padding-top:8px;">
                         <div style="display:flex;gap:8px;margin-bottom:12px;">
-                            <input type="text" id="comment-input" placeholder="Add a comment..." maxlength="500"
+                            <input type="text" id="comment-input" placeholder="Add a comment..." data-i18n-placeholder="community.addComment" maxlength="500"
                                 style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);font-size:0.82rem;">
                             <button id="comment-submit" style="padding:8px 16px;border-radius:8px;border:1px solid var(--accent-teal);background:transparent;color:var(--accent-teal);cursor:pointer;font-size:0.8rem;">Post</button>
                         </div>
@@ -1141,7 +1101,7 @@
         <!-- Nowcast Section -->
         <section class="content-section" data-section="nowcast">
             <div class="section-header-bar">
-                <h2 id="nowcast-section-title">Food Insecurity Nowcast</h2>
+                <h2 id="nowcast-section-title" data-i18n="nowcast.title">Food Insecurity Nowcast</h2>
                 <div style="display: flex; align-items: center; gap: var(--space-sm);">
                     <span id="nowcast-status" class="badge" style="font-size: 0.75rem;"></span>
                     <span id="nowcast-confidence-note" style="font-size: 0.75rem; color: var(--text-tertiary);"></span>
@@ -1180,7 +1140,7 @@
             <!-- Nowcast Analysis Brief -->
             <div id="nowcast-brief-container" class="glass-card" style="margin-bottom: var(--space-lg); padding: 18px 22px; border-left: 3px solid var(--accent-teal); display:none;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
-                    <span style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-teal); font-weight: 600;">Nowcast Analysis</span>
+                    <span style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-teal); font-weight: 600;" data-i18n="nowcast.nowcastAnalysis">Nowcast Analysis</span>
                     <div style="display:flex; gap:12px; font-size:0.75rem;">
                         <span><span style="color:var(--accent-red);" id="nowcast-worsening-count">-</span> worsening</span>
                         <span><span style="color:var(--text-secondary);" id="nowcast-stable-count">-</span> stable</span>
@@ -1197,7 +1157,7 @@
             <!-- Predictions Table -->
             <div class="glass-card">
                 <div class="card-header" style="margin-bottom: var(--space-md);">
-                    <h3 id="nowcast-predictions-title" style="font-size: 0.9rem; font-weight: 500;">Country Predictions</h3>
+                    <h3 id="nowcast-predictions-title" style="font-size: 0.9rem; font-weight: 500;" data-i18n="nowcast.countryPredictions">Country Predictions</h3>
                     <div style="display: flex; gap: var(--space-sm);">
                         <button class="tab-btn active nowcast-filter-btn" data-filter="all" style="font-size: 0.75rem; padding: 4px 10px;">All</button>
                         <button class="tab-btn nowcast-filter-btn" data-filter="worsening" style="font-size: 0.75rem; padding: 4px 10px;">Worsening</button>
@@ -1403,7 +1363,7 @@
     <div class="ai-modal-backdrop"></div>
     <div class="ai-modal-content">
         <div class="ai-modal-header">
-            <h2 id="country-brief-title">Country Intelligence</h2>
+            <h2 id="country-brief-title" data-i18n="countryBrief.title">Country Intelligence</h2>
             <button id="ai-modal-close" class="ai-modal-close">&times;</button>
         </div>
         <div class="ai-modal-body">
@@ -1522,7 +1482,7 @@
 <footer class="app-footer">
     <div class="footer-main">
         <div class="footer-contact">
-            <span class="footer-tagline">Notamy News Platform</span>
+            <span class="footer-tagline" data-i18n="footer.platform">Notamy News Platform</span>
         </div>
         <div class="footer-legal">
             <span>&copy; 2026 All rights reserved.</span>
@@ -1536,6 +1496,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <!-- App Scripts -->
+<script th:src="@{/js/i18n.js(v=1)}"></script>
 <script th:src="@{/js/app.js(v=291)}"></script>
 <script th:src="@{/js/map.js(v=12)}"></script>
 

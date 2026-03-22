@@ -1,0 +1,172 @@
+{
+  "nav": {
+    "overview": "概览",
+    "countries": "国家",
+    "earlyWarning": "预警",
+    "newsFeed": "新闻",
+    "drivers": "驱动因素",
+    "intelligence": "情报",
+    "nowcast": "即时预测"
+  },
+  "auth": {
+    "signIn": "登录",
+    "signOut": "退出"
+  },
+  "common": {
+    "loading": "加载中...",
+    "noData": "暂无数据",
+    "error": "错误",
+    "retry": "重试",
+    "all": "全部",
+    "viewAll": "查看全部",
+    "generate": "生成",
+    "export": "导出",
+    "copy": "复制",
+    "copied": "已复制！",
+    "close": "关闭",
+    "live": "实时",
+    "ready": "就绪",
+    "countries": "国家",
+    "country": "国家",
+    "region": "地区"
+  },
+  "overview": {
+    "latest": "最新",
+    "dailyBrief": "每日简报",
+    "watchToday": "今日关注",
+    "globalPulse": "全球脉动",
+    "fieldDispatch": "现场报告",
+    "loadingNews": "正在加载最新新闻..."
+  },
+  "countries": {
+    "countryAnalysis": "国家分析",
+    "csv": "CSV",
+    "pdf": "PDF",
+    "whereToLook": "应关注哪里？",
+    "topCountries": "重点国家",
+    "riskScore": "风险评分",
+    "loadingRegional": "正在加载区域数据..."
+  },
+  "earlyWarning": {
+    "title": "预测性预警",
+    "horizon": "30天视野",
+    "critical": "危急",
+    "alert": "警报",
+    "warning": "警告",
+    "riskScores": "风险评分",
+    "warningPlus": "警告+",
+    "selectCountry": "选择国家查看详情",
+    "analyzeWithAI": "AI分析",
+    "analyzing": "分析中...",
+    "multiIndicatorConfirmed": "多指标确认"
+  },
+  "newsFeedSection": {
+    "title": "新闻动态",
+    "multiSource": "来自人道主义机构和全球媒体的多源新闻",
+    "media": "媒体",
+    "reliefWeb": "ReliefWeb",
+    "allRegions": "所有地区",
+    "africa": "非洲",
+    "latinAmerica": "拉丁美洲",
+    "middleEast": "中东",
+    "asiaPacific": "亚太",
+    "europe": "欧洲",
+    "northAmerica": "北美",
+    "allTopics": "所有主题",
+    "conflict": "冲突",
+    "migration": "移民",
+    "foodSecurity": "粮食安全",
+    "climate": "气候",
+    "health": "卫生",
+    "humanitarian": "人道主义"
+  },
+  "drivers": {
+    "title": "危机驱动因素",
+    "multiSource": "多源",
+    "climate": "气候",
+    "conflict": "冲突",
+    "economy": "经济",
+    "displacement": "流离失所",
+    "health": "卫生",
+    "precipAnomalies": "降水异常",
+    "precipSubtitle": "30天对比5年均值",
+    "ndviStress": "NDVI气候压力",
+    "vegetationIndex": "植被指数",
+    "alert": "警报",
+    "mediaSpikeAlerts": "媒体关注度警报",
+    "howSpikesWork": "关注度峰值原理",
+    "currencyDevaluation": "货币贬值",
+    "vsUSD": "兑美元",
+    "idps": "境内流离失所者",
+    "whoOutbreaks": "世卫组织疫情"
+  },
+  "intelligence": {
+    "topicReports": "专题报告",
+    "humanitarianUpdates": "人道主义动态",
+    "migration": "移民",
+    "foodCrisis": "粮食危机",
+    "conflict": "冲突",
+    "political": "政治",
+    "climate": "气候",
+    "health": "卫生",
+    "economic": "经济",
+    "allRegions": "所有地区",
+    "keyDevelopments": "关键发展",
+    "sources": "来源"
+  },
+  "nowcast": {
+    "title": "粮食不安全预测",
+    "modelActive": "模型运行中",
+    "countriesTracked": "国家跟踪中",
+    "proxy": "代理指标",
+    "target": "目标",
+    "ensemble": "4模型集成",
+    "nowcastAnalysis": "预测分析",
+    "worsening": "恶化中",
+    "stable": "稳定",
+    "improving": "改善中",
+    "countryPredictions": "国家预测",
+    "change90d": "90天变化",
+    "projected": "预测值",
+    "trend": "趋势"
+  },
+  "countryBrief": {
+    "title": "国家情报",
+    "selectCountry": "选择国家...",
+    "generating": "正在生成情报简报...",
+    "security": "安全与治理",
+    "economy": "经济",
+    "foodSecurity": "粮食安全",
+    "displacement": "流离失所与移民",
+    "outlook": "90天展望"
+  },
+  "community": {
+    "useful": "有用",
+    "insightful": "有见地",
+    "verify": "待核实",
+    "addComment": "添加评论...",
+    "post": "发布",
+    "noComments": "暂无评论。分享您的分析。",
+    "signInToComment": "请登录后评论",
+    "signInToReact": "请登录后互动"
+  },
+  "hazards": {
+    "title": "活跃自然灾害",
+    "active": "活跃"
+  },
+  "situations": {
+    "title": "态势情报",
+    "operationsMode": "作战模式",
+    "detectAI": "AI态势检测",
+    "criticalHigh": "危急+高",
+    "critical": "危急",
+    "high": "高",
+    "elevated": "提升",
+    "watch": "观察"
+  },
+  "footer": {
+    "platform": "Notamy News 平台",
+    "rights": "版权所有",
+    "contact": "联系我们"
+  }
+}
