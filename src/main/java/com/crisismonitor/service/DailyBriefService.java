@@ -1113,9 +1113,9 @@ public class DailyBriefService {
             log.warn("Editorial columns: no headlines available (warmup may still be in progress)");
             return null;
         }
-        // Limit headlines to avoid timeout (Qwen struggles with very long context)
-        if (allHeadlines.size() > 30) {
-            allHeadlines = allHeadlines.subList(0, 30);
+        // Limit headlines to avoid timeout (Qwen needs <60s response time)
+        if (allHeadlines.size() > 15) {
+            allHeadlines = allHeadlines.subList(0, 15);
         }
         log.info("Editorial columns: generating from {} headlines", allHeadlines.size());
 
@@ -1154,11 +1154,17 @@ public class DailyBriefService {
             "- Dense, unflinching, zero filler. Every sentence carries information.";
 
         try {
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", "qwen3.5-plus");
             String rawContent = callQwen(FISK_STYLE, prompt, 800, false);
+            if (rawContent == null || rawContent.isBlank()) {
+                log.warn("Editorial columns: Qwen returned null/blank");
+                return null;
+            }
+            log.info("Editorial columns: Qwen returned {} chars, preview: {}", rawContent.length(), rawContent.substring(0, Math.min(200, rawContent.length())));
             JsonNode json = extractJson(rawContent);
-            if (json == null) return null;
+            if (json == null) {
+                log.warn("Editorial columns: extractJson returned null from content: {}", rawContent.substring(0, Math.min(500, rawContent.length())));
+                return null;
+            }
 
             EditorialColumns cols = new EditorialColumns();
             cols.setGlobalPulseHeadline(json.path("globalPulseHeadline").asText(""));
@@ -1241,20 +1247,29 @@ public class DailyBriefService {
                     .bodyValue(request)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(60))
+                    .timeout(Duration.ofSeconds(120))
                     .block();
 
+            if (response == null || response.isBlank()) {
+                log.warn("callQwen: empty response from DashScope");
+                return null;
+            }
             JsonNode root = objectMapper.readTree(response);
             if (root.has("choices") && root.path("choices").size() > 0) {
-                return root.path("choices").path(0).path("message").path("content").asText("");
+                String content = root.path("choices").path(0).path("message").path("content").asText("");
+                log.info("callQwen: got {} chars from choices[0]", content.length());
+                return content;
             }
             JsonNode output = root.path("output");
             if (!output.isMissingNode() && output.has("choices") && output.path("choices").size() > 0) {
-                return output.path("choices").path(0).path("message").path("content").asText("");
+                String content = output.path("choices").path(0).path("message").path("content").asText("");
+                log.info("callQwen: got {} chars from output.choices[0]", content.length());
+                return content;
             }
+            log.warn("callQwen: no choices in response: {}", response.substring(0, Math.min(300, response.length())));
             return null;
         } catch (Exception e) {
-            log.error("Qwen API call failed: {}", e.getMessage());
+            log.error("callQwen failed: {}", e.getMessage());
             return null;
         }
     }
