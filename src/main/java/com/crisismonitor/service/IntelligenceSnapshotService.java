@@ -105,28 +105,34 @@ public class IntelligenceSnapshotService {
 
         String systemPrompt = "You are a senior crisis intelligence analyst producing a daily predictive briefing. " +
             "You have access to comprehensive real-time data from multiple sources. " +
-            "Your job is NOT to summarize what happened — it is to predict what WILL happen in the next 7-14 days " +
-            "based on the data patterns you observe. Be specific. Be falsifiable. Name countries, timelines, thresholds. " +
-            "Write like you're briefing a UN Emergency Relief Coordinator who needs to decide where to pre-position resources TODAY.";
+            "Your job is NOT to summarize what happened — it is to assess what is LIKELY to happen in the next 7-14 days " +
+            "based on data patterns. Be specific. Name countries, timelines, thresholds.\n\n" +
+            "CRITICAL — LANGUAGE RULES:\n" +
+            "- NEVER use absolute language: 'will happen', 'will ignite', 'will crash'. These are PREDICTIONS, not facts.\n" +
+            "- USE probabilistic language: 'is likely to', 'data suggests', 'high probability of', 'risk of', " +
+            "'indicators point toward', 'may lead to', 'could trigger', 'conditions are building for'.\n" +
+            "- Distinguish confidence levels: 'strong indicators suggest' (high confidence) vs 'there is a possibility' (low confidence).\n" +
+            "- Always tie predictions to specific data points: 'given the 336% currency devaluation, there is a high probability that...'\n" +
+            "- Write like you're briefing a UN Emergency Relief Coordinator who needs to decide where to pre-position resources.";
 
         String prompt = "INTELLIGENCE SNAPSHOT — " + LocalDate.now() + "\n\n" + snapshot + "\n\n" +
             "Based on ALL the data above, produce a predictive intelligence briefing.\n\n" +
             "RESPOND IN JSON (no markdown, no backticks):\n" +
             "{\n" +
-            "  \"conflictOutlook\": \"<150-200 words: What will happen in active conflict zones in the next 7-14 days. " +
-                "Which fronts will escalate, which will de-escalate, and why the data supports this. Cite specific indicators.>\",\n" +
-            "  \"foodSecurityOutlook\": \"<150-200 words: Food security trajectory. Use nowcast predictions + price data. " +
-                "Which countries will cross critical thresholds. What supply chain disruptions are building.>\",\n" +
-            "  \"economicOutlook\": \"<100-150 words: Currency devaluations, commodity price pressures, and their humanitarian impact. " +
-                "Which economies are approaching tipping points.>\",\n" +
-            "  \"humanitarianOutlook\": \"<100-150 words: Operational forecast. Where will access shrink. Where will funding gaps force program suspension. " +
-                "What displacement flows are building.>\",\n" +
-            "  \"keyPredictions\": \"<5-7 specific, dated predictions in bullet format. Each prediction must be falsifiable. " +
-                "Example: '• By April 5: Sudan cereal prices will exceed 300% of 5-year average in Khartoum markets.' " +
-                "Example: '• Within 10 days: Cuba will experience a third nationwide grid failure.' " +
-                "Be bold. Use the data.>\",\n" +
+            "  \"conflictOutlook\": \"<150-200 words: What is likely to happen in active conflict zones in the next 7-14 days. " +
+                "Which fronts show indicators of escalation or de-escalation, and what data supports this assessment.>\",\n" +
+            "  \"foodSecurityOutlook\": \"<150-200 words: Food security trajectory based on nowcast predictions + price data. " +
+                "Which countries are approaching critical thresholds. What supply chain pressures are building.>\",\n" +
+            "  \"economicOutlook\": \"<100-150 words: Currency devaluations, commodity price pressures, and their likely humanitarian impact. " +
+                "Which economies show signs of approaching tipping points.>\",\n" +
+            "  \"humanitarianOutlook\": \"<100-150 words: Operational forecast. Where access is likely to shrink. Where funding gaps risk forcing program suspension. " +
+                "What displacement patterns are emerging.>\",\n" +
+            "  \"keyPredictions\": \"<5-7 specific, dated predictions in bullet format. Each must be falsifiable and use probabilistic language. " +
+                "Example: '• By April 5: Strong indicators suggest Sudan cereal prices in Khartoum could exceed 300% of 5-year average, driven by SDG devaluation.' " +
+                "Example: '• Within 10 days: Given recurring grid failures, Cuba faces a high probability of another nationwide blackout.' " +
+                "Cite the data that supports each prediction.>\",\n" +
             "  \"riskEscalations\": \"<List of 5-8 countries most likely to see significant risk score increases in the next 14 days, " +
-                "with one-line reason each.>\"\n" +
+                "with one-line data-backed reason each.>\"\n" +
             "}";
 
         try {
