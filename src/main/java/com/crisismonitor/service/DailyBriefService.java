@@ -1239,25 +1239,25 @@ public class DailyBriefService {
             reliefCtx + "\n" +
             "RESPOND IN JSON (no markdown, no backticks):\n" +
             "{\n" +
-            "  \"globalPulseHeadline\": \"<8-12 word headline summarizing what global media is focused on today>\",\n" +
-            "  \"globalPulseBody\": \"<80-100 words: synthesis of the media narrative. What story dominates? What are media missing? What pattern emerges?>\",\n" +
-            "  \"fieldDispatchHeadline\": \"<8-12 word headline summarizing field operations today>\",\n" +
-            "  \"fieldDispatchBody\": \"<80-100 words: what humanitarian operations report from the ground. Access issues, displacement, funding gaps, response capacity.>\"\n" +
+            "  \"globalPulseHeadline\": \"<8-12 word headline>\",\n" +
+            "  \"globalPulseBody\": \"<100-120 words: synthesis of media narrative — what dominates, what media miss, what pattern emerges. END with 1-2 sentence FORECAST: what this media attention signals for the next 7-14 days.>\",\n" +
+            "  \"fieldDispatchHeadline\": \"<8-12 word headline>\",\n" +
+            "  \"fieldDispatchBody\": \"<100-120 words: operational ground truth — access, displacement, funding, response. END with 1-2 sentence FORECAST: which operations will fail or succeed in the next 7-14 days and why.>\"\n" +
             "}\n\n" +
             "RULES:\n" +
-            "- Global Pulse: analytical media reading, not a news summary. What does media coverage REVEAL about the crisis landscape?\n" +
-            "- Field Dispatch: operational intelligence. What do humanitarians on the ground need to know TODAY?\n" +
+            "- Global Pulse: analytical media reading in Robert Fisk style. What does coverage REVEAL? What is being ignored? End with a forecast.\n" +
+            "- Field Dispatch: operational intelligence from the ground. Concrete facts. End with a forecast.\n" +
             "- NEVER use internal scores. Describe situations concretely.\n" +
             "- No agency citations. This is YOUR editorial voice.\n" +
-            "- Dense, analytical, zero filler. Every sentence carries information.";
+            "- Dense, unflinching, zero filler. Every sentence carries information.";
 
         try {
             Map<String, Object> request = new LinkedHashMap<>();
             request.put("model", "qwen3.5-plus");
-            request.put("max_tokens", 600);
+            request.put("max_tokens", 800);
             request.put("enable_search", true);
             request.put("messages", List.of(
-                Map.of("role", "system", "content", "You are a humanitarian intelligence editorial desk. Write sharp analytical prose."),
+                Map.of("role", "system", "content", "You are a senior crisis correspondent writing in the style of Robert Fisk — direct, unflinching, grounded in specifics, never diplomatic. You see through official narratives."),
                 Map.of("role", "user", "content", prompt)
             ));
 
