@@ -4219,16 +4219,8 @@ const SidebarManager = {
 
     // Update section visibility
     sections.forEach(section => {
-      const ds = section.dataset.section;
-      // Show drivers section when countries is active (drivers merged into countries)
-      let isActive;
-      if (ds === 'drivers') {
-        isActive = sectionId === 'countries';
-      } else {
-        isActive = ds === sectionId;
-      }
+      const isActive = section.dataset.section === sectionId;
       section.classList.toggle('active', isActive);
-      // Force display via inline style to ensure sections are properly hidden
       section.style.display = isActive ? 'block' : 'none';
     });
 
@@ -4281,13 +4273,8 @@ const SidebarManager = {
           }, 100);
         }
         StructuralIndicesManager.init();
-        // Regional Pulse lives in Countries now
         OverviewManager.loadRegionalPulse();
-        // Load all countries list
         this.loadAllCountriesList();
-        // Initialize driver tabs (drivers content stays in its own section, shown via CSS)
-        if (typeof DriverTabManager !== 'undefined') DriverTabManager.init();
-        if (typeof IntelligenceManager !== 'undefined') IntelligenceManager.loadWHOOutbreaks();
         break;
       case 'early-warning':
         RiskScoreMonitor.init();
@@ -4338,7 +4325,7 @@ const SidebarManager = {
 
       // Sort by score descending
       scores.sort((a, b) => (b.score || 0) - (a.score || 0));
-      if (countEl) countEl.textContent = scores.length;
+      if (countEl) countEl.textContent = scores.length + ' countries monitored';
 
       const levelColors = {
         CRITICAL: '#ff6b61', ALERT: '#f59e0b', WARNING: '#eab308',
@@ -5362,7 +5349,6 @@ const EWPanelManager = {
       </div>
       ${subScoresHtml}
       ${narrativeParts.length > 0 ? `<div class="ew-detail-narrative">${narrativeParts.join(' · ')}</div>` : ''}
-      <button class="ew-deep-btn" onclick="EWPanelManager.loadDeepAnalysis('${score.iso3}')">Analyze with AI</button>
       <div id="ew-deep-result"></div>
     `;
   },
