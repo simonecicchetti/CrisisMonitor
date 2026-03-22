@@ -965,7 +965,10 @@ public class DailyBriefService {
         private int improvingCount;
         private String generatedAt;
         private String language;
+        private int promptVersion;
     }
+
+    private static final int NOWCAST_PROMPT_VERSION = 2;
 
     /**
      * Generate or retrieve cached nowcast analytical brief with language support.
@@ -974,10 +977,14 @@ public class DailyBriefService {
         String lang = resolveLanguage(language);
         String docId = "nowcast_" + LocalDate.now() + "_" + lang;
 
-        // Check cache for requested language (require 'language' field = new format)
+        // Check cache — skip if old prompt version
         Map<String, Object> cached = firestoreService.getDocument("nowcastBriefs", docId);
-        if (cached != null && cached.containsKey("language")) {
-            return objectMapper.convertValue(cached, NowcastBrief.class);
+        if (cached != null) {
+            int cachedVersion = cached.containsKey("promptVersion") ? ((Number) cached.get("promptVersion")).intValue() : 0;
+            if (cachedVersion >= NOWCAST_PROMPT_VERSION) {
+                return objectMapper.convertValue(cached, NowcastBrief.class);
+            }
+            log.info("Nowcast brief cache outdated (v{} < v{}), regenerating", cachedVersion, NOWCAST_PROMPT_VERSION);
         }
 
         if ("en".equals(lang)) {
@@ -985,6 +992,7 @@ public class DailyBriefService {
             NowcastBrief brief = generateNowcastBrief();
             if (brief != null) {
                 brief.setLanguage("en");
+                brief.setPromptVersion(NOWCAST_PROMPT_VERSION);
                 saveNowcastBrief(brief, docId);
             }
             return brief;
@@ -1041,6 +1049,7 @@ public class DailyBriefService {
             translated.setImprovingCount(enBrief.getImprovingCount());
             translated.setLanguage(targetLang);
             translated.setGeneratedAt(java.time.Instant.now().toString());
+            translated.setPromptVersion(NOWCAST_PROMPT_VERSION);
             return translated.getHeadline().isBlank() ? null : translated;
         } catch (Exception e) {
             log.error("Nowcast brief translation to {} failed: {}", targetLang, e.getMessage());
