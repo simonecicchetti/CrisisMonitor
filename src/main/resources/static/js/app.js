@@ -4274,12 +4274,9 @@ const SidebarManager = {
         this.loadAllCountriesList();
         break;
       case 'early-warning':
-        RiskScoreMonitor.init();
-        IPCMonitor.init();
-        ClusterAlertMonitor.loadFull();
-        EWSituationManager.init();
-        EWPanelManager.init();
-        break;
+        // Section removed — redirecting to countries
+        this.switchSection('countries');
+        return;
       case 'news-feed':
         NewsFeedManager.init();
         break;

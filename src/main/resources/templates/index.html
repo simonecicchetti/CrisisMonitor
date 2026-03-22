@@ -250,10 +250,6 @@
                 <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></span>
                 <span class="sidebar-label">Intelligence</span>
             </button>
-            <button class="sidebar-item" data-section="early-warning">
-                <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><circle cx="12" cy="16" r="1" fill="currentColor"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg></span>
-                <span class="sidebar-label">Early Warning</span>
-            </button>
             <button class="sidebar-item" data-section="nowcast">
                 <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>
                 <span class="sidebar-label">Nowcast ML</span>
@@ -417,67 +413,6 @@
         </section>
 
         <!-- ==================== SECTION: EARLY WARNING ==================== -->
-        <section class="content-section" data-section="early-warning">
-
-            <!-- Hero: Prediction Summary with clickable counters -->
-            <div class="ew-hero">
-                <div class="ew-hero-title">
-                    <h2 id="section-title-ew" data-i18n="earlyWarning.title">Predictive Early Warning</h2>
-                    <span class="badge critical" data-i18n="earlyWarning.horizon">30-day horizon</span>
-                </div>
-                <div class="ew-hero-stats" id="ew-hero-stats">
-                    <div class="ew-stat ew-stat-clickable" data-level="CRITICAL">
-                        <span class="ew-stat-value" id="ew-critical-count">0</span>
-                        <span class="ew-stat-label">CRITICAL</span>
-                    </div>
-                    <div class="ew-stat ew-stat-clickable" data-level="ALERT">
-                        <span class="ew-stat-value" id="ew-alert-count">0</span>
-                        <span class="ew-stat-label">ALERT</span>
-                    </div>
-                    <div class="ew-stat ew-stat-clickable" data-level="WARNING">
-                        <span class="ew-stat-value" id="ew-warning-count">0</span>
-                        <span class="ew-stat-label">WARNING</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Cluster banner (conditional) -->
-            <div id="ew-cluster-banner" class="ew-cluster-banner" style="display: none;">
-                <div id="cluster-alerts-full" class="ew-clusters"></div>
-            </div>
-
-            <!-- Hidden container for IPC data (used by country detail cards) -->
-            <div id="ipc-alerts-container" style="display:none;"></div>
-
-            <!-- Risk Scores Split Panel -->
-            <div style="margin-top: var(--space-sm);">
-                <div class="ew-split-panel">
-                    <div class="ew-split-left">
-                        <div class="ew-split-header">
-                            <h3 data-i18n="earlyWarning.riskScores">Risk Scores</h3>
-                            <div class="ew-list-controls">
-                                <button class="ew-filter-toggle active" id="ew-filter-warning" data-filter="warning">WARNING+</button>
-                                <button class="ew-filter-toggle" id="ew-filter-all" data-filter="all">All</button>
-                            </div>
-                        </div>
-                        <div id="ew-country-list" class="ew-country-list">
-                            <div class="loading-placeholder">Loading risk scores...</div>
-                        </div>
-                    </div>
-                    <div class="ew-split-right">
-                        <div id="ew-country-detail" class="ew-country-detail">
-                            <div class="ew-detail-placeholder">Select a country to view details</div>
-                        </div>
-                    </div>
-                </div>
-                <!-- Hidden container for hero count updates -->
-                <div id="risk-scores-container" style="display:none;"></div>
-            </div>
-
-            <!-- Active Situations removed — covered by Intelligence reports and country AI analysis -->
-
-        </section>
-
         <!-- ==================== SECTION: NEWS FEED ==================== -->
         <section class="content-section" data-section="news-feed">
 
@@ -1451,16 +1386,13 @@
     <button class="bottom-nav-item" data-section="intelligence" aria-label="Intelligence">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
     </button>
-    <button class="bottom-nav-item" data-section="early-warning" aria-label="Early Warning">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 9v4"/><circle cx="12" cy="16" r="1" fill="currentColor"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-    </button>
     <button class="bottom-nav-item" data-section="nowcast" aria-label="Nowcast ML">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
     </button>
 </nav>
 
 <script th:src="@{/js/i18n.js(v=1)}"></script>
-<script th:src="@{/js/app.js(v=312)}"></script>
+<script th:src="@{/js/app.js(v=313)}"></script>
 <script th:src="@{/js/map.js(v=12)}"></script>
 
 </body>
