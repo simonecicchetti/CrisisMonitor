@@ -1101,12 +1101,23 @@ public class DailyBriefService {
     }
 
     private EditorialColumns generateColumns() {
-        if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) return null;
+        if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) {
+            log.warn("Editorial columns: DashScope API key not configured");
+            return null;
+        }
 
         // Gather media headlines and ReliefWeb reports separately
         @SuppressWarnings("unchecked")
         List<Map<String, String>> allHeadlines = cacheWarmupService.getFallback("newsHeadlines");
-        if (allHeadlines == null || allHeadlines.isEmpty()) return null;
+        if (allHeadlines == null || allHeadlines.isEmpty()) {
+            log.warn("Editorial columns: no headlines available (warmup may still be in progress)");
+            return null;
+        }
+        // Limit headlines to avoid timeout (Qwen struggles with very long context)
+        if (allHeadlines.size() > 30) {
+            allHeadlines = allHeadlines.subList(0, 30);
+        }
+        log.info("Editorial columns: generating from {} headlines", allHeadlines.size());
 
         StringBuilder mediaCtx = new StringBuilder("TODAY'S MEDIA HEADLINES:\n");
         StringBuilder reliefCtx = new StringBuilder("TODAY'S HUMANITARIAN REPORTS:\n");
@@ -1145,34 +1156,9 @@ public class DailyBriefService {
         try {
             Map<String, Object> request = new LinkedHashMap<>();
             request.put("model", "qwen3.5-plus");
-            request.put("max_tokens", 800);
-            request.put("enable_search", true);
-            request.put("messages", List.of(
-                Map.of("role", "system", "content", "You are a senior crisis correspondent writing in the style of Robert Fisk — direct, unflinching, grounded in specifics, never diplomatic. You see through official narratives."),
-                Map.of("role", "user", "content", prompt)
-            ));
-
-            String response = qwenClient.post()
-                    .uri("/chat/completions")
-                    .header("Authorization", "Bearer " + dashscopeApiKey)
-                    .header("Content-Type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(45))
-                    .block();
-
-            JsonNode root = objectMapper.readTree(response);
-            String content = "";
-            if (root.has("choices") && root.path("choices").size() > 0) {
-                content = root.path("choices").path(0).path("message").path("content").asText("");
-            }
-            if (content.isBlank()) return null;
-
-            int js = content.indexOf('{');
-            int je = content.lastIndexOf('}');
-            if (js < 0 || je <= js) return null;
-            JsonNode json = objectMapper.readTree(content.substring(js, je + 1));
+            String rawContent = callQwen(FISK_STYLE, prompt, 800, false);
+            JsonNode json = extractJson(rawContent);
+            if (json == null) return null;
 
             EditorialColumns cols = new EditorialColumns();
             cols.setGlobalPulseHeadline(json.path("globalPulseHeadline").asText(""));
@@ -1205,24 +1191,9 @@ public class DailyBriefService {
             "{\"globalPulseHeadline\":\"...\",\"globalPulseBody\":\"...\",\"fieldDispatchHeadline\":\"...\",\"fieldDispatchBody\":\"...\"}";
 
         try {
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", "qwen3.5-plus");
-            request.put("max_tokens", 600);
-            request.put("messages", List.of(Map.of("role", "user", "content", prompt)));
-
-            String response = qwenClient.post()
-                    .uri("/chat/completions")
-                    .header("Authorization", "Bearer " + dashscopeApiKey)
-                    .header("Content-Type", "application/json")
-                    .bodyValue(request).retrieve().bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30)).block();
-
-            JsonNode root = objectMapper.readTree(response);
-            String content = root.has("choices") && root.path("choices").size() > 0
-                ? root.path("choices").path(0).path("message").path("content").asText("") : "";
-            int js = content.indexOf('{'); int je = content.lastIndexOf('}');
-            if (js < 0 || je <= js) return null;
-            JsonNode json = objectMapper.readTree(content.substring(js, je + 1));
+            String rawContent = callQwen(AMANPOUR_STYLE, prompt, 600, false);
+            JsonNode json = extractJson(rawContent);
+            if (json == null) return null;
 
             EditorialColumns cols = new EditorialColumns();
             cols.setGlobalPulseHeadline(json.path("globalPulseHeadline").asText(""));
