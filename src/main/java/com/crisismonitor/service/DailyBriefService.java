@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
  *
  * Stored in Firestore: dailyBriefs/{date} (e.g., "2026-03-21")
  * Supports multi-language via `language` parameter.
- * Cost: ~$0.002/day (1 Qwen call). Fisk style for analysis, Amanpour for translations.
+ * Cost: ~$0.002/day. Uses qwen3.5-plus for generation, qwen-flash for translations.
  */
 @Slf4j
 @Service
@@ -1197,32 +1197,8 @@ public class DailyBriefService {
             "{\"globalPulseHeadline\":\"...\",\"globalPulseBody\":\"...\",\"fieldDispatchHeadline\":\"...\",\"fieldDispatchBody\":\"...\"}";
 
         try {
-            // Use qwen-flash for translations — much faster than qwen3.5-plus
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", "qwen-flash");
-            request.put("max_tokens", 600);
-            request.put("messages", List.of(
-                Map.of("role", "system", "content", "You are a professional translator. Translate accurately, preserving analytical tone and all numbers. Respond with JSON only, no markdown."),
-                Map.of("role", "user", "content", prompt)
-            ));
-
-            String response = qwenClient.post()
-                    .uri("/chat/completions")
-                    .header("Authorization", "Bearer " + dashscopeApiKey)
-                    .header("Content-Type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30))
-                    .block();
-
-            if (response == null || response.isBlank()) return null;
-            JsonNode root = objectMapper.readTree(response);
-            String content = "";
-            if (root.has("choices") && root.path("choices").size() > 0) {
-                content = root.path("choices").path(0).path("message").path("content").asText("");
-            }
-            JsonNode json = extractJson(content);
+            String rawContent = callQwenFlash(prompt, 600);
+            JsonNode json = extractJson(rawContent);
             if (json == null) return null;
 
             EditorialColumns cols = new EditorialColumns();
@@ -1295,6 +1271,49 @@ public class DailyBriefService {
             return null;
         } catch (Exception e) {
             log.error("callQwen failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Call Qwen Flash for translations — fast, cheap, good enough for translation tasks.
+     * Returns the content text or null on error.
+     */
+    private String callQwenFlash(String userPrompt, int maxTokens) {
+        if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) {
+            log.warn("DashScope API key not configured");
+            return null;
+        }
+        try {
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("model", "qwen-flash");
+            request.put("max_tokens", maxTokens);
+            request.put("messages", List.of(
+                Map.of("role", "system", "content", "You are a professional translator. Translate accurately, preserving analytical tone and all numbers. Respond with JSON only, no markdown."),
+                Map.of("role", "user", "content", userPrompt)
+            ));
+
+            String response = qwenClient.post()
+                    .uri("/chat/completions")
+                    .header("Authorization", "Bearer " + dashscopeApiKey)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(45))
+                    .block();
+
+            if (response == null || response.isBlank()) {
+                log.warn("callQwenFlash: empty response");
+                return null;
+            }
+            JsonNode root = objectMapper.readTree(response);
+            if (root.has("choices") && root.path("choices").size() > 0) {
+                return root.path("choices").path(0).path("message").path("content").asText("");
+            }
+            return null;
+        } catch (Exception e) {
+            log.error("callQwenFlash failed: {}", e.getMessage());
             return null;
         }
     }
