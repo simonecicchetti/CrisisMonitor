@@ -149,7 +149,10 @@ public class IntelligenceSnapshotService {
                 "Mix reactive (from data) and proactive (from analysis). No specific dates. Use probabilistic language. " +
                 "Example: '• [SHORT-TERM] Given SDG 336% devaluation, Khartoum cereal prices are likely to exceed 300% of 5-year average (high confidence).' " +
                 "Example: '• [MEDIUM-TERM] Chile migration enforcement policies may trigger increased Peru border crossings (medium confidence).' " +
-                "Include at least 2 proactive predictions. NEVER mention agency names (FAO, WFP, UNHCR, WHO) — describe situations, not sources.>\",\n" +
+                "Include at least 2 proactive predictions. NEVER mention agency names. " +
+                "CRITICAL: every prediction must be CREDIBLE and PROBABLE — grounded in specific data from the snapshot. " +
+                "Do NOT make dramatic predictions for shock value. If data doesn't support a prediction, don't make it. " +
+                "A boring but accurate prediction is infinitely more valuable than a dramatic but baseless one.>\",\n" +
             "  \"riskEscalations\": \"<List of 5-8 countries most likely to see significant deterioration in 14 days, " +
                 "with one-line data-backed reason. Include at least 1-2 countries not currently flagged as high-risk but showing early warning signs.>\"\n" +
             "}";
