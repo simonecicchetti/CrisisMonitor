@@ -4181,13 +4181,11 @@ const SidebarManager = {
     });
 
     // Restore saved section or default to overview
+    // ALWAYS call switchSection (not just loadSectionData) to ensure
+    // all sections get display:none and only the active one shows
     const savedSection = localStorage.getItem('notamy-section') || 'overview';
     const sectionExists = document.querySelector(`.sidebar-item[data-section="${savedSection}"]`);
-    if (sectionExists && savedSection !== 'overview') {
-      this.switchSection(savedSection);
-    } else {
-      this.loadSectionData('overview');
-    }
+    this.switchSection(sectionExists ? savedSection : 'overview');
   },
 
   switchSection(sectionId) {
@@ -4206,13 +4204,15 @@ const SidebarManager = {
     sections.forEach(section => {
       const ds = section.dataset.section;
       // Show drivers section when countries is active (drivers merged into countries)
+      let isActive;
       if (ds === 'drivers') {
-        section.classList.toggle('active', sectionId === 'countries');
+        isActive = sectionId === 'countries';
       } else {
-        section.classList.toggle('active', ds === sectionId);
+        isActive = ds === sectionId;
       }
-      // Clear any inline display style so CSS class takes over
-      section.style.removeProperty('display');
+      section.classList.toggle('active', isActive);
+      // Force display via inline style to ensure sections are properly hidden
+      section.style.display = isActive ? 'block' : 'none';
     });
 
     // Sync bottom nav
