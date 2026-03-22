@@ -49,6 +49,7 @@ public class CacheWarmupService {
     private final RssService rssService;
     private final WorldBankService worldBankService;
     private final HungerMapService hungerMapService;
+    private final GDACSService gdacsService;
 
     // Track warmup status
     private final AtomicBoolean warmupComplete = new AtomicBoolean(false);
@@ -439,8 +440,27 @@ public class CacheWarmupService {
                 }
             }
 
+            // GDACS disaster alerts
+            try {
+                var gdacsAlerts = gdacsService.getCurrentAlerts();
+                if (gdacsAlerts != null) {
+                    for (var alert : gdacsAlerts) {
+                        Map<String, String> h = new java.util.HashMap<>();
+                        h.put("title", alert.getTitle());
+                        h.put("source", "GDACS");
+                        h.put("type", "Disaster");
+                        if (alert.getIso3() != null) h.put("iso3", alert.getIso3());
+                        allHeadlines.add(h);
+                    }
+                    memoryFallback.put("gdacsAlerts", gdacsAlerts);
+                    log.info("GDACS alerts warmed: {} alerts", gdacsAlerts.size());
+                }
+            } catch (Exception e) {
+                log.debug("GDACS warmup: {}", e.getMessage());
+            }
+
             memoryFallback.put("newsHeadlines", allHeadlines);
-            log.info("News headlines warmed: {} total (RSS + ReliefWeb)", allHeadlines.size());
+            log.info("News headlines warmed: {} total (RSS + ReliefWeb + GDACS)", allHeadlines.size());
         } catch (Exception e) {
             log.error("News headlines warmup failed: {}", e.getMessage());
         }

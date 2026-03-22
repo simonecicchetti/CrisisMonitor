@@ -67,6 +67,7 @@ public class ApiController {
     private final FAOFoodPriceService faoFoodPriceService;
     private final QwenScoringService qwenScoringService;
     private final DailyBriefService dailyBriefService;
+    private final GDACSService gdacsService;
 
     @org.springframework.beans.factory.annotation.Value("${ADMIN_API_KEY:notamy-admin-2026}")
     private String adminApiKey;
@@ -862,6 +863,16 @@ public class ApiController {
         result.put("trend24m", recent);
         result.put("source", "FAO Food Price Index (FFPI) — base 2014-2016=100");
         return result;
+    }
+
+    // ==========================================
+    // GDACS DISASTER ALERTS
+    // ==========================================
+
+    @GetMapping("/disasters/alerts")
+    public Object getDisasterAlerts() {
+        var alerts = gdacsService.getCurrentAlerts();
+        return Map.of("alerts", alerts, "count", alerts.size());
     }
 
     // ==========================================

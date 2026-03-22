@@ -223,6 +223,15 @@ public class DailyBriefService {
                    .append(" (").append(h.getOrDefault("source", "")).append(")\n"));
         }
 
+        // GDACS disaster alerts
+        @SuppressWarnings("unchecked")
+        List<GDACSService.DisasterAlert> gdacsAlerts = cacheWarmupService.getFallback("gdacsAlerts");
+        if (gdacsAlerts != null && !gdacsAlerts.isEmpty()) {
+            ctx.append("\nACTIVE NATURAL DISASTERS:\n");
+            gdacsAlerts.stream().limit(10).forEach(a ->
+                ctx.append("  [").append(a.getAlertLevel()).append("] ").append(a.getTitle()).append("\n"));
+        }
+
         // Verified conflicts — single source of truth
         ctx.append("\nVERIFIED ARMED CONFLICTS (analyst-confirmed):\n");
         com.crisismonitor.config.VerifiedConflicts.CONFLICTS.forEach((iso, desc) ->

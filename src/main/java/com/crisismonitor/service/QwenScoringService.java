@@ -289,6 +289,22 @@ public class QwenScoringService {
                 }
             }
         } catch (Exception e) { /* skip */ }
+
+        // GDACS natural disaster alerts
+        try {
+            @SuppressWarnings("unchecked")
+            var gdacsAlerts = (List<GDACSService.DisasterAlert>) cacheWarmupService.getFallback("gdacsAlerts");
+            if (gdacsAlerts != null) {
+                var countryAlerts = gdacsAlerts.stream()
+                    .filter(a -> iso3.equals(a.getIso3()))
+                    .collect(Collectors.toList());
+                if (!countryAlerts.isEmpty()) {
+                    ctx.append("\nNATURAL DISASTER ALERTS (GDACS):\n");
+                    countryAlerts.forEach(a ->
+                        ctx.append("  [").append(a.getAlertLevel()).append("] ").append(a.getTitle() != null ? a.getTitle() : "").append("\n"));
+                }
+            }
+        } catch (Exception e) { /* skip */ }
     }
 
     private String buildScoringPrompt(String countryName, String context) {

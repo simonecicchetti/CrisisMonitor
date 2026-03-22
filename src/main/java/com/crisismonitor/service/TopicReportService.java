@@ -609,16 +609,17 @@ public class TopicReportService {
         ctx.append("Date: ").append(LocalDate.now()).append("\n\n");
 
         // Inject verified conflict info for countries in this report
+        // Verified as of Mar 2026 — Qwen web search will supplement with latest developments
         Map<String, String> verifiedConflicts = Map.ofEntries(
-            Map.entry("PSE", "Active war: Israeli military operations in Gaza, siege, ground invasion"),
-            Map.entry("IRN", "Active war: US/Israel-Iran military conflict since Feb 2026, Hormuz blockade, ongoing airstrikes"),
-            Map.entry("UKR", "Active war: Russia-Ukraine full-scale invasion since Feb 2022"),
-            Map.entry("SDN", "Civil war: SAF vs RSF, 150K+ estimated dead, widespread displacement"),
-            Map.entry("ISR", "Multi-front conflict: Gaza operations + Iran war"),
-            Map.entry("LBN", "Post-2024 war, fragile ceasefire, border tensions"),
-            Map.entry("MMR", "Nationwide civil war: resistance forces vs military junta"),
-            Map.entry("SYR", "Multi-front civil war, post-Assad transition instability"),
-            Map.entry("YEM", "Houthi conflict + US strikes + Red Sea/Hormuz maritime operations")
+            Map.entry("PSE", "Active war (verified Mar 2026): Israeli military operations in Gaza, siege, ground invasion"),
+            Map.entry("IRN", "Active war (verified Mar 2026): US/Israel-Iran military conflict since Feb 2026, Hormuz blockade, ongoing airstrikes"),
+            Map.entry("UKR", "Active war (verified Mar 2026): Russia-Ukraine full-scale invasion since Feb 2022"),
+            Map.entry("SDN", "Civil war (verified Mar 2026): SAF vs RSF, 150K+ estimated dead, widespread displacement"),
+            Map.entry("ISR", "Multi-front conflict (verified Mar 2026): Gaza operations + Iran war"),
+            Map.entry("LBN", "Post-2024 war (verified Mar 2026): fragile ceasefire, border tensions, Iran spillover"),
+            Map.entry("MMR", "Nationwide civil war (verified Mar 2026): resistance forces vs military junta, junta controls ~21% territory"),
+            Map.entry("SYR", "Post-Assad transition instability (verified Mar 2026): multi-faction governance, security fragmentation"),
+            Map.entry("YEM", "Houthi conflict (verified Mar 2026): US strikes + Red Sea/Hormuz maritime operations")
         );
         boolean hasVerified = false;
         for (String iso3 : countries) {
@@ -826,12 +827,39 @@ public class TopicReportService {
                 }
 
                 case "migration" -> {
-                    // Migration: IDPs + refugees (the original template makes sense here)
+                    // Migration: IDPs + refugees + risk context + situations
                     ctx.append("DISPLACEMENT DATA:\n");
                     for (CountryMetrics cm : countryMatrix.stream().limit(10).collect(Collectors.toList())) {
                         ctx.append(String.format("  %s: stock=%s, signal=%d\n",
                             cm.getCountry(), cm.getStockData(), cm.getSignalCount()));
                     }
+
+                    // Risk scores for displacement drivers (conflict + climate push people)
+                    if (riskScores != null) {
+                        ctx.append("\nDISPLACEMENT DRIVER SCORES:\n");
+                        riskScores.stream()
+                            .filter(rs -> countries.contains(rs.getIso3()))
+                            .sorted((a, b) -> b.getScore() - a.getScore())
+                            .limit(10)
+                            .forEach(rs -> ctx.append(String.format("  %s: overall=%d/100 (%s), conflict=%d, climate=%d, food=%d\n",
+                                rs.getCountryName(), rs.getScore(), rs.getRiskLevel(),
+                                rs.getConflictScore(), rs.getClimateScore(), rs.getFoodSecurityScore())));
+                    }
+
+                    // Active situations driving displacement
+                    try {
+                        @SuppressWarnings("unchecked")
+                        var sitReport = (SituationDetectionService.SituationReport) cacheWarmupService.getFallback("activeSituations");
+                        if (sitReport != null && sitReport.getSituations() != null) {
+                            ctx.append("\nACTIVE SITUATIONS DRIVING DISPLACEMENT:\n");
+                            sitReport.getSituations().stream()
+                                .filter(s -> countries.contains(s.getIso3()))
+                                .limit(5)
+                                .forEach(sit -> ctx.append("  - ").append(sit.getCountryName() != null ? sit.getCountryName() : "")
+                                    .append(": ").append(sit.getSituationLabel() != null ? sit.getSituationLabel() : "")
+                                    .append(" (").append(sit.getSeverity() != null ? sit.getSeverity() : "").append(")\n"));
+                        }
+                    } catch (Exception e) { /* skip */ }
                 }
 
                 default -> {
@@ -1067,7 +1095,7 @@ public class TopicReportService {
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(String.class)
-                .timeout(Duration.ofSeconds(60))
+                .timeout(Duration.ofSeconds(120))
                 .block();
 
             JsonNode root = objectMapper.readTree(response);
