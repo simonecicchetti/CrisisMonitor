@@ -1299,20 +1299,27 @@ public class DailyBriefService {
 
     private EditorialColumns translateColumns(EditorialColumns en, String targetLang) {
         String langName = SUPPORTED_LANGUAGES.getOrDefault(targetLang, targetLang);
+        log.info("Translating editorial columns to {} ({})", langName, targetLang);
+
         String source = "globalPulseHeadline: " + en.getGlobalPulseHeadline() + "\n" +
             "globalPulseBody: " + en.getGlobalPulseBody() + "\n" +
             "fieldDispatchHeadline: " + en.getFieldDispatchHeadline() + "\n" +
             "fieldDispatchBody: " + en.getFieldDispatchBody();
 
         String prompt = "Translate this editorial content from English to " + langName + ".\n" +
-            "Keep analytical tone, numbers as-is.\n\n" + source + "\n\n" +
-            "RESPOND IN JSON (no markdown):\n" +
+            "Keep analytical tone, numbers/percentages as-is, country names in " + langName + ".\n\n" +
+            source + "\n\n" +
+            "RESPOND IN JSON (no markdown, no backticks):\n" +
             "{\"globalPulseHeadline\":\"...\",\"globalPulseBody\":\"...\",\"fieldDispatchHeadline\":\"...\",\"fieldDispatchBody\":\"...\"}";
 
         try {
-            String rawContent = callQwenFlash(prompt, 600);
+            String rawContent = callQwenFlash(prompt, 1200);
+            log.info("Column translation raw response length: {}", rawContent != null ? rawContent.length() : 0);
             JsonNode json = extractJson(rawContent);
-            if (json == null) return null;
+            if (json == null) {
+                log.warn("Column translation: extractJson returned null for lang={}", targetLang);
+                return null;
+            }
 
             EditorialColumns cols = new EditorialColumns();
             cols.setGlobalPulseHeadline(json.path("globalPulseHeadline").asText(""));
