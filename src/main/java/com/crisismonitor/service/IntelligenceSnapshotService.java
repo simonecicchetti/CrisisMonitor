@@ -119,7 +119,9 @@ public class IntelligenceSnapshotService {
             "'indicators point toward', 'conditions are building for'.\n" +
             "- Distinguish confidence: 'strong indicators suggest' (high) vs 'early signals point to' (medium) vs 'there is a possibility' (low).\n" +
             "- Tie every assessment to a data point or verifiable signal.\n" +
-            "- Write like you're briefing a UN Emergency Relief Coordinator who decides resource pre-positioning TODAY.";
+            "- NEVER mention agency names (FAO, WFP, UNHCR, WHO, IOM). Describe situations and data, not sources.\n" +
+            "- NEVER use specific dates in predictions. Use [SHORT-TERM] (1-2 weeks) or [MEDIUM-TERM] (1-3 months).\n" +
+            "- Write like you're briefing a decision-maker who allocates humanitarian resources.";
 
         String prompt = "INTELLIGENCE SNAPSHOT — " + LocalDate.now() + "\n\n" + snapshot + "\n\n" +
             "Produce a PROACTIVE intelligence briefing. Go beyond what the data shows — identify what's BUILDING.\n\n" +
@@ -143,11 +145,11 @@ public class IntelligenceSnapshotService {
                 "'[Trigger] → [First-order effect] → [Second-order effect] → [Humanitarian impact]'. " +
                 "Example: 'Hormuz blockade → oil price spike → fertilizer cost increase → planting season disruption in East Africa → " +
                 "food insecurity surge Q3 2026'. Be specific, cite countries.>\",\n" +
-            "  \"keyPredictions\": \"<7-10 specific, dated predictions in bullet format. Mix reactive (from data) and proactive (from analysis). " +
-                "Each must cite evidence. Use probabilistic language. " +
-                "Example: '• By April 5: Given SDG 336% devaluation, Khartoum cereal prices could exceed 300% of 5-year average (high confidence).' " +
-                "Example: '• Within 30 days: Chile's proposed migration enforcement policy may trigger 15-20% increase in Peru border crossings (medium confidence, based on policy timeline).' " +
-                "Include at least 2 proactive predictions about threats not yet in the data.>\",\n" +
+            "  \"keyPredictions\": \"<7-10 predictions in bullet format, each tagged [SHORT-TERM] (1-2 weeks) or [MEDIUM-TERM] (1-3 months). " +
+                "Mix reactive (from data) and proactive (from analysis). No specific dates. Use probabilistic language. " +
+                "Example: '• [SHORT-TERM] Given SDG 336% devaluation, Khartoum cereal prices are likely to exceed 300% of 5-year average (high confidence).' " +
+                "Example: '• [MEDIUM-TERM] Chile migration enforcement policies may trigger increased Peru border crossings (medium confidence).' " +
+                "Include at least 2 proactive predictions. NEVER mention agency names (FAO, WFP, UNHCR, WHO) — describe situations, not sources.>\",\n" +
             "  \"riskEscalations\": \"<List of 5-8 countries most likely to see significant deterioration in 14 days, " +
                 "with one-line data-backed reason. Include at least 1-2 countries not currently flagged as high-risk but showing early warning signs.>\"\n" +
             "}";
