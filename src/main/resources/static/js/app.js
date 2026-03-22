@@ -4204,7 +4204,13 @@ const SidebarManager = {
 
     // Update section visibility
     sections.forEach(section => {
-      section.classList.toggle('active', section.dataset.section === sectionId);
+      const ds = section.dataset.section;
+      // Show drivers section when countries is active (drivers merged into countries)
+      if (ds === 'drivers') {
+        section.classList.toggle('active', sectionId === 'countries');
+      } else {
+        section.classList.toggle('active', ds === sectionId);
+      }
     });
 
     // Sync bottom nav
@@ -4258,20 +4264,7 @@ const SidebarManager = {
         StructuralIndicesManager.init();
         // Regional Pulse lives in Countries now
         OverviewManager.loadRegionalPulse();
-        // Move Drivers content into Countries (once)
-        if (!this._driversMoved) {
-          const driversSection = document.querySelector('.content-section[data-section="drivers"]');
-          const driversTarget = document.getElementById('drivers-in-countries');
-          if (driversSection && driversTarget && driversTarget.children.length === 0) {
-            // Move inner content, keep section hidden
-            while (driversSection.firstChild) {
-              driversTarget.appendChild(driversSection.firstChild);
-            }
-            driversSection.style.display = 'none';
-            this._driversMoved = true;
-          }
-        }
-        // Initialize driver tabs
+        // Initialize driver tabs (drivers content stays in its own section, shown via CSS)
         if (typeof DriverTabManager !== 'undefined') DriverTabManager.init();
         if (typeof IntelligenceManager !== 'undefined') IntelligenceManager.loadWHOOutbreaks();
         break;
