@@ -55,14 +55,13 @@ public class ClaudeAnalysisService {
     private final RedisTemplate<String, Object> redisTemplate;
     private final org.springframework.cache.CacheManager cacheManager;
 
-    @Value("${anthropic.api.key:}")
+    @Value("${DASHSCOPE_API_KEY:}")
     private String apiKey;
 
-    @Value("${anthropic.model:claude-3-haiku-20240307}")
-    private String model;
+    private final String model = "qwen3.5-plus";
 
     private final WebClient webClient = WebClient.builder()
-            .baseUrl("https://api.anthropic.com/v1")
+            .baseUrl("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
             .build();
 
     // General-purpose WebClient for RSS/external fetches
@@ -1162,35 +1161,10 @@ public class ClaudeAnalysisService {
         try {
             String systemPrompt = "You are a humanitarian intelligence analyst providing regional situation briefs. Be concise, data-driven, and actionable.";
 
-            ObjectNode requestBody = objectMapper.createObjectNode();
-            requestBody.put("model", model);
-            requestBody.put("max_tokens", 1000);
-            requestBody.put("system", systemPrompt);
-
-            ArrayNode messages = objectMapper.createArrayNode();
-            ObjectNode userMessage = objectMapper.createObjectNode();
-            userMessage.put("role", "user");
-            userMessage.put("content", prompt);
-            messages.add(userMessage);
-            requestBody.set("messages", messages);
-
-            String response = webClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(requestBody.toString())
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30))
-                    .block();
-
-            if (response == null) {
-                throw new RuntimeException("Empty response from Claude API");
+            String content = callQwen(systemPrompt, prompt, 1000, true);
+            if (content == null) {
+                throw new RuntimeException("Empty response from Qwen API");
             }
-
-            JsonNode responseJson = objectMapper.readTree(response);
-            String content = responseJson.path("content").get(0).path("text").asText();
 
             return AIAnalysis.builder()
                     .scope("region")
@@ -1205,7 +1179,7 @@ public class ClaudeAnalysisService {
                     .build();
 
         } catch (Exception e) {
-            log.error("Error calling Claude for regional analysis: {}", e.getMessage());
+            log.error("Error calling Qwen for regional analysis: {}", e.getMessage());
             return AIAnalysis.builder()
                     .scope("region")
                     .region(region)
@@ -1388,7 +1362,7 @@ public class ClaudeAnalysisService {
                     .scope("country")
                     .countryIso3(iso3)
                     .countryName(countryName)
-                    .narrative("AI analysis is not configured. Set anthropic.api.key to enable narrative briefings.")
+                    .narrative("AI analysis is not configured. Set DASHSCOPE_API_KEY to enable narrative briefings.")
                     .sources(sources)
                     .generatedAt(LocalDateTime.now())
                     .model(model)
@@ -1401,34 +1375,15 @@ public class ClaudeAnalysisService {
                     "If the data includes a CRISIS CONTEXT section, treat it as verified ground truth and lead with it. " +
                     "Lead with real-world context — wars, coups, famines, geopolitical events — not scores or indicators. " +
                     "Structure every response with exactly 4 sections: BOTTOM LINE:, CURRENT SITUATION:, KEY RISKS:, OUTLOOK:. " +
-                    "Each header on its own line followed by content. Write in analytical prose, no bullet points.";
+                    "Each header on its own line followed by content. Write in analytical prose, no bullet points. " +
+                    "Start your response with BOTTOM LINE:";
 
-            // Prefill assistant response to force structured format
-            Map<String, Object> request = Map.of(
-                    "model", model,
-                    "max_tokens", 1500,
-                    "system", systemMsg,
-                    "messages", List.of(
-                            Map.of("role", "user", "content", prompt),
-                            Map.of("role", "assistant", "content", "BOTTOM LINE:")
-                    )
-            );
-
-            String response = webClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(45))
-                    .block();
-
-            JsonNode root = objectMapper.readTree(response);
-            String rawNarrative = root.path("content").get(0).path("text").asText();
-            // Prepend "BOTTOM LINE:" since it was the prefilled assistant content (not in response)
-            String narrative = "BOTTOM LINE:" + rawNarrative;
+            String rawNarrative = callQwen(systemMsg, prompt, 1500, true);
+            if (rawNarrative == null) {
+                throw new RuntimeException("Empty response from Qwen API");
+            }
+            // Ensure narrative starts with "BOTTOM LINE:" (Qwen may or may not include it)
+            String narrative = rawNarrative.startsWith("BOTTOM LINE:") ? rawNarrative : "BOTTOM LINE:" + rawNarrative;
 
             return AIAnalysis.builder()
                     .scope("country")
@@ -1442,7 +1397,7 @@ public class ClaudeAnalysisService {
                     .build();
 
         } catch (Exception e) {
-            log.error("Claude narrative call failed for {}: {}", iso3, e.getMessage());
+            log.error("Qwen narrative call failed for {}: {}", iso3, e.getMessage());
             return AIAnalysis.builder()
                     .scope("country")
                     .countryIso3(iso3)
@@ -1496,42 +1451,27 @@ public class ClaudeAnalysisService {
 
     private AIAnalysis callClaude(String prompt, String scope, String iso3, String countryName, NewsSignal newsSignal) {
         if (apiKey == null || apiKey.isBlank()) {
-            log.warn("Anthropic API key not configured, returning mock analysis");
+            log.warn("DashScope API key not configured, returning mock analysis");
             return mockAnalysis(scope, iso3, countryName);
         }
 
         try {
-            Map<String, Object> request = Map.of(
-                    "model", model,
-                    "max_tokens", 1024,
-                    "messages", List.of(Map.of("role", "user", "content", prompt))
-            );
-
-            String response = webClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30))
-                    .block();
-
-            return parseClaudeResponse(response, scope, iso3, countryName, newsSignal);
+            String systemPrompt = "You are a humanitarian early warning analyst. Respond with structured JSON when requested.";
+            String content = callQwen(systemPrompt, prompt, 1024, true);
+            if (content == null) {
+                throw new RuntimeException("Empty response from Qwen API");
+            }
+            return parseQwenResponse(content, scope, iso3, countryName, newsSignal);
 
         } catch (Exception e) {
-            log.error("Claude API call failed: {}", e.getMessage());
+            log.error("Qwen API call failed: {}", e.getMessage());
             return mockAnalysis(scope, iso3, countryName);
         }
     }
 
-    private AIAnalysis parseClaudeResponse(String response, String scope, String iso3, String countryName, NewsSignal newsSignal) {
+    private AIAnalysis parseQwenResponse(String content, String scope, String iso3, String countryName, NewsSignal newsSignal) {
         try {
-            JsonNode root = objectMapper.readTree(response);
-            String content = root.path("content").get(0).path("text").asText();
-
-            // Extract JSON from response (Claude might wrap it in markdown)
+            // Extract JSON from response (model might wrap it in markdown)
             String json = content;
             if (content.contains("```json")) {
                 json = content.substring(content.indexOf("```json") + 7);
@@ -1577,7 +1517,7 @@ public class ClaudeAnalysisService {
                     .build();
 
         } catch (Exception e) {
-            log.error("Failed to parse Claude response: {}", e.getMessage());
+            log.error("Failed to parse Qwen response: {}", e.getMessage());
             return mockAnalysis(scope, iso3, countryName);
         }
     }
@@ -1588,19 +1528,19 @@ public class ClaudeAnalysisService {
                 .countryIso3(iso3)
                 .countryName(countryName)
                 .keyFindings(List.of(
-                        "Configure anthropic.api.key in application.properties to enable AI analysis",
+                        "Configure DASHSCOPE_API_KEY to enable AI analysis",
                         "Mock data: Multiple countries show converging climate-conflict stress patterns",
                         "Mock data: Currency instability correlating with food insecurity in Sahel region",
                         "Mock data: Regional spillover effects visible from Sudan to Chad and South Sudan",
                         "Mock data: Economic pressure building in East Africa following drought conditions"
                 ))
                 .drivers(List.of(
-                        "Configure API key for real analysis",
+                        "Configure DASHSCOPE_API_KEY for real analysis",
                         "Mock driver: Climate-induced displacement",
                         "Mock driver: Cross-border conflict dynamics"
                 ))
                 .watchList(List.of(
-                        "Set anthropic.api.key property",
+                        "Set DASHSCOPE_API_KEY env var",
                         "Mock: Monitor rainy season developments",
                         "Mock: Track currency movements"
                 ))
@@ -1653,7 +1593,7 @@ public class ClaudeAnalysisService {
                     .iso3(iso3)
                     .countryName(getCountryName(iso3))
                     .score(0)
-                    .reasoning("API key not configured. Please set anthropic.api.key in application.properties")
+                    .reasoning("API key not configured. Please set DASHSCOPE_API_KEY environment variable")
                     .build();
         }
 
@@ -1671,24 +1611,13 @@ public class ClaudeAnalysisService {
         String prompt = buildDeepAnalysisPrompt(dataPack, getCountryName(iso3));
 
         try {
-            Map<String, Object> request = Map.of(
-                    "model", model,
-                    "max_tokens", 2048,
-                    "messages", List.of(Map.of("role", "user", "content", prompt))
-            );
+            String systemPrompt = "You are a humanitarian early warning analyst providing contextual risk scoring. Respond with structured JSON.";
+            String content = callQwen(systemPrompt, prompt, 2048, true);
+            if (content == null) {
+                throw new RuntimeException("Empty response from Qwen API");
+            }
 
-            String response = webClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(45))
-                    .block();
-
-            DeepAnalysisResult result = parseDeepAnalysisResponse(response, iso3);
+            DeepAnalysisResult result = parseDeepAnalysisResponse(content, iso3);
             result.setDurationMs(System.currentTimeMillis() - start);
             result.setModel(model);
 
@@ -1880,11 +1809,8 @@ Weights must sum to 100. Consider cascade effects and non-linear amplification.
 """.formatted(countryName, dataPack);
     }
 
-    private DeepAnalysisResult parseDeepAnalysisResponse(String response, String iso3) {
+    private DeepAnalysisResult parseDeepAnalysisResponse(String content, String iso3) {
         try {
-            JsonNode root = objectMapper.readTree(response);
-            String content = root.path("content").get(0).path("text").asText();
-
             // Extract JSON from response
             String json = content;
             if (content.contains("```json")) {
@@ -2033,28 +1959,17 @@ Weights must sum to 100. Consider cascade effects and non-linear amplification.
                     .build();
         }
 
-        // Step 2: Build batch prompt for Claude
+        // Step 2: Build batch prompt for Qwen
         String prompt = buildSituationDetectionPrompt(triggeredCountries);
 
         try {
-            Map<String, Object> request = Map.of(
-                    "model", model,
-                    "max_tokens", 3000,
-                    "messages", List.of(Map.of("role", "user", "content", prompt))
-            );
+            String systemPrompt = "You are a humanitarian early warning analyst detecting emerging crisis situations. Respond with structured JSON.";
+            String content = callQwen(systemPrompt, prompt, 3000, true);
+            if (content == null) {
+                throw new RuntimeException("Empty response from Qwen API");
+            }
 
-            String response = webClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(45))
-                    .block();
-
-            SituationDetectionResult result = parseSituationDetectionResponse(response);
+            SituationDetectionResult result = parseSituationDetectionResponse(content);
             result.setAnalyzedCountries(triggeredCountries.size());
             result.setDurationMs(System.currentTimeMillis() - start);
             result.setModel(model);
@@ -2273,11 +2188,8 @@ Be precise. Only report situations with clear evidence. Empty array is valid if 
         return sb.toString();
     }
 
-    private SituationDetectionResult parseSituationDetectionResponse(String response) {
+    private SituationDetectionResult parseSituationDetectionResponse(String content) {
         try {
-            JsonNode root = objectMapper.readTree(response);
-            String content = root.path("content").get(0).path("text").asText();
-
             // Extract JSON from response
             String json = content;
             if (content.contains("```json")) {
@@ -2457,7 +2369,7 @@ Be precise. Only report situations with clear evidence. Empty array is valid if 
         if (apiKey == null || apiKey.isBlank()) {
             return QAResponse.builder()
                     .question(question)
-                    .answer("AI analysis is not configured. Set anthropic.api.key to enable Q&A.")
+                    .answer("AI analysis is not configured. Set DASHSCOPE_API_KEY to enable Q&A.")
                     .sources(List.of())
                     .generatedAt(LocalDateTime.now())
                     .build();
@@ -2510,27 +2422,13 @@ Be precise. Only report situations with clear evidence. Empty array is valid if 
         // 4. Build prompt
         String prompt = buildQAPrompt(question, sourceContext.toString(), sources.size());
 
-        // 5. Call Claude
+        // 5. Call Qwen
         try {
-            Map<String, Object> request = Map.of(
-                    "model", model,
-                    "max_tokens", 1024,
-                    "messages", List.of(Map.of("role", "user", "content", prompt))
-            );
-
-            String response = webClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30))
-                    .block();
-
-            JsonNode root = objectMapper.readTree(response);
-            String answer = root.path("content").get(0).path("text").asText();
+            String systemPrompt = "You are a humanitarian crisis analyst. Answer questions based on provided sources with inline citations.";
+            String answer = callQwen(systemPrompt, prompt, 1024, false);
+            if (answer == null) {
+                throw new RuntimeException("Empty response from Qwen API");
+            }
 
             long duration = System.currentTimeMillis() - start;
             log.info("Q&A answered in {}ms, {} sources, question: {}", duration, sources.size(),
@@ -2545,7 +2443,7 @@ Be precise. Only report situations with clear evidence. Empty array is valid if 
                     .build();
 
         } catch (Exception e) {
-            log.error("Q&A Claude call failed: {}", e.getMessage());
+            log.error("Q&A Qwen call failed: {}", e.getMessage());
             return QAResponse.builder()
                     .question(question)
                     .answer("Unable to generate answer. Please try again in a moment.")
@@ -2678,6 +2576,49 @@ Be precise. Only report situations with clear evidence. Empty array is valid if 
         }
 
         return result;
+    }
+
+    /**
+     * Call Qwen API via DashScope (OpenAI-compatible endpoint).
+     */
+    private String callQwen(String systemPrompt, String userPrompt, int maxTokens, boolean webSearch) {
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("DashScope API key not configured");
+            return null;
+        }
+        try {
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("model", "qwen3.5-plus");
+            request.put("max_tokens", maxTokens);
+            if (webSearch) request.put("enable_search", true);
+            request.put("messages", List.of(
+                Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user", "content", userPrompt)
+            ));
+
+            String response = webClient.post()
+                    .uri("/chat/completions")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(60))
+                    .block();
+
+            JsonNode root = objectMapper.readTree(response);
+            if (root.has("choices") && root.path("choices").size() > 0) {
+                return root.path("choices").path(0).path("message").path("content").asText("");
+            }
+            JsonNode output = root.path("output");
+            if (!output.isMissingNode() && output.has("choices") && output.path("choices").size() > 0) {
+                return output.path("choices").path(0).path("message").path("content").asText("");
+            }
+            return null;
+        } catch (Exception e) {
+            log.error("Qwen API call failed: {}", e.getMessage());
+            return null;
+        }
     }
 
     private String buildQAPrompt(String question, String sourceContext, int sourceCount) {

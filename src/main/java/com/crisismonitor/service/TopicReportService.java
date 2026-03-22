@@ -27,7 +27,7 @@ import java.util.stream.Collectors;
  * Generates decision-ready reports by combining:
  * - Layer 1: Media signals (GDELT)
  * - Layer 2: Operational data (ReliefWeb, DTM, UNHCR)
- * - Layer 3: AI synthesis (Claude)
+ * - Layer 3: AI synthesis (Qwen)
  * - Layer 4: Trend signals with confidence scores
  */
 @Slf4j
@@ -50,14 +50,13 @@ public class TopicReportService {
     private final StoryService storyService;
     private final FAOFoodPriceService faoFoodPriceService;
 
-    @Value("${anthropic.api.key:}")
+    @Value("${DASHSCOPE_API_KEY:}")
     private String apiKey;
 
-    @Value("${anthropic.model:claude-3-haiku-20240307}")
-    private String model;
+    private final String model = "qwen3.5-plus";
 
-    private final WebClient claudeClient = WebClient.builder()
-            .baseUrl("https://api.anthropic.com/v1")
+    private final WebClient qwenClient = WebClient.builder()
+            .baseUrl("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
             .build();
 
     private final WebClient bingClient = WebClient.builder().build();
@@ -1003,7 +1002,7 @@ public class TopicReportService {
      */
     private String callClaudeForSynthesis(String topic, String context) {
         if (apiKey == null || apiKey.isBlank()) {
-            log.debug("Claude API key not configured, using fallback synthesis");
+            log.debug("DashScope API key not configured, using fallback synthesis");
             return null;
         }
 
@@ -1018,7 +1017,7 @@ public class TopicReportService {
             safeContext = safeContext.substring(0, 6000) + "\n[...truncated]";
         }
 
-        String prompt = analyticalLens + """
+        String userPrompt = """
 
             APPROACH:
             - You have the DATA below from our real-time monitoring platform
@@ -1052,32 +1051,41 @@ public class TopicReportService {
             """ + safeContext;
 
         try {
-            Map<String, Object> request = Map.of(
-                "model", model,
-                "max_tokens", 1200,
-                "messages", List.of(Map.of("role", "user", "content", prompt))
-            );
+            Map<String, Object> request = new java.util.LinkedHashMap<>();
+            request.put("model", "qwen3.5-plus");
+            request.put("max_tokens", 1200);
+            request.put("enable_search", true);
+            request.put("messages", List.of(
+                Map.of("role", "system", "content", analyticalLens),
+                Map.of("role", "user", "content", userPrompt)
+            ));
 
-            String response = claudeClient.post()
-                .uri("/messages")
-                .header("x-api-key", apiKey)
-                .header("anthropic-version", "2023-06-01")
-                .header("content-type", "application/json")
+            String response = qwenClient.post()
+                .uri("/chat/completions")
+                .header("Authorization", "Bearer " + apiKey)
+                .header("Content-Type", "application/json")
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(String.class)
-                .timeout(Duration.ofSeconds(20))
+                .timeout(Duration.ofSeconds(60))
                 .block();
 
             JsonNode root = objectMapper.readTree(response);
-            return root.path("content").get(0).path("text").asText();
+            if (root.has("choices") && root.path("choices").size() > 0) {
+                return root.path("choices").path(0).path("message").path("content").asText("");
+            }
+            JsonNode output = root.path("output");
+            if (!output.isMissingNode() && output.has("choices") && output.path("choices").size() > 0) {
+                return output.path("choices").path(0).path("message").path("content").asText("");
+            }
+            return null;
 
         } catch (org.springframework.web.reactive.function.client.WebClientResponseException e) {
-            log.warn("Claude synthesis failed: {} — body: {}", e.getMessage(),
+            log.warn("Qwen synthesis failed: {} — body: {}", e.getMessage(),
                 e.getResponseBodyAsString().substring(0, Math.min(300, e.getResponseBodyAsString().length())));
             return null;
         } catch (Exception e) {
-            log.warn("Claude synthesis failed: {}", e.getMessage());
+            log.warn("Qwen synthesis failed: {}", e.getMessage());
             return null;
         }
     }

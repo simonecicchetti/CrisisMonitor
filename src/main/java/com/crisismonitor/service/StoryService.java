@@ -45,11 +45,11 @@ public class StoryService {
     private final ObjectMapper objectMapper;
     private final WebClient.Builder webClientBuilder;
 
-    @Value("${claude.api.key:}")
-    private String claudeApiKey;
+    @Value("${DASHSCOPE_API_KEY:}")
+    private String dashscopeApiKey;
 
-    private final WebClient claudeClient = WebClient.builder()
-            .baseUrl("https://api.anthropic.com/v1")
+    private final WebClient qwenClient = WebClient.builder()
+            .baseUrl("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
             .build();
 
     // RSS News Sources for humanitarian and migration coverage
