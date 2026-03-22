@@ -89,9 +89,11 @@ public class IntelligenceSnapshotService {
         if (lang.isBlank()) lang = "en";
         String docId = "predictive_" + LocalDate.now() + "_" + lang;
 
-        // Check cache (skip if invalidated)
+        // Check cache (skip if invalidated or missing new fields like emergingThreats)
         Map<String, Object> cached = firestoreService.getDocument("predictiveAnalysis", docId);
-        if (cached != null && !cached.containsKey("invalidated") && cached.containsKey("conflictOutlook")) {
+        if (cached != null && !cached.containsKey("invalidated")
+                && cached.containsKey("conflictOutlook")
+                && cached.containsKey("emergingThreats")) {
             return objectMapper.convertValue(cached, PredictiveAnalysis.class);
         }
 

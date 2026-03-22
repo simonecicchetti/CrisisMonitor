@@ -974,9 +974,9 @@ public class DailyBriefService {
         String lang = resolveLanguage(language);
         String docId = "nowcast_" + LocalDate.now() + "_" + lang;
 
-        // Check cache for requested language
+        // Check cache for requested language (require 'language' field = new format)
         Map<String, Object> cached = firestoreService.getDocument("nowcastBriefs", docId);
-        if (cached != null) {
+        if (cached != null && cached.containsKey("language")) {
             return objectMapper.convertValue(cached, NowcastBrief.class);
         }
 
