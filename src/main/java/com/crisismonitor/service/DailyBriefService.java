@@ -41,19 +41,8 @@ public class DailyBriefService {
     private final FirestoreService firestoreService;
     private final ObjectMapper objectMapper;
 
-    @Value("${anthropic.api.key:}")
-    private String apiKey;
-
-    @Value("${anthropic.model:claude-sonnet-4-20250514}")
-    private String model;
-
     @Value("${DASHSCOPE_API_KEY:}")
     private String dashscopeApiKey;
-
-    private final WebClient claudeClient = WebClient.builder()
-            .baseUrl("https://api.anthropic.com/v1")
-            .codecs(c -> c.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
-            .build();
 
     private final WebClient qwenClient = WebClient.builder()
             .baseUrl("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
@@ -128,7 +117,7 @@ public class DailyBriefService {
      * Generate the English brief from scratch (full analysis).
      */
     private DailyBrief generateEnglish() {
-        if (apiKey == null || apiKey.isBlank()) {
+        if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) {
             log.warn("Claude API key not configured");
             return null;
         }
@@ -136,33 +125,38 @@ public class DailyBriefService {
         String context = buildContext();
         String prompt = buildPrompt(context);
 
-        try {
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", model);
-            request.put("max_tokens", 1024);
-            request.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+        String content = callQwen(FISK_STYLE, prompt, 1024, true);
+        JsonNode json = extractJson(content);
+        if (json == null) return null;
 
-            String response = claudeClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(45))
-                    .block();
+        DailyBrief brief = new DailyBrief();
+        brief.setDate(LocalDate.now().toString());
+        brief.setHeadline(json.path("headline").asText(""));
+        brief.setParagraph1(json.path("paragraph1").asText(""));
+        brief.setParagraph2(json.path("paragraph2").asText(""));
+        brief.setGeneratedAt(java.time.Instant.now().toString());
+        brief.setLanguage("en");
 
-            DailyBrief brief = parseResponse(response);
-            if (brief != null) {
-                brief.setLanguage("en");
+        List<WatchItem> items = new ArrayList<>();
+        JsonNode watchArr = json.path("watch");
+        if (watchArr.isArray()) {
+            int count = 0;
+            for (JsonNode w : watchArr) {
+                if (count >= 3) break;
+                String country = w.path("country").asText("");
+                String situation = w.path("situation").asText("");
+                if (!country.isBlank() && !situation.isBlank()) {
+                    WatchItem item = new WatchItem();
+                    item.setCountry(country);
+                    item.setSituation(situation);
+                    items.add(item);
+                    count++;
+                }
             }
-            return brief;
-
-        } catch (Exception e) {
-            log.error("Claude API call for daily brief failed: {}", e.getMessage());
-            return null;
         }
+        brief.setWatchItems(items);
+        if (brief.getHeadline().isBlank()) return null;
+        return brief;
     }
 
     private String buildContext() {
@@ -323,33 +317,31 @@ public class DailyBriefService {
             "  ]\n" +
             "}";
 
-        try {
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", model);
-            request.put("max_tokens", 1024);
-            request.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+        String content = callQwen(AMANPOUR_STYLE, prompt, 1024, false);
+        JsonNode json = extractJson(content);
+        if (json == null) return null;
 
-            String response = claudeClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30))
-                    .block();
+        DailyBrief translated = new DailyBrief();
+        translated.setDate(enBrief.getDate());
+        translated.setHeadline(json.path("headline").asText(""));
+        translated.setParagraph1(json.path("paragraph1").asText(""));
+        translated.setParagraph2(json.path("paragraph2").asText(""));
+        translated.setGeneratedAt(java.time.Instant.now().toString());
+        translated.setLanguage(targetLang);
 
-            DailyBrief translated = parseResponse(response);
-            if (translated != null) {
-                translated.setLanguage(targetLang);
+        List<WatchItem> items = new ArrayList<>();
+        JsonNode watchArr = json.path("watch");
+        if (watchArr.isArray()) {
+            for (JsonNode w : watchArr) {
+                if (items.size() >= 3) break;
+                WatchItem item = new WatchItem();
+                item.setCountry(w.path("country").asText(""));
+                item.setSituation(w.path("situation").asText(""));
+                if (!item.getCountry().isBlank()) items.add(item);
             }
-            return translated;
-
-        } catch (Exception e) {
-            log.error("Translation to {} failed: {}", targetLang, e.getMessage());
-            return null;
         }
+        translated.setWatchItems(items);
+        return translated.getHeadline().isBlank() ? null : translated;
     }
 
     private DailyBrief parseResponse(String response) {
@@ -523,7 +515,7 @@ public class DailyBriefService {
     }
 
     private CountryBrief generateCountryBrief(String iso3) {
-        if (apiKey == null || apiKey.isBlank()) return null;
+        if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) return null;
 
         // Gather all platform data for this country
         StringBuilder ctx = new StringBuilder();
@@ -622,30 +614,9 @@ public class DailyBriefService {
             "- Write as if briefing a country director arriving tomorrow.";
 
         try {
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", model);
-            request.put("max_tokens", 800);
-            request.put("messages", List.of(Map.of("role", "user", "content", prompt)));
-
-            String response = claudeClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(45))
-                    .block();
-
-            JsonNode root = objectMapper.readTree(response);
-            JsonNode contentArr = root.path("content");
-            if (!contentArr.isArray() || contentArr.isEmpty()) return null;
-            String content = contentArr.get(0).path("text").asText("");
-            int js = content.indexOf('{');
-            int je = content.lastIndexOf('}');
-            if (js < 0 || je <= js) return null;
-            JsonNode json = objectMapper.readTree(content.substring(js, je + 1));
+            String rawContent = callQwen(FISK_STYLE, prompt, 800, true);
+            JsonNode json = extractJson(rawContent);
+            if (json == null) return null;
 
             CountryBrief brief = new CountryBrief();
             brief.setIso3(iso3);
@@ -694,25 +665,9 @@ public class DailyBriefService {
             "{\"security\":\"...\",\"economy\":\"...\",\"foodSecurity\":\"...\",\"displacement\":\"...\",\"outlook\":\"...\"}";
 
         try {
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", model);
-            request.put("max_tokens", 800);
-            request.put("messages", List.of(Map.of("role", "user", "content", prompt)));
-
-            String response = claudeClient.post()
-                    .uri("/messages").header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01").header("content-type", "application/json")
-                    .bodyValue(request).retrieve().bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30)).block();
-
-            JsonNode root = objectMapper.readTree(response);
-            JsonNode cArr = root.path("content");
-            if (!cArr.isArray() || cArr.isEmpty()) return null;
-            String content = cArr.get(0).path("text").asText("");
-            if (content.isBlank()) return null;
-            int js = content.indexOf('{'); int je = content.lastIndexOf('}');
-            if (js < 0 || je <= js) return null;
-            JsonNode json = objectMapper.readTree(content.substring(js, je + 1));
+            String rawContent = callQwen(AMANPOUR_STYLE, prompt, 800, false);
+            JsonNode json = extractJson(rawContent);
+            if (json == null) return null;
 
             CountryBrief brief = new CountryBrief();
             brief.setIso3(en.getIso3());
@@ -804,7 +759,7 @@ public class DailyBriefService {
     }
 
     private DeepDive generateDeepDive(String country, String situation) {
-        if (apiKey == null || apiKey.isBlank()) return null;
+        if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) return null;
 
         // Build focused context for this country
         StringBuilder ctx = new StringBuilder();
@@ -882,31 +837,9 @@ public class DailyBriefService {
             """.formatted(ctx.toString(), country, situation);
 
         try {
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", model);
-            request.put("max_tokens", 512);
-            request.put("messages", List.of(Map.of("role", "user", "content", prompt)));
-
-            String response = claudeClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30))
-                    .block();
-
-            JsonNode root = objectMapper.readTree(response);
-            JsonNode contentArr = root.path("content");
-            if (!contentArr.isArray() || contentArr.isEmpty()) return null;
-            String content = contentArr.get(0).path("text").asText("");
-
-            int jsonStart = content.indexOf('{');
-            int jsonEnd = content.lastIndexOf('}');
-            if (jsonStart < 0 || jsonEnd <= jsonStart) return null;
-            JsonNode json = objectMapper.readTree(content.substring(jsonStart, jsonEnd + 1));
+            String rawContent = callQwen(FISK_STYLE, prompt, 512, true);
+            JsonNode json = extractJson(rawContent);
+            if (json == null) return null;
 
             DeepDive dive = new DeepDive();
             dive.setCountry(country);
@@ -942,30 +875,9 @@ public class DailyBriefService {
             "{\"headline\":\"...\",\"paragraph1\":\"...\",\"paragraph2\":\"...\"}";
 
         try {
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", model);
-            request.put("max_tokens", 512);
-            request.put("messages", List.of(Map.of("role", "user", "content", prompt)));
-
-            String response = claudeClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(20))
-                    .block();
-
-            JsonNode root = objectMapper.readTree(response);
-            JsonNode contentArr = root.path("content");
-            if (!contentArr.isArray() || contentArr.isEmpty()) return null;
-            String content = contentArr.get(0).path("text").asText("");
-            int js = content.indexOf('{');
-            int je = content.lastIndexOf('}');
-            if (js < 0 || je <= js) return null;
-            JsonNode json = objectMapper.readTree(content.substring(js, je + 1));
+            String rawContent = callQwen(AMANPOUR_STYLE, prompt, 512, false);
+            JsonNode json = extractJson(rawContent);
+            if (json == null) return null;
 
             DeepDive dive = new DeepDive();
             dive.setCountry(enDive.getCountry());
@@ -1024,7 +936,7 @@ public class DailyBriefService {
     }
 
     private NowcastBrief generateNowcastBrief() {
-        if (apiKey == null || apiKey.isBlank()) return null;
+        if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) return null;
 
         var predictions = nowcastService.getNowcastAll();
         if (predictions == null || predictions.isEmpty()) return null;
@@ -1105,30 +1017,9 @@ public class DailyBriefService {
             "- Write like a senior analyst briefing an executive director.";
 
         try {
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", model);
-            request.put("max_tokens", 512);
-            request.put("messages", List.of(Map.of("role", "user", "content", prompt)));
-
-            String response = claudeClient.post()
-                    .uri("/messages")
-                    .header("x-api-key", apiKey)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30))
-                    .block();
-
-            JsonNode root = objectMapper.readTree(response);
-            JsonNode contentArr = root.path("content");
-            if (!contentArr.isArray() || contentArr.isEmpty()) return null;
-            String content = contentArr.get(0).path("text").asText("");
-            int js = content.indexOf('{');
-            int je = content.lastIndexOf('}');
-            if (js < 0 || je <= js) return null;
-            JsonNode json = objectMapper.readTree(content.substring(js, je + 1));
+            String rawContent = callQwen(AMANPOUR_STYLE, prompt, 512, false);
+            JsonNode json = extractJson(rawContent);
+            if (json == null) return null;
 
             NowcastBrief brief = new NowcastBrief();
             brief.setHeadline(json.path("headline").asText(""));
@@ -1343,6 +1234,69 @@ public class DailyBriefService {
             return cols;
         } catch (Exception e) {
             log.error("Column translation failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    // ==========================================
+    // QWEN API HELPER — all AI calls go through here
+    // ==========================================
+
+    private static final String FISK_STYLE = "You are a senior crisis correspondent writing in the style of Robert Fisk — direct, unflinching, grounded in specifics, never diplomatic. You see through official narratives and state what is actually happening.";
+    private static final String AMANPOUR_STYLE = "You are a senior international correspondent writing in the style of Christiane Amanpour — authoritative, precise, humanizing crises with data and context. Accessible but never shallow.";
+
+    /**
+     * Call Qwen 3.5-Plus API. Returns the content text or null on error.
+     */
+    private String callQwen(String systemPrompt, String userPrompt, int maxTokens, boolean webSearch) {
+        if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) {
+            log.warn("DashScope API key not configured");
+            return null;
+        }
+        try {
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("model", "qwen3.5-plus");
+            request.put("max_tokens", maxTokens);
+            if (webSearch) request.put("enable_search", true);
+            request.put("messages", List.of(
+                Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user", "content", userPrompt)
+            ));
+
+            String response = qwenClient.post()
+                    .uri("/chat/completions")
+                    .header("Authorization", "Bearer " + dashscopeApiKey)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(60))
+                    .block();
+
+            JsonNode root = objectMapper.readTree(response);
+            if (root.has("choices") && root.path("choices").size() > 0) {
+                return root.path("choices").path(0).path("message").path("content").asText("");
+            }
+            JsonNode output = root.path("output");
+            if (!output.isMissingNode() && output.has("choices") && output.path("choices").size() > 0) {
+                return output.path("choices").path(0).path("message").path("content").asText("");
+            }
+            return null;
+        } catch (Exception e) {
+            log.error("Qwen API call failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** Extract JSON from AI response text */
+    private JsonNode extractJson(String content) {
+        if (content == null || content.isBlank()) return null;
+        try {
+            int js = content.indexOf('{');
+            int je = content.lastIndexOf('}');
+            if (js < 0 || je <= js) return null;
+            return objectMapper.readTree(content.substring(js, je + 1));
+        } catch (Exception e) {
             return null;
         }
     }
