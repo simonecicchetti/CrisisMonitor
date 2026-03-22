@@ -4348,13 +4348,11 @@ const SidebarManager = {
           </div>`;
         }).join('');
 
-        // Click handler
+        // Click handler — open country analysis modal
         container.querySelectorAll('.country-row').forEach(row => {
           row.addEventListener('click', () => {
             const iso3 = row.dataset.iso3;
-            if (window.CountryModal) {
-              window.CountryModal.open(iso3);
-            } else if (typeof AIAnalysisManager !== 'undefined') {
+            if (typeof AIAnalysisManager !== 'undefined') {
               const select = document.getElementById('country-select');
               if (select) { select.value = iso3; select.dispatchEvent(new Event('change')); }
               document.getElementById('ai-modal')?.classList.remove('hidden');

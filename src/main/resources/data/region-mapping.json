@@ -32,7 +32,7 @@
       "countries": ["HTI", "DOM", "CUB", "JAM", "TTO", "BRB", "GRD", "VCT", "LCA", "DMA", "ATG", "KNA", "BHS", "MEX", "GTM", "BLZ", "SLV", "HND", "NIC", "CRI", "PAN", "COL", "VEN", "ECU", "PER", "BOL", "BRA", "PRY", "URY", "ARG", "CHL", "GUY", "SUR"],
       "countryNames": ["Haiti", "Dominican Republic", "Cuba", "Jamaica", "Trinidad", "Tobago", "Mexico", "Guatemala", "Belize", "El Salvador", "Honduras", "Nicaragua", "Costa Rica", "Panama", "Colombia", "Venezuela", "Ecuador", "Peru", "Bolivia", "Brazil", "Paraguay", "Uruguay", "Argentina", "Chile", "Guyana", "Suriname"],
       "feeds": {
-        "humanitarian": "https://reliefweb.int/updates/rss.xml?search=primary_country.id:(104 OR 63 OR 264 OR 55 OR 99 OR 185 OR 105 OR 200 OR 73 OR 41 OR 151 OR 32)",
+        "humanitarian": "https://reliefweb.int/updates/rss.xml?search=primary_country.id:(104 OR 63 OR 264 OR 62 OR 170 OR 55 OR 99 OR 185 OR 105 OR 200 OR 73 OR 41 OR 151 OR 32)",
         "general": "https://feeds.bbci.co.uk/news/world/latin_america/rss.xml"
       }
     },
@@ -51,6 +51,10 @@
     "NGA": 172, "MLI": 147, "BFA": 42, "NER": 169, "YEM": 269, "SYR": 222,
     "IRQ": 113, "LBN": 135, "PSE": 180, "AFG": 13, "PAK": 181, "BGD": 34,
     "MMR": 160, "HTI": 104, "VEN": 264, "COL": 63, "UKR": 254, "CHL": 55,
-    "PER": 185, "GTM": 99, "HND": 105, "SLV": 200, "ECU": 73
+    "PER": 185, "GTM": 99, "HND": 105, "SLV": 200, "ECU": 73,
+    "CUB": 62, "NIC": 170, "BOL": 38, "DOM": 69,
+    "IRN": 112, "ISR": 114, "JOR": 119, "LBY": 140, "MAR": 152,
+    "KEN": 122, "MOZ": 158, "TCD": 50, "CMR": 46, "UGA": 254,
+    "RWA": 193, "BDI": 43, "ZWE": 271, "MWI": 145, "MDG": 142
   }
 }
