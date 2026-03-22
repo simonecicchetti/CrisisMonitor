@@ -637,28 +637,32 @@ public class DailyBriefService {
             ctx.append("VERIFIED CONFLICT: ").append(conflict).append("\n\n");
         }
 
-        String prompt = "You are a senior intelligence analyst at Notamy News. Write a Country Intelligence Brief for " + countryName + ".\n\n" +
+        String prompt = "You are a senior intelligence analyst writing a Country Intelligence Brief for " + countryName + ".\n\n" +
             "PLATFORM DATA:\n" + ctx + "\n" +
-            "Write 5 analytical sections. Each section: 2-3 sentences, dense, specific. No filler.\n\n" +
+            "Write 5 sections. Be a top analyst: explain WHY the situation is what it is, not just WHAT it is.\n\n" +
             "RESPOND IN JSON (no markdown, no backticks):\n" +
             "{\n" +
-            "  \"security\": \"<2-3 sentences: political situation, governance, armed conflict, internal tensions>\",\n" +
-            "  \"economy\": \"<2-3 sentences: inflation, sanctions, employment, currency, trade disruptions>\",\n" +
-            "  \"foodSecurity\": \"<2-3 sentences: food insecurity levels, supply chain, prices, nowcast trajectory>\",\n" +
-            "  \"displacement\": \"<2-3 sentences: IDP flows, refugees, migration routes, humanitarian access>\",\n" +
-            "  \"outlook\": \"<2-3 sentences: 90-day forecast, what could improve or worsen, key triggers to watch>\"\n" +
+            "  \"security\": \"<3-4 sentences: current security/governance reality. If at war, describe fronts, intensity, civilian impact. " +
+                "If no conflict, explain what keeps stability or what threatens it. Explain WHY the conflict score is justified.>\",\n" +
+            "  \"economy\": \"<3-4 sentences: economic conditions with concrete data — currency movement, inflation, purchasing power. " +
+                "Explain what is driving economic stress or stability. Connect to humanitarian impact.>\",\n" +
+            "  \"foodSecurity\": \"<3-4 sentences: food insecurity reality. Use nowcast data if available (predicted trajectory). " +
+                "Describe access barriers, price pressures, supply chain status. Explain why food score is at this level.>\",\n" +
+            "  \"displacement\": \"<2-3 sentences: displacement situation, cross-border flows, internal movement, humanitarian access constraints.>\",\n" +
+            "  \"outlook\": \"<3-4 sentences: 90-day probabilistic forecast. Use 'likely', 'indicators suggest', 'risk of'. " +
+                "What could improve, what could worsen, and what specific triggers to watch. Tie to data.>\"\n" +
             "}\n\n" +
             "RULES:\n" +
-            "- Countries at war ARE at war. State it directly.\n" +
-            "- NEVER use internal platform scores like '78/100' or '88/100' — these are meaningless to readers.\n" +
-            "- Instead DESCRIBE: 'severe food crisis', 'economic collapse', 'active bombardment'.\n" +
-            "- USE real-world numbers: death tolls, displaced people, price changes. NOT index values.\n" +
-            "- No agency citations (WFP, UNHCR, FAO). Describe situations, not sources.\n" +
-            "- If data is limited for a dimension, say what you know and note the gap.\n" +
-            "- Write as if briefing a country director arriving tomorrow.";
+            "- Countries at war ARE at war. State it directly with specifics.\n" +
+            "- NEVER output internal scores like '78/100'. Instead DESCRIBE the situation concretely.\n" +
+            "- USE real-world numbers: death tolls, displaced people, price changes, percentage points.\n" +
+            "- Each section must EXPLAIN why the situation warrants its severity level — a reader should understand the score after reading.\n" +
+            "- The outlook MUST use probabilistic language. Never say 'will happen'. Say 'is likely to', 'data suggests', 'high risk of'.\n" +
+            "- Validate: if news headlines contradict the score (e.g., blackout crisis but low score), flag the discrepancy.\n" +
+            "- Write as if briefing someone who must decide TODAY where to send resources.";
 
         try {
-            String rawContent = callQwen(FISK_STYLE, prompt, 800, true);
+            String rawContent = callQwen(FISK_STYLE, prompt, 1500, true);
             JsonNode json = extractJson(rawContent);
             if (json == null) return null;
 
@@ -709,7 +713,7 @@ public class DailyBriefService {
             "{\"security\":\"...\",\"economy\":\"...\",\"foodSecurity\":\"...\",\"displacement\":\"...\",\"outlook\":\"...\"}";
 
         try {
-            String rawContent = callQwenFlash(prompt, 800);
+            String rawContent = callQwenFlash(prompt, 1200);
             JsonNode json = extractJson(rawContent);
             if (json == null) return null;
 

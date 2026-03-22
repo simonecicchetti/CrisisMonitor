@@ -4317,8 +4317,15 @@ const SidebarManager = {
 
     try {
       console.log('[Countries] Loading country list...');
+      container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);font-size:0.8rem;">Loading countries...</div>';
       const response = await fetch('/api/risk/scores');
-      if (!response.ok) { console.warn('[Countries] API returned', response.status); return; }
+      if (!response.ok) {
+        console.warn('[Countries] API returned', response.status);
+        container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);font-size:0.8rem;">Risk scores loading... try again in a moment.</div>';
+        // Retry in 15s
+        setTimeout(() => { this.sectionDataLoaded.delete('countries'); this.loadAllCountriesList(); }, 15000);
+        return;
+      }
       const result = await response.json();
       const scores = result.data || result || [];
       if (!Array.isArray(scores) || scores.length === 0) { console.warn('[Countries] No scores data'); return; }
