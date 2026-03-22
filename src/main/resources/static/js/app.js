@@ -4264,6 +4264,8 @@ const SidebarManager = {
         StructuralIndicesManager.init();
         // Regional Pulse lives in Countries now
         OverviewManager.loadRegionalPulse();
+        // Load all countries list
+        this.loadAllCountriesList();
         // Initialize driver tabs (drivers content stays in its own section, shown via CSS)
         if (typeof DriverTabManager !== 'undefined') DriverTabManager.init();
         if (typeof IntelligenceManager !== 'undefined') IntelligenceManager.loadWHOOutbreaks();
@@ -4300,6 +4302,79 @@ const SidebarManager = {
     }
 
     this.sectionDataLoaded.add(sectionId);
+  },
+
+  async loadAllCountriesList() {
+    const container = document.getElementById('country-list-container');
+    const countEl = document.getElementById('country-list-count');
+    const searchEl = document.getElementById('country-search');
+    if (!container) return;
+
+    try {
+      const response = await fetch('/api/risk/scores');
+      if (!response.ok) return;
+      const result = await response.json();
+      const scores = result.data || result || [];
+      if (!Array.isArray(scores) || scores.length === 0) return;
+
+      // Sort by score descending
+      scores.sort((a, b) => (b.score || 0) - (a.score || 0));
+      if (countEl) countEl.textContent = scores.length;
+
+      const levelColors = {
+        CRITICAL: '#ff6b61', ALERT: '#f59e0b', WARNING: '#eab308',
+        WATCH: '#60a5fa', STABLE: '#4ade80'
+      };
+
+      function renderList(filter) {
+        const filtered = filter
+          ? scores.filter(s => (s.countryName || '').toLowerCase().includes(filter) || (s.iso3 || '').toLowerCase().includes(filter))
+          : scores;
+
+        container.innerHTML = filtered.map((s, i) => {
+          const rank = scores.indexOf(s) + 1;
+          const color = levelColors[s.riskLevel] || '#888';
+          const barWidth = Math.min(100, s.score || 0);
+          const driver = s.drivers && s.drivers[0] ? Utils.escapeHtml(s.drivers[0]) : '';
+          return `<div class="country-row" data-iso3="${s.iso3}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border-color);cursor:pointer;transition:background 0.1s;" onmouseover="this.style.background='var(--bg-tertiary)'" onmouseout="this.style.background='transparent'">
+            <span style="width:20px;font-size:0.7rem;color:var(--text-tertiary);text-align:right;">${rank}</span>
+            <span style="flex:1;font-size:0.8rem;font-weight:500;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${Utils.escapeHtml(s.countryName || s.iso3)}</span>
+            <span style="font-size:0.65rem;padding:2px 6px;border-radius:4px;background:${color}22;color:${color};font-weight:600;white-space:nowrap;">${s.riskLevel || '—'}</span>
+            <span style="width:28px;font-size:0.78rem;font-weight:600;color:var(--text-primary);text-align:right;">${s.score || 0}</span>
+            <div style="width:50px;height:4px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden;">
+              <div style="height:100%;width:${barWidth}%;background:${color};border-radius:2px;"></div>
+            </div>
+            <span style="font-size:0.65rem;color:var(--text-tertiary);width:55px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${driver}</span>
+          </div>`;
+        }).join('');
+
+        // Click handler
+        container.querySelectorAll('.country-row').forEach(row => {
+          row.addEventListener('click', () => {
+            const iso3 = row.dataset.iso3;
+            if (window.CountryModal) {
+              window.CountryModal.open(iso3);
+            } else if (typeof AIAnalysisManager !== 'undefined') {
+              const select = document.getElementById('country-select');
+              if (select) { select.value = iso3; select.dispatchEvent(new Event('change')); }
+              document.getElementById('ai-modal')?.classList.remove('hidden');
+            }
+          });
+        });
+      }
+
+      renderList(null);
+
+      // Search filter
+      if (searchEl) {
+        searchEl.addEventListener('input', (e) => {
+          renderList(e.target.value.toLowerCase().trim());
+        });
+      }
+
+    } catch (error) {
+      console.error('[Countries] Failed to load country list:', error);
+    }
   },
 
   async loadGlobalStatus() {

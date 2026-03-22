@@ -62,7 +62,6 @@
             </span>
         </a>
         <div class="navbar-actions">
-            <span id="last-updated" class="last-updated">Live</span>
             <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6.34 17.66l-1.41 1.41"/><path d="M19.07 4.93l-1.41 1.41"/>
@@ -70,7 +69,6 @@
             </button>
             <!-- Global Language Selector -->
             <div class="lang-selector-wrap" style="display:flex;align-items:center;gap:4px;">
-                <span style="font-size:0.8rem;line-height:1;" aria-hidden="true">&#127760;</span>
                 <select id="global-lang-select" title="Platform language" class="lang-select">
                     <option value="en">EN</option>
                     <option value="it">IT</option>
@@ -349,56 +347,14 @@
                     <div id="map"></div>
                 </div>
 
-                <!-- Risk Cards (40%) -->
+                <!-- All Countries List (compact) -->
                 <div class="countries-cards-panel">
-                    <div class="cards-panel-header">
-                        <h3 data-i18n="countries.topCountries">Top Countries</h3>
-                        <span class="badge critical">Risk Score</span>
+                    <div class="cards-panel-header" style="margin-bottom: 8px;">
+                        <h3 data-i18n="countries.topCountries" style="font-size:0.9rem;">All Countries</h3>
+                        <span style="font-size:0.7rem; color:var(--text-tertiary);" id="country-list-count">47</span>
                     </div>
-                    <div class="risk-cards-list" id="risk-cards-list">
-                        <div th:each="rs, iter : ${riskScores}" th:if="${iter.index < 10}"
-                             class="risk-card"
-                             th:data-iso3="${rs.iso3}"
-                             th:data-country="${rs.countryName}"
-                             th:classappend="${rs.riskClass}"
-                             style="cursor: pointer;"
-                             title="Click for details">
-                            <div class="risk-card-rank" th:text="${iter.index + 1}">1</div>
-                            <div class="risk-card-content">
-                                <div class="risk-card-header">
-                                    <span class="risk-card-country" th:text="${rs.countryName}">Country</span>
-                                    <span class="risk-card-level"
-                                          th:classappend="${rs.riskClass}"
-                                          th:text="${rs.riskLevel}">CRITICAL</span>
-                                </div>
-                                <div class="risk-card-metric">
-                                    <span class="risk-card-value" th:text="${rs.score}">0</span>
-                                    <span class="risk-card-unit">/100</span>
-                                    <span th:if="${rs.scoreDelta != null && rs.scoreDelta != 0}"
-                                          class="risk-card-trend"
-                                          th:classappend="${rs.scoreDelta > 0 ? 'rising' : 'falling'}"
-                                          th:text="${rs.trendIcon + ' ' + (rs.scoreDelta > 0 ? '+' : '') + rs.scoreDelta}">→ 0</span>
-                                </div>
-                                <div class="risk-card-drivers">
-                                    <span class="rc-driver rc-driver-food" th:title="'Food ' + rs.foodSecurityScore">
-                                        <span class="rc-driver-bar" th:style="'width:' + rs.foodSecurityScore + '%'"></span>
-                                    </span>
-                                    <span class="rc-driver rc-driver-climate" th:title="'Climate ' + rs.climateScore">
-                                        <span class="rc-driver-bar" th:style="'width:' + rs.climateScore + '%'"></span>
-                                    </span>
-                                    <span class="rc-driver rc-driver-conflict" th:title="'Conflict ' + rs.conflictScore">
-                                        <span class="rc-driver-bar" th:style="'width:' + rs.conflictScore + '%'"></span>
-                                    </span>
-                                    <span class="rc-driver rc-driver-econ" th:title="'Economic ' + rs.economicScore">
-                                        <span class="rc-driver-bar" th:style="'width:' + rs.economicScore + '%'"></span>
-                                    </span>
-                                </div>
-                                <div class="risk-card-tag" th:if="${rs.drivers != null && !rs.drivers.isEmpty()}">
-                                    <span th:text="${rs.drivers[0]}">CLIMATE</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <input type="text" id="country-search" placeholder="Search..." style="width:100%;padding:6px 10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-secondary);color:var(--text-primary);font-size:0.78rem;margin-bottom:8px;box-sizing:border-box;">
+                    <div id="country-list-container" style="max-height:calc(100vh - 220px);overflow-y:auto;"></div>
                 </div>
             </div>
 
