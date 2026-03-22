@@ -2561,6 +2561,9 @@ const OverviewManager = {
   }
 };
 
+// Expose OverviewManager globally for inline language-switch handler
+window.OverviewManager = OverviewManager;
+
 // ============================================
 // REGIONAL CLUSTER ALERTS
 // ============================================
