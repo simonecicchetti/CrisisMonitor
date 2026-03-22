@@ -4266,14 +4266,12 @@ const SidebarManager = {
         OverviewManager.init();
         break;
       case 'countries':
-        // Initialize or invalidate map when section becomes visible
         if (window.CrisisMap) {
-          setTimeout(() => {
-            window.CrisisMap.init(); // Will init or invalidate
-          }, 100);
+          setTimeout(() => window.CrisisMap.init(), 100);
         }
         StructuralIndicesManager.init();
         OverviewManager.loadRegionalPulse();
+        // Always try to load country list (even if section was "loaded" before)
         this.loadAllCountriesList();
         break;
       case 'early-warning':
@@ -4309,7 +4307,10 @@ const SidebarManager = {
     this.sectionDataLoaded.add(sectionId);
   },
 
+  _countryListLoaded: false,
+
   async loadAllCountriesList() {
+    if (this._countryListLoaded) return;
     const container = document.getElementById('country-list-container');
     const countEl = document.getElementById('country-list-count');
     const searchEl = document.getElementById('country-search');
@@ -4317,13 +4318,14 @@ const SidebarManager = {
 
     try {
       console.log('[Countries] Loading country list...');
-      container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);font-size:0.8rem;">Loading countries...</div>';
+      if (!container.querySelector('.country-row')) {
+        container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);font-size:0.8rem;">Loading countries...</div>';
+      }
       const response = await fetch('/api/risk/scores');
       if (!response.ok) {
         console.warn('[Countries] API returned', response.status);
         container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);font-size:0.8rem;">Risk scores loading... try again in a moment.</div>';
-        // Retry in 15s
-        setTimeout(() => { this.sectionDataLoaded.delete('countries'); this.loadAllCountriesList(); }, 15000);
+        setTimeout(() => this.loadAllCountriesList(), 15000);
         return;
       }
       const result = await response.json();
@@ -4376,9 +4378,12 @@ const SidebarManager = {
       }
 
       renderList(null);
+      this._countryListLoaded = true;
+      console.log('[Countries] List rendered:', scores.length, 'countries');
 
       // Search filter
-      if (searchEl) {
+      if (searchEl && !searchEl._bound) {
+        searchEl._bound = true;
         searchEl.addEventListener('input', (e) => {
           renderList(e.target.value.toLowerCase().trim());
         });
@@ -4386,6 +4391,8 @@ const SidebarManager = {
 
     } catch (error) {
       console.error('[Countries] Failed to load country list:', error);
+      container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);font-size:0.8rem;">Error loading countries. Retrying...</div>';
+      setTimeout(() => this.loadAllCountriesList(), 10000);
     }
   },
 
