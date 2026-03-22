@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
  *
  * Stored in Firestore: dailyBriefs/{date} (e.g., "2026-03-21")
  * Supports multi-language via `language` parameter.
- * Cost: ~$0.02/day (1 Claude call, ~1200 tokens).
+ * Cost: ~$0.002/day (1 Qwen call). Fisk style for analysis, Amanpour for translations.
  */
 @Slf4j
 @Service
@@ -118,7 +118,7 @@ public class DailyBriefService {
      */
     private DailyBrief generateEnglish() {
         if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) {
-            log.warn("Claude API key not configured");
+            log.warn("DashScope API key not configured");
             return null;
         }
 
@@ -349,12 +349,12 @@ public class DailyBriefService {
             JsonNode root = objectMapper.readTree(response);
             JsonNode contentArr = root.path("content");
             if (!contentArr.isArray() || contentArr.isEmpty()) {
-                log.warn("Claude response has no content array");
+                log.warn("AI response has no content array");
                 return null;
             }
             String content = contentArr.get(0).path("text").asText("");
             if (content.isBlank()) {
-                log.warn("Claude response text is empty");
+                log.warn("AI response text is empty");
                 return null;
             }
 

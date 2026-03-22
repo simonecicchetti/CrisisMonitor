@@ -49,7 +49,7 @@ public class CountryAnalysisGenerator {
 
     /**
      * Generate analysis for a single country.
-     * Builds context from all available data sources, then calls Claude.
+     * Builds context from all available data sources, then calls Qwen.
      */
     public Map<String, Object> generateCountryAnalysis(String iso3) {
         log.info("Generating AI analysis for {}", iso3);
@@ -207,7 +207,7 @@ public class CountryAnalysisGenerator {
             request.put("enable_search", true);
             request.put("messages", List.of(
                 Map.of("role", "system", "content",
-                    "You are a humanitarian crisis intelligence analyst. " +
+                    "You are a crisis correspondent writing in the style of Robert Fisk — direct, unflinching, grounded in specifics. " +
                     "Use web search to verify current conditions. " +
                     "Write analytical prose, not bullet points. " +
                     "Respond with the analysis text only, no JSON, no markdown headers."),
