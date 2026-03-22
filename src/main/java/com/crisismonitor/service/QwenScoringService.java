@@ -146,6 +146,17 @@ public class QwenScoringService {
         Map.entry("MLI", new ConflictInfo("JNIM armed group advance, military operations", 50))
     );
 
+    // Verified structural crises — non-conflict emergencies requiring minimum scores
+    // Format: dimension → minimum score. Qwen must score AT LEAST these values.
+    private record CrisisInfo(String description, Map<String, Integer> minScores) {}
+    private static final Map<String, CrisisInfo> VERIFIED_CRISES = Map.ofEntries(
+        Map.entry("CUB", new CrisisInfo(
+            "National infrastructure collapse: repeated nationwide blackouts (March 2026), " +
+            "chronic energy crisis, severe food shortages, mass emigration. " +
+            "Economic system near total failure with acute humanitarian impact.",
+            Map.of("economic", 80, "climate", 45, "food", 55)))
+    );
+
     private void addPlatformData(StringBuilder ctx, String iso3) {
         // Verified conflict info — CRITICAL: this is ground truth
         ConflictInfo verifiedConflict = VERIFIED_CONFLICTS.get(iso3);
@@ -154,6 +165,16 @@ public class QwenScoringService {
             ctx.append("  ").append(verifiedConflict.description()).append("\n");
             ctx.append("  You MUST reflect this in the conflict score. Score CANNOT be below ")
                .append(verifiedConflict.minScore()).append(".\n\n");
+        }
+
+        // Verified structural crises (non-conflict)
+        CrisisInfo crisis = VERIFIED_CRISES.get(iso3);
+        if (crisis != null) {
+            ctx.append("⚠ VERIFIED STRUCTURAL CRISIS (confirmed by analysts):\n");
+            ctx.append("  ").append(crisis.description()).append("\n");
+            crisis.minScores().forEach((dim, min) ->
+                ctx.append("  ").append(dim).append(" score CANNOT be below ").append(min).append(".\n"));
+            ctx.append("\n");
         }
 
         // Risk scores (current formula-based)
@@ -397,6 +418,21 @@ public class QwenScoringService {
             cs.setEconomicReason(scores.path("economic_reason").asText(""));
             cs.setSummary(scores.path("summary").asText(""));
             cs.setGeneratedAt(LocalDate.now().toString());
+
+            // Enforce verified crisis minimum scores
+            CrisisInfo crisis = VERIFIED_CRISES.get(iso3);
+            if (crisis != null) {
+                crisis.minScores().forEach((dim, min) -> {
+                    switch (dim) {
+                        case "food" -> { if (cs.getFoodScore() < min) { cs.setFoodScore(min); cs.setFoodReason(crisis.description() + "; " + cs.getFoodReason()); } }
+                        case "conflict" -> { if (cs.getConflictScore() < min) cs.setConflictScore(min); }
+                        case "climate" -> { if (cs.getClimateScore() < min) { cs.setClimateScore(min); cs.setClimateReason(crisis.description() + "; " + cs.getClimateReason()); } }
+                        case "economic" -> { if (cs.getEconomicScore() < min) { cs.setEconomicScore(min); cs.setEconomicReason(crisis.description() + "; " + cs.getEconomicReason()); } }
+                    }
+                });
+                log.info("  {} crisis floors enforced: food={}, climate={}, economic={}",
+                    iso3, cs.getFoodScore(), cs.getClimateScore(), cs.getEconomicScore());
+            }
 
             // Calculate overall using adaptive power mean.
             // Standard weights: conflict=35%, food=35%, climate=15%, economic=15%
