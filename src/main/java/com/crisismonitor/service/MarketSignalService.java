@@ -61,8 +61,20 @@ public class MarketSignalService {
         Map.entry("MOZ", 0.1)
     );
 
-    // Ukraine is a special case: major EXPORTER. Worsening there = supply disruption.
-    private static final Set<String> WHEAT_EXPORTERS = Set.of("UKR");
+    // Maize importers — critical for East/Southern Africa
+    private static final Map<String, Double> MAIZE_IMPORTERS = Map.ofEntries(
+        Map.entry("KEN", 1.0), Map.entry("ZWE", 0.8), Map.entry("MWI", 0.3),
+        Map.entry("MOZ", 0.4), Map.entry("ZMB", 0.2), Map.entry("UGA", 0.3),
+        Map.entry("ETH", 0.5), Map.entry("SOM", 0.2), Map.entry("SDN", 0.3),
+        Map.entry("COD", 0.3), Map.entry("SWZ", 0.1), Map.entry("LSO", 0.1),
+        Map.entry("CUB", 0.4), Map.entry("COL", 0.5), Map.entry("GTM", 0.3),
+        Map.entry("HND", 0.2), Map.entry("SLV", 0.2)
+    );
+
+    // Exporters: ISO3 → estimated annual export volume in Mt
+    // Worsening in an exporter = supply disruption risk (weighted by export volume)
+    private static final Map<String, Double> WHEAT_EXPORTERS = Map.of("UKR", 18.0);
+    private static final Map<String, Double> MAIZE_EXPORTERS = Map.of("UKR", 25.0);
 
     @Data
     public static class MarketSignalReport {
@@ -150,23 +162,26 @@ public class MarketSignalService {
         // Calculate signals for each commodity
         report.getSignals().add(calculateSignal("Cereals (Wheat)", WHEAT_IMPORTERS, WHEAT_EXPORTERS,
             changeMap, nameMap, fao, faoTrend, "cerealsIndex"));
-        report.getSignals().add(calculateSignal("Rice", RICE_IMPORTERS, Set.of(),
-            changeMap, nameMap, fao, faoTrend, "cerealsIndex")); // Rice tracked within cereals
-        report.getSignals().add(calculateSignal("Vegetable Oils", OIL_IMPORTERS, Set.of(),
+        report.getSignals().add(calculateSignal("Maize", MAIZE_IMPORTERS, MAIZE_EXPORTERS,
+            changeMap, nameMap, fao, faoTrend, "cerealsIndex")); // FAO cereals includes maize
+        report.getSignals().add(calculateSignal("Rice", RICE_IMPORTERS, Map.of(),
+            changeMap, nameMap, fao, faoTrend, "cerealsIndex")); // FAO cereals includes rice (approx)
+        report.getSignals().add(calculateSignal("Vegetable Oils", OIL_IMPORTERS, Map.of(),
             changeMap, nameMap, fao, faoTrend, "oilsIndex"));
 
-        report.setMethodology("Demand Pressure Index = Σ(predicted_food_insecurity_change × annual_import_volume) " +
-            "for each commodity's import-dependent countries. " +
-            "Nowcast ML predicts 90-day food insecurity changes from real-time consumption surveys. " +
-            "When insecurity rises in import-dependent countries, demand for commodity imports increases, " +
-            "creating upward price pressure with an estimated 4-8 week lag.");
+        report.setMethodology("Demand Pressure Index (DPI) = Σ(predicted_food_insecurity_change × annual_import_volume) " +
+            "for import-dependent countries, plus supply disruption risk from exporters weighted by export volume. " +
+            "Nowcast ML predictions are based on real-time consumption surveys across 80 countries. " +
+            "Limitations: DPI captures demand-side pressure only — supply factors (harvests, stocks, weather) are not modeled. " +
+            "Import volumes are annual estimates and may vary. Rice and Maize use the FAO Cereals Index as proxy (no separate index available). " +
+            "Signal strength thresholds are experimental. This analysis identifies CORRELATION patterns, not proven causation.");
 
         log.info("Market signals generated: {} commodities analyzed", report.getSignals().size());
         return report;
     }
 
     private CommoditySignal calculateSignal(String commodity, Map<String, Double> importers,
-            Set<String> exporters, Map<String, Double> changeMap, Map<String, String> nameMap,
+            Map<String, Double> exporters, Map<String, Double> changeMap, Map<String, String> nameMap,
             FAOFoodPriceService.FoodPriceIndex fao, List<FAOFoodPriceService.FoodPriceIndex> trend,
             String priceField) {
 
@@ -178,23 +193,33 @@ public class MarketSignalService {
         double currentPrice = getPriceValue(fao, priceField);
         signal.setCurrentPrice(currentPrice);
 
-        // Historical prices (6m and 12m ago)
-        if (trend != null && trend.size() >= 12) {
-            double price6m = getPriceValue(trend.get(trend.size() - 7), priceField);
-            double price12m = getPriceValue(trend.get(trend.size() - 13), priceField);
+        // Historical prices: 3m, 6m, 12m ago
+        if (trend != null && trend.size() >= 4) {
+            int size = trend.size();
+            double price3m = size >= 4 ? getPriceValue(trend.get(size - 4), priceField) : 0;
+            double price6m = size >= 7 ? getPriceValue(trend.get(size - 7), priceField) : 0;
+            double price12m = size >= 13 ? getPriceValue(trend.get(size - 13), priceField) : 0;
             signal.setPrice6mAgo(price6m);
             signal.setPrice12mAgo(price12m);
             signal.setPriceTrend6m(price6m > 0 ? ((currentPrice - price6m) / price6m) * 100 : 0);
+            // 3m trend for recent acceleration detection
+            double trend3m = price3m > 0 ? ((currentPrice - price3m) / price3m) * 100 : 0;
+            // Use the STRONGER of 3m or 6m annualized for direction
+            signal.setPriceTrend6m(signal.getPriceTrend6m()); // keep 6m as stored value
+            // Direction uses 3m to catch recent moves
+            if (trend3m > 1.5 || signal.getPriceTrend6m() > 1.5) signal.setDirection("UPWARD");
+            else if (trend3m < -1.5 && signal.getPriceTrend6m() < -1.5) signal.setDirection("DOWNWARD");
+            else signal.setDirection("STABLE");
         }
 
-        // Calculate DPI from importers
+        // Calculate DPI from importers (demand side)
         double dpi = 0;
         for (var entry : importers.entrySet()) {
             String iso3 = entry.getKey();
             double importVol = entry.getValue();
             double change = changeMap.getOrDefault(iso3, 0.0);
 
-            if (change > 0.5) { // Only count meaningful worsening
+            if (change > 0.5) {
                 double contribution = change * importVol;
                 dpi += contribution;
 
@@ -203,57 +228,56 @@ public class MarketSignalService {
                 cc.setIso3(iso3);
                 cc.setPredictedChange(change);
                 cc.setImportVolume(importVol);
-                cc.setContribution(contribution);
+                cc.setContribution(Math.round(contribution * 10.0) / 10.0);
                 cc.setType("IMPORTER");
                 signal.getTopContributors().add(cc);
             }
         }
 
-        // Check exporters (supply-side risk)
+        // Supply-side risk: exporters with worsening food insecurity
+        // Weighted by EXPORT volume (not arbitrary multiplier)
         StringBuilder exporterRisk = new StringBuilder();
-        for (String iso3 : exporters) {
+        for (var entry : exporters.entrySet()) {
+            String iso3 = entry.getKey();
+            double exportVol = entry.getValue();
             double change = changeMap.getOrDefault(iso3, 0.0);
             if (change > 2) {
+                double supplyRisk = change * exportVol * 0.5; // 50% of export volume as risk weight
                 exporterRisk.append(nameMap.getOrDefault(iso3, iso3))
-                    .append(": food insecurity worsening (").append(String.format("%+.1fpp", change))
-                    .append(") — potential supply disruption from major exporter. ");
+                    .append(": food insecurity ").append(String.format("%+.1fpp", change))
+                    .append(", exports ~").append(String.format("%.0fMt", exportVol))
+                    .append("/year — supply disruption risk. ");
 
-                // Add as negative contributor (supply risk amplifies demand signal)
                 CountryContribution cc = new CountryContribution();
                 cc.setCountryName(nameMap.getOrDefault(iso3, iso3));
                 cc.setIso3(iso3);
                 cc.setPredictedChange(change);
-                cc.setImportVolume(0);
-                cc.setContribution(change * 5); // Weight exporter disruption heavily
+                cc.setImportVolume(exportVol); // Display export vol in the same field
+                cc.setContribution(Math.round(supplyRisk * 10.0) / 10.0);
                 cc.setType("EXPORTER_RISK");
                 signal.getTopContributors().add(cc);
-                dpi += change * 5; // Amplify signal
+                dpi += supplyRisk;
             }
         }
         signal.setExporterRisk(exporterRisk.length() > 0 ? exporterRisk.toString().trim() : null);
 
-        // Sort contributors by contribution
+        // Sort contributors by contribution, keep top 6
         signal.getTopContributors().sort((a, b) -> Double.compare(b.getContribution(), a.getContribution()));
         if (signal.getTopContributors().size() > 6) {
-            signal.setTopContributors(signal.getTopContributors().subList(0, 6));
+            signal.setTopContributors(new ArrayList<>(signal.getTopContributors().subList(0, 6)));
         }
 
         signal.setDemandPressureIndex(Math.round(dpi * 10.0) / 10.0);
 
-        // Signal strength
+        // Signal strength thresholds
         if (dpi > 20) signal.setSignalStrength("STRONG");
         else if (dpi > 10) signal.setSignalStrength("MODERATE");
         else if (dpi > 5) signal.setSignalStrength("WEAK");
         else signal.setSignalStrength("NONE");
 
-        // Price direction
-        if (signal.getPriceTrend6m() > 3) signal.setDirection("UPWARD");
-        else if (signal.getPriceTrend6m() < -3) signal.setDirection("DOWNWARD");
-        else signal.setDirection("STABLE");
+        // Direction already set above with 3m/6m logic
 
-        // Interpretation
         signal.setInterpretation(buildInterpretation(signal));
-
         return signal;
     }
 
