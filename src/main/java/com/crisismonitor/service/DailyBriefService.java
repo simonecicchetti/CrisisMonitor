@@ -212,6 +212,46 @@ public class DailyBriefService {
             }
         } catch (Exception e) { /* skip */ }
 
+        // Nowcast predictions — forward-looking ML data for credible forecast
+        try {
+            var predictions = nowcastService.getNowcastAll();
+            if (predictions != null && !predictions.isEmpty()) {
+                var sorted = predictions.stream()
+                    .sorted((a, b) -> Double.compare(
+                        b.getPredictedChange90d() != null ? b.getPredictedChange90d() : 0,
+                        a.getPredictedChange90d() != null ? a.getPredictedChange90d() : 0))
+                    .collect(Collectors.toList());
+
+                ctx.append("\nFOOD INSECURITY FORECAST (ML model, 90-day predictions):\n");
+                ctx.append("  Worsening:\n");
+                sorted.stream().filter(p -> p.getPredictedChange90d() != null && p.getPredictedChange90d() > 3).limit(5)
+                    .forEach(p -> ctx.append("    ").append(p.getCountryName())
+                        .append(": current ").append(String.format("%.0f%%", p.getCurrentProxy()))
+                        .append(" → projected ").append(String.format("%.0f%%", p.getProjectedProxy()))
+                        .append(" (").append(String.format("%+.1fpp", p.getPredictedChange90d())).append(")\n"));
+                ctx.append("  Improving:\n");
+                sorted.stream().filter(p -> p.getPredictedChange90d() != null && p.getPredictedChange90d() < -3).limit(3)
+                    .forEach(p -> ctx.append("    ").append(p.getCountryName())
+                        .append(": ").append(String.format("%+.1fpp", p.getPredictedChange90d())).append("\n"));
+            }
+        } catch (Exception e) { /* skip */ }
+
+        // Currency devaluations — economic crisis signals
+        if (scores != null) {
+            var currencyShocks = scores.stream()
+                .filter(s -> s.getCurrencyChange30d() != null && Math.abs(s.getCurrencyChange30d()) > 5)
+                .sorted((a, b) -> Double.compare(
+                    b.getCurrencyChange30d() != null ? b.getCurrencyChange30d() : 0,
+                    a.getCurrencyChange30d() != null ? a.getCurrencyChange30d() : 0))
+                .limit(5)
+                .collect(Collectors.toList());
+            if (!currencyShocks.isEmpty()) {
+                ctx.append("\nCURRENCY MOVEMENTS (30-day):\n");
+                currencyShocks.forEach(s -> ctx.append("  ").append(s.getCountryName())
+                    .append(": ").append(String.format("%+.1f%%", s.getCurrencyChange30d())).append("\n"));
+            }
+        }
+
         // News headlines — the raw material for the editorial
         @SuppressWarnings("unchecked")
         List<Map<String, String>> headlines = cacheWarmupService.getFallback("newsHeadlines");
