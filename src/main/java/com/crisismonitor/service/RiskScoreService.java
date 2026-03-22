@@ -627,10 +627,22 @@ public class RiskScoreService {
                     log.info("  {} conflict floor enforced: Qwen={} → baseline={}", rs.getIso3(), qwen.getConflictScore(), conflictFloor);
                 }
 
-                rs.setFoodSecurityScore(qwen.getFoodScore());
+                int foodScore = qwen.getFoodScore();
+                int climateScore = qwen.getClimateScore();
+                int economicScore = qwen.getEconomicScore();
+
+                // Enforce verified crisis floors (non-conflict emergencies)
+                Map<String, Integer> crisisFloors = QwenScoringService.getCrisisFloors(rs.getIso3());
+                if (crisisFloors != null) {
+                    foodScore = Math.max(foodScore, crisisFloors.getOrDefault("food", 0));
+                    climateScore = Math.max(climateScore, crisisFloors.getOrDefault("climate", 0));
+                    economicScore = Math.max(economicScore, crisisFloors.getOrDefault("economic", 0));
+                }
+
+                rs.setFoodSecurityScore(foodScore);
                 rs.setConflictScore(finalConflict);
-                rs.setClimateScore(qwen.getClimateScore());
-                rs.setEconomicScore(qwen.getEconomicScore());
+                rs.setClimateScore(climateScore);
+                rs.setEconomicScore(economicScore);
 
                 // Recalculate overall with corrected conflict
                 double p = 1.5;
@@ -641,9 +653,9 @@ public class RiskScoreService {
                     wConflict = 0;
                 }
                 double powerSum = wConflict * Math.pow(Math.max(1, finalConflict), p)
-                                + wFood * Math.pow(Math.max(1, qwen.getFoodScore()), p)
-                                + wClimate * Math.pow(Math.max(1, qwen.getClimateScore()), p)
-                                + wEcon * Math.pow(Math.max(1, qwen.getEconomicScore()), p);
+                                + wFood * Math.pow(Math.max(1, foodScore), p)
+                                + wClimate * Math.pow(Math.max(1, climateScore), p)
+                                + wEcon * Math.pow(Math.max(1, economicScore), p);
                 int recalcOverall = (int) Math.pow(powerSum, 1.0 / p);
                 rs.setScore(recalcOverall);
 
@@ -658,8 +670,8 @@ public class RiskScoreService {
                     drivers.add("Conflict");
                 }
                 Map<String, Integer> driverScores = Map.of(
-                    "Food Security", qwen.getFoodScore(), "Conflict", finalConflict,
-                    "Climate", qwen.getClimateScore(), "Economic", qwen.getEconomicScore());
+                    "Food Security", foodScore, "Conflict", finalConflict,
+                    "Climate", climateScore, "Economic", economicScore);
                 driverScores.entrySet().stream()
                     .filter(e -> e.getValue() >= 30)
                     .filter(e -> !drivers.contains(e.getKey())) // skip if already added
@@ -678,10 +690,10 @@ public class RiskScoreService {
                 rs.setQwenGeneratedAt(qwen.getGeneratedAt());
 
                 // Recalculate elevated flags (use finalConflict, not Qwen's original)
-                boolean climElevated = qwen.getClimateScore() >= 30;
+                boolean climElevated = climateScore >= 30;
                 boolean confElevated = finalConflict >= 30;
-                boolean econElevated = qwen.getEconomicScore() >= 30;
-                boolean foodElevated = qwen.getFoodScore() >= 60;
+                boolean econElevated = economicScore >= 30;
+                boolean foodElevated = foodScore >= 60;
                 rs.setClimateElevated(climElevated);
                 rs.setConflictElevated(confElevated);
                 rs.setEconomicElevated(econElevated);

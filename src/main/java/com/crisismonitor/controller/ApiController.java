@@ -67,6 +67,7 @@ public class ApiController {
     private final FAOFoodPriceService faoFoodPriceService;
     private final QwenScoringService qwenScoringService;
     private final DailyBriefService dailyBriefService;
+    private final IntelligenceSnapshotService intelligenceSnapshotService;
     private final GDACSService gdacsService;
 
     @org.springframework.beans.factory.annotation.Value("${ADMIN_API_KEY:notamy-admin-2026}")
@@ -890,6 +891,17 @@ public class ApiController {
     public Object getDisasterAlerts() {
         var alerts = gdacsService.getCurrentAlerts();
         return Map.of("alerts", alerts, "count", alerts.size());
+    }
+
+    // ==========================================
+    // PREDICTIVE ANALYSIS
+    // ==========================================
+
+    @GetMapping("/intelligence/predictive")
+    public Object getPredictiveAnalysis(@RequestParam(defaultValue = "en") String lang) {
+        var analysis = intelligenceSnapshotService.getTodayAnalysis(lang);
+        if (analysis != null) return analysis;
+        return Map.of("status", "generating", "message", "Predictive analysis is being generated. This may take up to 60 seconds on first request.");
     }
 
     // ==========================================

@@ -4296,11 +4296,10 @@ const SidebarManager = {
         SituationManager.init();
         break;
       case 'intelligence':
-        // AI Analysis: Ask AI + Topic Reports + Humanitarian Updates
         QAManager.init();
         TopicReportGenerator.init();
-        // Humanitarian Updates moved here from Overview
         OverviewManager.loadLiveNews().then(() => OverviewManager.renderHumanitarianUpdates());
+        this.loadPredictiveAnalysis();
         break;
       case 'nowcast':
         NowcastManager.init();
@@ -4314,14 +4313,16 @@ const SidebarManager = {
     const container = document.getElementById('country-list-container');
     const countEl = document.getElementById('country-list-count');
     const searchEl = document.getElementById('country-search');
-    if (!container) return;
+    if (!container) { console.warn('[Countries] container not found'); return; }
 
     try {
+      console.log('[Countries] Loading country list...');
       const response = await fetch('/api/risk/scores');
-      if (!response.ok) return;
+      if (!response.ok) { console.warn('[Countries] API returned', response.status); return; }
       const result = await response.json();
       const scores = result.data || result || [];
-      if (!Array.isArray(scores) || scores.length === 0) return;
+      if (!Array.isArray(scores) || scores.length === 0) { console.warn('[Countries] No scores data'); return; }
+      console.log('[Countries] Loaded', scores.length, 'countries');
 
       // Sort by score descending
       scores.sort((a, b) => (b.score || 0) - (a.score || 0));
@@ -4378,6 +4379,49 @@ const SidebarManager = {
 
     } catch (error) {
       console.error('[Countries] Failed to load country list:', error);
+    }
+  },
+
+  async loadPredictiveAnalysis() {
+    const container = document.getElementById('predictive-analysis-container');
+    if (!container) return;
+    if (container.dataset.loaded === 'true') { container.style.display = 'block'; return; }
+
+    const lang = window._platformLang || 'en';
+    try {
+      console.log('[Intelligence] Loading predictive analysis...');
+      const response = await fetch('/api/intelligence/predictive?lang=' + lang);
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.status === 'generating') {
+        container.style.display = 'block';
+        container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-tertiary);"><div class="loading-spinner" style="margin:0 auto 12px;"></div>Generating predictive analysis from platform data... (first request takes ~60s)</div>';
+        // Retry after 30s
+        setTimeout(() => { container.dataset.loaded = ''; this.loadPredictiveAnalysis(); }, 30000);
+        return;
+      }
+      if (!data.conflictOutlook && !data.keyPredictions) return;
+
+      const setText = (id, text) => { const el = document.getElementById(id); if (el && text) el.textContent = text; };
+      setText('predictive-conflict-text', data.conflictOutlook);
+      setText('predictive-food-text', data.foodSecurityOutlook);
+      setText('predictive-economic-text', data.economicOutlook);
+      setText('predictive-humanitarian-text', data.humanitarianOutlook);
+      setText('predictive-predictions', data.keyPredictions);
+      setText('predictive-escalations', data.riskEscalations);
+      setText('predictive-methodology', data.methodology);
+
+      const dateEl = document.getElementById('predictive-date');
+      if (dateEl && data.date) {
+        const d = new Date(data.date + 'T00:00:00');
+        dateEl.textContent = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      }
+
+      container.style.display = 'block';
+      container.dataset.loaded = 'true';
+      console.log('[Intelligence] Predictive analysis loaded');
+    } catch (error) {
+      console.warn('[Intelligence] Predictive analysis error:', error.message);
     }
   },
 

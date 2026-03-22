@@ -151,11 +151,18 @@ public class QwenScoringService {
     private record CrisisInfo(String description, Map<String, Integer> minScores) {}
     private static final Map<String, CrisisInfo> VERIFIED_CRISES = Map.ofEntries(
         Map.entry("CUB", new CrisisInfo(
-            "National infrastructure collapse: repeated nationwide blackouts (March 2026), " +
-            "chronic energy crisis, severe food shortages, mass emigration. " +
-            "Economic system near total failure with acute humanitarian impact.",
-            Map.of("economic", 80, "climate", 45, "food", 55)))
+            "CRITICAL: National infrastructure collapse — second nationwide blackout in one week (March 2026). " +
+            "Total grid failure, hospitals on generators, food cold-chain broken. " +
+            "Chronic energy crisis, severe food shortages, mass emigration wave. " +
+            "Economic system in freefall with acute humanitarian emergency.",
+            Map.of("economic", 88, "climate", 55, "food", 65)))
     );
+
+    /** Expose crisis floors for RiskScoreService overlay */
+    public static Map<String, Integer> getCrisisFloors(String iso3) {
+        CrisisInfo info = VERIFIED_CRISES.get(iso3);
+        return info != null ? info.minScores() : null;
+    }
 
     private void addPlatformData(StringBuilder ctx, String iso3) {
         // Verified conflict info — CRITICAL: this is ground truth

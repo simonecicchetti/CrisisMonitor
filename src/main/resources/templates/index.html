@@ -23,7 +23,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
     <!-- Custom CSS -->
-    <link rel="stylesheet" th:href="@{/css/style.css(v=104)}"/>
+    <link rel="stylesheet" th:href="@{/css/style.css(v=105)}"/>
 
     <!-- Preconnect for performance -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -778,6 +778,40 @@
         <!-- ==================== SECTION: INTELLIGENCE ==================== -->
         <section class="content-section" data-section="intelligence">
 
+            <!-- Predictive Analysis -->
+            <div id="predictive-analysis-container" class="glass-card" style="margin-bottom: var(--space-lg); padding: 20px 24px; border-left: 3px solid #f59e0b; display:none;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 14px;">
+                    <span style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: #f59e0b; font-weight: 600;">Predictive Analysis</span>
+                    <span id="predictive-date" style="font-size: 0.65rem; color: var(--text-tertiary);"></span>
+                </div>
+
+                <div id="predictive-conflict" style="margin-bottom: 16px;">
+                    <h4 style="font-size: 0.82rem; font-weight: 600; color: var(--accent-red); margin-bottom: 6px;">Conflict Outlook</h4>
+                    <p id="predictive-conflict-text" style="font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); margin:0;"></p>
+                </div>
+                <div id="predictive-food" style="margin-bottom: 16px;">
+                    <h4 style="font-size: 0.82rem; font-weight: 600; color: #f59e0b; margin-bottom: 6px;">Food Security Outlook</h4>
+                    <p id="predictive-food-text" style="font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); margin:0;"></p>
+                </div>
+                <div id="predictive-economic" style="margin-bottom: 16px;">
+                    <h4 style="font-size: 0.82rem; font-weight: 600; color: #60a5fa; margin-bottom: 6px;">Economic Outlook</h4>
+                    <p id="predictive-economic-text" style="font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); margin:0;"></p>
+                </div>
+                <div id="predictive-humanitarian" style="margin-bottom: 16px;">
+                    <h4 style="font-size: 0.82rem; font-weight: 600; color: var(--accent-teal); margin-bottom: 6px;">Humanitarian Outlook</h4>
+                    <p id="predictive-humanitarian-text" style="font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); margin:0;"></p>
+                </div>
+                <div style="padding-top: 14px; border-top: 1px solid var(--border-color);">
+                    <h4 style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">Key Predictions (7-14 days)</h4>
+                    <div id="predictive-predictions" style="font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); white-space: pre-line;"></div>
+                </div>
+                <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-color);">
+                    <h4 style="font-size: 0.82rem; font-weight: 600; color: var(--accent-red); margin-bottom: 8px;">Risk Escalations</h4>
+                    <div id="predictive-escalations" style="font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); white-space: pre-line;"></div>
+                </div>
+                <div id="predictive-methodology" style="margin-top: 12px; font-size: 0.65rem; color: var(--text-tertiary);"></div>
+            </div>
+
             <!-- Topic Reports -->
             <div>
 
@@ -1409,7 +1443,7 @@
 </nav>
 
 <script th:src="@{/js/i18n.js(v=1)}"></script>
-<script th:src="@{/js/app.js(v=307)}"></script>
+<script th:src="@{/js/app.js(v=308)}"></script>
 <script th:src="@{/js/map.js(v=12)}"></script>
 
 </body>
