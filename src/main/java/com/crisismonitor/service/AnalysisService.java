@@ -27,14 +27,14 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /**
- * AI Analysis Service using Claude API.
+ * AI Analysis Service using Qwen API.
  * Builds compact data packs and generates non-obvious insights.
  * Responses are cached in Redis to minimize API costs.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class ClaudeAnalysisService {
+public class AnalysisService {
 
     private final RiskScoreService riskScoreService;
     private final GDELTService gdeltService;
@@ -75,7 +75,7 @@ public class ClaudeAnalysisService {
     private final Map<String, Object> countryDataPackLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
-     * Crisis Context — verified intelligence injected into Claude data packs so
+     * Crisis Context — verified intelligence injected into AI data packs so
      * the model can produce informed briefings even for events beyond its training
      * cutoff. Each entry is a concise situational summary for a country.
      *
@@ -125,10 +125,10 @@ public class ClaudeAnalysisService {
             Map.entry("IRQ", "ACTIVE COMBAT ZONE as of Mar 16: US Embassy Baghdad under sustained drone attack from Iranian-backed militias (Popular Mobilization Front, Saraya Awliya al-Dam). C-RAM air defense actively engaging Shahed-136 drones over Baghdad. US airstrikes leveling militia positions in Mosul. A-10 Warthogs conducting close air support in northern Iraq. Iraqi airspace contested. Al-Rashid Hotel (EU mission, Austrian/Swedish embassies) targeted by drone. HIMARS launching ATACMS from Kuwait into Iran. Iraq caught between US and Iranian operations on its soil.")
     );
 
-    // Redis key for Claude situation detection cache (4 hour TTL)
-    private static final String CLAUDE_SITUATIONS_CACHE_KEY = "claudeSituations::latest";
+    // Redis key for AI situation detection cache (4 hour TTL)
+    private static final String AI_SITUATIONS_CACHE_KEY = "aiSituations::latest";
 
-    // In-memory fallback for Claude situation detection (when Redis is unavailable)
+    // In-memory fallback for AI situation detection (when Redis is unavailable)
     private volatile SituationDetectionResult cachedSituationInMemory;
 
     /**
@@ -144,7 +144,7 @@ public class ClaudeAnalysisService {
         String dataPack = buildGlobalDataPack();
         String prompt = buildGlobalPrompt(dataPack, newsSignal);
 
-        AIAnalysis analysis = callClaude(prompt, "global", null, null, newsSignal);
+        AIAnalysis analysis = callAI(prompt, "global", null, null, newsSignal);
         analysis.setDataVersion(dataVersion);
         analysis.setFromCache(false);
         analysis.setNewsSignal(newsSignal);
@@ -176,8 +176,8 @@ public class ClaudeAnalysisService {
         String countryName = getCountryName(iso3);
         String prompt = buildCountryNarrativePrompt(packResult.dataPack, countryName, packResult.riskLevel, packResult.riskScore);
 
-        // Call Claude for narrative response
-        AIAnalysis analysis = callClaudeNarrative(prompt, iso3, countryName, packResult.sources);
+        // Call AI for narrative response
+        AIAnalysis analysis = callAINarrative(prompt, iso3, countryName, packResult.sources);
         analysis.setDataVersion(dataVersion);
         analysis.setFromCache(false);
         analysis.setRiskLevel(packResult.riskLevel);
@@ -217,7 +217,7 @@ public class ClaudeAnalysisService {
         }
 
         String prompt = buildRegionalPrompt(dataPack, region);
-        AIAnalysis analysis = callClaudeRegional(prompt, region);
+        AIAnalysis analysis = callAIRegional(prompt, region);
         analysis.setDataVersion(dataVersion);
         analysis.setFromCache(false);
         analysis.setRegion(region);
@@ -1155,9 +1155,9 @@ public class ClaudeAnalysisService {
     }
 
     /**
-     * Call Claude for regional analysis
+     * Call AI for regional analysis
      */
-    private AIAnalysis callClaudeRegional(String prompt, String region) {
+    private AIAnalysis callAIRegional(String prompt, String region) {
         try {
             String systemPrompt = "You are a humanitarian intelligence analyst providing regional situation briefs. Be concise, data-driven, and actionable.";
 
@@ -1353,10 +1353,10 @@ public class ClaudeAnalysisService {
     }
 
     /**
-     * Call Claude for narrative country analysis.
+     * Call AI for narrative country analysis.
      * Returns AIAnalysis with narrative field populated instead of keyFindings/drivers/watchList.
      */
-    private AIAnalysis callClaudeNarrative(String prompt, String iso3, String countryName, List<QASource> sources) {
+    private AIAnalysis callAINarrative(String prompt, String iso3, String countryName, List<QASource> sources) {
         if (apiKey == null || apiKey.isBlank()) {
             return AIAnalysis.builder()
                     .scope("country")
@@ -1445,11 +1445,11 @@ public class ClaudeAnalysisService {
             """.formatted(countryName, dataPack);
     }
 
-    private AIAnalysis callClaude(String prompt, String scope, String iso3, String countryName) {
-        return callClaude(prompt, scope, iso3, countryName, null);
+    private AIAnalysis callAI(String prompt, String scope, String iso3, String countryName) {
+        return callAI(prompt, scope, iso3, countryName, null);
     }
 
-    private AIAnalysis callClaude(String prompt, String scope, String iso3, String countryName, NewsSignal newsSignal) {
+    private AIAnalysis callAI(String prompt, String scope, String iso3, String countryName, NewsSignal newsSignal) {
         if (apiKey == null || apiKey.isBlank()) {
             log.warn("DashScope API key not configured, returning mock analysis");
             return mockAnalysis(scope, iso3, countryName);
@@ -1581,7 +1581,7 @@ public class ClaudeAnalysisService {
 
     /**
      * Deep contextual analysis with dynamic weighting.
-     * Claude acts as the reasoning engine, determining weights based on context.
+     * AI acts as the reasoning engine, determining weights based on context.
      * Single call - meant to be triggered by user button for cost control.
      */
     public DeepAnalysisResult deepAnalyze(String iso3) {
@@ -1638,7 +1638,7 @@ public class ClaudeAnalysisService {
     /**
      * Build comprehensive data pack for deep analysis.
      * Organized by data freshness: REALTIME → RECENT → BASELINE → STRUCTURAL
-     * Token-efficient format optimized for Claude.
+     * Token-efficient format optimized for AI.
      */
     @SuppressWarnings("unchecked")
     private String buildDeepDataPack(String iso3) {
@@ -1881,29 +1881,29 @@ Weights must sum to 100. Consider cascade effects and non-linear amplification.
     // ========================================
 
     /**
-     * Get cached Claude situation detection result from Redis (for page load).
+     * Get cached AI situation detection result from Redis (for page load).
      * Returns null if no cached result exists.
      */
     public SituationDetectionResult getCachedSituationResult() {
         // Try Redis first
         try {
-            Object cached = redisTemplate.opsForValue().get(CLAUDE_SITUATIONS_CACHE_KEY);
+            Object cached = redisTemplate.opsForValue().get(AI_SITUATIONS_CACHE_KEY);
             if (cached instanceof SituationDetectionResult r) {
-                log.debug("Found cached Claude situations in Redis (direct)");
+                log.debug("Found cached AI situations in Redis (direct)");
                 return r;
             }
             if (cached instanceof java.util.Map) {
-                log.debug("Found cached Claude situations in Redis (Map), converting...");
+                log.debug("Found cached AI situations in Redis (Map), converting...");
                 String json = objectMapper.writeValueAsString(cached);
                 return objectMapper.readValue(json, SituationDetectionResult.class);
             }
         } catch (Exception e) {
-            log.debug("Redis read failed for Claude situations: {}", e.getMessage());
+            log.debug("Redis read failed for AI situations: {}", e.getMessage());
         }
 
         // Fall back to in-memory cache (works without Redis)
         if (cachedSituationInMemory != null) {
-            log.debug("Returning Claude situations from in-memory cache");
+            log.debug("Returning AI situations from in-memory cache");
             return cachedSituationInMemory;
         }
 
@@ -1911,29 +1911,29 @@ Weights must sum to 100. Consider cascade effects and non-linear amplification.
     }
 
     /**
-     * Save Claude situation detection result to Redis (4 hour TTL).
+     * Save AI situation detection result to Redis (4 hour TTL).
      */
     private void cacheSituationResult(SituationDetectionResult result) {
         // Always save in-memory (works without Redis)
         cachedSituationInMemory = result;
 
         try {
-            redisTemplate.opsForValue().set(CLAUDE_SITUATIONS_CACHE_KEY, result,
+            redisTemplate.opsForValue().set(AI_SITUATIONS_CACHE_KEY, result,
                 java.time.Duration.ofHours(4));
-            log.info("Cached Claude situations in Redis (4h TTL)");
+            log.info("Cached AI situations in Redis (4h TTL)");
         } catch (Exception e) {
-            log.info("Redis unavailable, Claude situations cached in-memory only");
+            log.info("Redis unavailable, AI situations cached in-memory only");
         }
     }
 
     /**
-     * Claude-Native Situation Detection.
-     * Pre-filters countries with triggers, then uses Claude for semantic analysis.
+     * AI-Native Situation Detection.
+     * Pre-filters countries with triggers, then uses AI for semantic analysis.
      * Single API call for cost control.
      * Results are cached in memory for subsequent page loads.
      */
     public SituationDetectionResult detectSituations() {
-        log.info("Starting Claude-Native situation detection");
+        log.info("Starting AI-Native situation detection");
         long start = System.currentTimeMillis();
 
         if (apiKey == null || apiKey.isBlank()) {
@@ -2209,7 +2209,7 @@ Be precise. Only report situations with clear evidence. Empty array is valid if 
                     List<String> evidence = new ArrayList<>();
                     s.path("evidence").forEach(e -> evidence.add(e.asText()));
 
-                    // Validate severity — fallback if Claude returns empty/invalid
+                    // Validate severity — fallback if AI returns empty/invalid
                     String severity = s.path("severity").asText("");
                     if (!Set.of("CRITICAL", "HIGH", "ELEVATED", "WATCH").contains(severity.toUpperCase())) {
                         // Derive from confidence or default to ELEVATED

@@ -12,7 +12,7 @@ import java.util.*;
 /**
  * Pre-generates intelligence reports on a schedule.
  * 7 topics × 6 regions = 42 reports, stored in Firestore.
- * Users read from Firestore — zero Claude API calls per request.
+ * Users read from Firestore — zero AI API calls per request.
  */
 @Slf4j
 @Service
@@ -65,7 +65,7 @@ public class ReportSchedulerService {
                         log.info("  Saved report: {}", docId);
                     }
 
-                    // Delay between reports to respect Claude API rate limits
+                    // Delay between reports to respect Qwen API rate limits
                     Thread.sleep(5000);
 
                 } catch (InterruptedException ie) {

@@ -10,7 +10,7 @@ import java.util.List;
 
 /**
  * AI-generated crisis analysis response.
- * Contains structured insights from Claude analysis.
+ * Contains structured insights from AI analysis.
  */
 @Data
 @Builder
@@ -38,13 +38,13 @@ public class AIAnalysis {
 
     // Narrative analysis with citations (country scope)
     private String narrative;                                       // Prose with [1], [2] citations
-    private List<com.crisismonitor.service.ClaudeAnalysisService.QASource> sources;  // Cited sources
+    private List<com.crisismonitor.service.AnalysisService.QASource> sources;  // Cited sources
     private String riskLevel;                                      // STABLE, WARNING, ALERT, CRITICAL
     private Integer riskScore;                                     // 0-100
 
     // Metadata
     private LocalDateTime generatedAt;
     private String dataVersion;          // Hash of input data for cache key
-    private String model;                // "claude-3-haiku" or "claude-3-sonnet"
+    private String model;                // "qwen3.5-plus" or "qwen-flash"
     private boolean fromCache;
 }

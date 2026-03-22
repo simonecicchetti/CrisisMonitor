@@ -90,7 +90,7 @@ public class CountryProfileData {
     // === RECENT REPORTS (ReliefWeb) ===
     private List<ReportItem> recentReports;
 
-    // === ACTIVE SITUATIONS (Claude-detected) ===
+    // === ACTIVE SITUATIONS (AI-detected) ===
     private List<SituationItem> situations;
 
     // === TREND HISTORY (sparkline data) ===

@@ -532,7 +532,7 @@ public class CacheWarmupService {
             "topicIntelligence",
             // AI analysis
             "aiAnalysisGlobal", "aiAnalysisCountry", "aiAnalysisRegion",
-            "aiAnalysisRegionV2", "claudeSituations",
+            "aiAnalysisRegionV2", "aiSituations",
             // Regional
             "regionalPulseV2", "regionContext", "overviewContext", "regionDetail",
             "countryProfileAggregated", "countryDataPack",

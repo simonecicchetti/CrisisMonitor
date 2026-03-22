@@ -964,29 +964,17 @@
                     <!-- Reaction bar -->
                     <div id="report-reactions" style="display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--border-color);">
                         <button class="reaction-btn" data-type="useful" style="display:flex;align-items:center;gap:4px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:0.8rem;">
-                            👍 <span id="reaction-useful-count">0</span> Useful
+                            👍 <span id="reaction-useful-count">0</span> <span data-i18n="community.useful">Useful</span>
                         </button>
                         <button class="reaction-btn" data-type="insightful" style="display:flex;align-items:center;gap:4px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:0.8rem;">
-                            💡 <span id="reaction-insightful-count">0</span> Insightful
+                            💡 <span id="reaction-insightful-count">0</span> <span data-i18n="community.insightful">Insightful</span>
                         </button>
-                        <button class="reaction-btn" data-type="verify" style="display:flex;align-items:center;gap:4px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:0.8rem;">
-                            ⚠️ <span id="reaction-verify-count">0</span> Verify
-                        </button>
-                    </div>
-                    <!-- Comments -->
-                    <div id="report-comments-section" style="padding-top:8px;">
-                        <div style="display:flex;gap:8px;margin-bottom:12px;">
-                            <input type="text" id="comment-input" placeholder="Add a comment..." data-i18n-placeholder="community.addComment" maxlength="500"
-                                style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);font-size:0.82rem;">
-                            <button id="comment-submit" style="padding:8px 16px;border-radius:8px;border:1px solid var(--accent-teal);background:transparent;color:var(--accent-teal);cursor:pointer;font-size:0.8rem;">Post</button>
-                        </div>
-                        <div id="comments-list" style="max-height:300px;overflow-y:auto;"></div>
                     </div>
                 </div>
             </div>
 
             <script>
-            // Community interactions (inline, no dependency on app.js)
+            // Reactions only (comments removed)
             (function() {
                 var currentReportId = null;
 
@@ -996,10 +984,8 @@
                     return user.getIdToken();
                 }
 
-                // Load reactions when report renders
                 window.loadReportCommunity = function(reportId) {
                     currentReportId = reportId;
-                    // Load reactions
                     fetch('/api/community/reports/' + reportId + '/reactions')
                         .then(function(r) { return r.json(); })
                         .then(function(data) {
@@ -1007,32 +993,9 @@
                             if (el) el.textContent = data.useful || 0;
                             el = document.getElementById('reaction-insightful-count');
                             if (el) el.textContent = data.insightful || 0;
-                            el = document.getElementById('reaction-verify-count');
-                            if (el) el.textContent = data.verify || 0;
-                        }).catch(function() {});
-
-                    // Load comments
-                    fetch('/api/community/reports/' + reportId + '/comments?limit=20')
-                        .then(function(r) { return r.json(); })
-                        .then(function(data) {
-                            var list = document.getElementById('comments-list');
-                            if (!list) return;
-                            var comments = data.comments || [];
-                            if (comments.length === 0) {
-                                list.innerHTML = '<div style="color:var(--text-tertiary);font-size:0.78rem;padding:8px 0;">No comments yet. Be the first to share your analysis.</div>';
-                                return;
-                            }
-                            list.innerHTML = comments.map(function(c) {
-                                var esc = function(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
-                                return '<div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--border-color);">' +
-                                    (c.userPhoto ? '<img src="' + esc(c.userPhoto) + '" style="width:28px;height:28px;border-radius:50%;" alt="">' : '<div style="width:28px;height:28px;border-radius:50%;background:var(--bg-tertiary);"></div>') +
-                                    '<div><div style="font-size:0.75rem;font-weight:500;color:var(--text-primary);">' + esc(c.userName || 'Anonymous') + ' <span style="color:var(--text-tertiary);font-weight:400;">' + new Date(c.createdAt).toLocaleDateString() + '</span></div>' +
-                                    '<div style="font-size:0.82rem;color:var(--text-secondary);margin-top:2px;">' + esc(c.text) + '</div></div></div>';
-                            }).join('');
                         }).catch(function() {});
                 };
 
-                // Reaction buttons
                 document.addEventListener('click', function(e) {
                     var btn = e.target.closest('.reaction-btn');
                     if (!btn || !currentReportId) return;
@@ -1048,60 +1011,8 @@
                             if (el) el.textContent = data.useful || 0;
                             el = document.getElementById('reaction-insightful-count');
                             if (el) el.textContent = data.insightful || 0;
-                            el = document.getElementById('reaction-verify-count');
-                            if (el) el.textContent = data.verify || 0;
                         });
                     });
-                });
-
-                // Comment submit
-                function submitComment() {
-                    var input = document.getElementById('comment-input');
-                    if (!input || !input.value.trim()) { console.log('[Community] No text'); return; }
-                    if (!currentReportId) { console.log('[Community] No reportId:', currentReportId); return; }
-                    var text = input.value.trim();
-                    var user = firebase.auth().currentUser;
-                    console.log('[Community] Posting comment, user:', user ? user.email : 'null', 'reportId:', currentReportId, 'text:', text);
-                    if (!user) { alert('Please sign in to comment'); return; }
-                    var submitBtn = document.getElementById('comment-submit');
-                    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '...'; }
-                    user.getIdToken().then(function(token) {
-                        console.log('[Community] Got token, posting to /api/community/reports/' + currentReportId + '/comments');
-                        return fetch('/api/community/reports/' + currentReportId + '/comments', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                            body: JSON.stringify({ text: text })
-                        });
-                    }).then(function(r) {
-                        console.log('[Community] HTTP status:', r.status);
-                        return r.json();
-                    }).then(function(data) {
-                        console.log('[Community] Response:', data);
-                        if (data.success) {
-                            input.value = '';
-                            window.loadReportCommunity(currentReportId);
-                        } else {
-                            alert('Failed to post: ' + (data.error || 'unknown error'));
-                        }
-                    }).catch(function(err) {
-                        console.error('[Community] Error:', err);
-                        alert('Error posting comment: ' + err.message);
-                    }).finally(function() {
-                        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Post'; }
-                    });
-                }
-
-                document.addEventListener('click', function(e) {
-                    if (e.target.id === 'comment-submit' || e.target.closest('#comment-submit')) {
-                        submitComment();
-                    }
-                });
-
-                // Enter key submits comment
-                document.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter' && e.target.id === 'comment-input') {
-                        submitComment();
-                    }
                 });
             })();
             </script>

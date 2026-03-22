@@ -97,7 +97,7 @@ public class TopicReportService {
         ));
     }
 
-    // Topic-specific analytical prompts for Claude
+    // Topic-specific analytical prompts for AI
     private static final Map<String, String> TOPIC_PROMPTS = new LinkedHashMap<>();
     static {
         TOPIC_PROMPTS.put("conflict", """
@@ -917,7 +917,7 @@ public class TopicReportService {
     }
 
     /**
-     * Generate key development bullets using Claude AI with topic-specific analysis
+     * Generate key development bullets using AI with topic-specific analysis
      */
     private List<KeyDevelopment> generateKeyDevelopments(String topic, String region,
             List<CountryMetrics> countryMatrix, List<SourceItem> sources,
@@ -928,8 +928,8 @@ public class TopicReportService {
         // Build topic-specific context
         String context = buildTopicSpecificContext(topic, region, countries, countryMatrix, sources);
 
-        // Call Claude with topic-specific prompt
-        String synthesis = callClaudeForSynthesis(topic, context);
+        // Call AI with topic-specific prompt
+        String synthesis = callAIForSynthesis(topic, context);
 
         String narrative = null;
 
@@ -976,7 +976,7 @@ public class TopicReportService {
             }
         }
 
-        // Fallback: generate from data if Claude fails or returns empty
+        // Fallback: generate from data if AI fails or returns empty
         if (developments.isEmpty()) {
             for (CountryMetrics cm : countryMatrix.stream().limit(3).collect(Collectors.toList())) {
                 KeyDevelopment kd = new KeyDevelopment();
@@ -998,9 +998,9 @@ public class TopicReportService {
     }
 
     /**
-     * Call Claude API for synthesis
+     * Call AI for synthesis
      */
-    private String callClaudeForSynthesis(String topic, String context) {
+    private String callAIForSynthesis(String topic, String context) {
         if (apiKey == null || apiKey.isBlank()) {
             log.debug("DashScope API key not configured, using fallback synthesis");
             return null;
@@ -1187,7 +1187,7 @@ public class TopicReportService {
         private List<KeyDevelopment> keyDevelopments;
         private List<CountryMetrics> countryMatrix;
         private List<SourceItem> sources;
-        private String narrative;  // 250-300 word analytical narrative from Claude
+        private String narrative;  // 250-300 word analytical narrative from AI
     }
 
     @Data

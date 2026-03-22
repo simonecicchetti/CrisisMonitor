@@ -39,7 +39,7 @@ public class ApiController {
     private final OpenMeteoService openMeteoService;
     private final CurrencyService currencyService;
     private final RiskScoreService riskScoreService;
-    private final ClaudeAnalysisService claudeAnalysisService;
+    private final AnalysisService analysisService;
     private final CacheManager cacheManager;
     private final CacheWarmupService cacheWarmupService;
     private final DataFreshnessService dataFreshnessService;
@@ -496,44 +496,44 @@ public class ApiController {
         return currencyService.getCurrencyCrisis();
     }
 
-    // ========== AI ANALYSIS (CLAUDE) ==========
+    // ========== AI ANALYSIS ==========
 
     @GetMapping("/analysis/global")
     public AIAnalysis getGlobalAnalysis() {
-        String dataVersion = claudeAnalysisService.generateDataVersion();
-        return claudeAnalysisService.analyzeGlobal(dataVersion);
+        String dataVersion = analysisService.generateDataVersion();
+        return analysisService.analyzeGlobal(dataVersion);
     }
 
     @GetMapping("/analysis/country")
     public AIAnalysis getCountryAnalysis(@RequestParam String iso3) {
-        String dataVersion = claudeAnalysisService.generateDataVersion();
-        return claudeAnalysisService.analyzeCountry(iso3.toUpperCase(), dataVersion);
+        String dataVersion = analysisService.generateDataVersion();
+        return analysisService.analyzeCountry(iso3.toUpperCase(), dataVersion);
     }
 
     @GetMapping("/analysis/region")
     public AIAnalysis getRegionalAnalysis(@RequestParam String region) {
-        String dataVersion = claudeAnalysisService.generateDataVersion();
-        return claudeAnalysisService.analyzeRegion(region.toLowerCase(), dataVersion);
+        String dataVersion = analysisService.generateDataVersion();
+        return analysisService.analyzeRegion(region.toLowerCase(), dataVersion);
     }
 
     @GetMapping("/analysis/version")
     public Map<String, String> getDataVersion() {
-        return Map.of("version", claudeAnalysisService.generateDataVersion());
+        return Map.of("version", analysisService.generateDataVersion());
     }
 
     /**
-     * Deep contextual analysis with Claude.
+     * Deep contextual analysis.
      * Single call triggered by button for cost control.
      * Provides dynamic weighting based on current context.
      */
     @GetMapping("/analysis/deep")
-    public ClaudeAnalysisService.DeepAnalysisResult getDeepAnalysis(
+    public AnalysisService.DeepAnalysisResult getDeepAnalysis(
             @RequestParam(required = false) String iso3) {
         // If no ISO3 provided, analyze top risk country
         String targetIso3 = iso3 != null && !iso3.isBlank()
                 ? iso3.toUpperCase(java.util.Locale.ROOT)
-                : claudeAnalysisService.getTopRiskCountryIso3();
-        return claudeAnalysisService.deepAnalyze(targetIso3);
+                : analysisService.getTopRiskCountryIso3();
+        return analysisService.deepAnalyze(targetIso3);
     }
 
     // ========== DATA FRESHNESS ==========
@@ -737,28 +737,28 @@ public class ApiController {
     // ========== SITUATION DETECTION ENGINE ==========
 
     /**
-     * Claude-Native Situation Detection.
+     * AI Situation Detection.
      * Triggered by button click for cost control.
-     * Uses Claude to semantically analyze triggered countries.
+     * Uses AI to semantically analyze triggered countries.
      * Result is cached for subsequent page loads.
      */
     @GetMapping("/situations/detect")
-    public ClaudeAnalysisService.SituationDetectionResult detectSituations() {
-        return claudeAnalysisService.detectSituations();
+    public AnalysisService.SituationDetectionResult detectSituations() {
+        return analysisService.detectSituations();
     }
 
     /**
-     * Get cached Claude situation detection results.
+     * Get cached AI situation detection results.
      * Returns cached result if available, otherwise null.
      */
-    @GetMapping("/situations/claude-cached")
-    public ClaudeAnalysisService.SituationDetectionResult getCachedClaudeSituations() {
-        ClaudeAnalysisService.SituationDetectionResult cached = claudeAnalysisService.getCachedSituationResult();
+    @GetMapping("/situations/cached")
+    public AnalysisService.SituationDetectionResult getCachedSituations() {
+        AnalysisService.SituationDetectionResult cached = analysisService.getCachedSituationResult();
         if (cached != null) {
             return cached;
         }
         // Return empty result with message
-        return ClaudeAnalysisService.SituationDetectionResult.builder()
+        return AnalysisService.SituationDetectionResult.builder()
                 .status("NO_CACHE")
                 .message("Click 'Detect Situations' to analyze")
                 .situations(java.util.List.of())
@@ -834,7 +834,7 @@ public class ApiController {
             }
         }
 
-        // Fallback: generate live (costs Claude API credits)
+        // Fallback: generate live
         return topicReportService.generateReport(topic, region, 7);
     }
 
@@ -1102,16 +1102,16 @@ public class ApiController {
      * Returns answer with inline [N] citations referencing source articles.
      */
     @GetMapping("/intelligence/ask")
-    public ClaudeAnalysisService.QAResponse askQuestion(@RequestParam String q) {
+    public AnalysisService.QAResponse askQuestion(@RequestParam String q) {
         if (q == null || q.isBlank() || q.length() > 500) {
-            return ClaudeAnalysisService.QAResponse.builder()
+            return AnalysisService.QAResponse.builder()
                     .question(q)
                     .answer("Please provide a question (max 500 characters).")
                     .sources(java.util.List.of())
                     .generatedAt(java.time.LocalDateTime.now())
                     .build();
         }
-        return claudeAnalysisService.answerQuestion(q.trim());
+        return analysisService.answerQuestion(q.trim());
     }
 
     // ========== NEWS FEED (TWO-COLUMN) ==========

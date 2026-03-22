@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Intelligence Preparation Service — aggregates humanitarian reports and news
- * from already-cached sources into per-country intelligence bundles for Claude briefings.
+ * from already-cached sources into per-country intelligence bundles for AI briefings.
  *
  * Strategy: uses ONLY data that warmup has already cached (ReliefWeb, news feed).
  * Never triggers new GDELT/RSS fetches — avoids rate limit contention with warmup.

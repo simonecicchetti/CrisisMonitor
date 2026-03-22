@@ -19,9 +19,9 @@ import java.util.stream.Collectors;
  * Generates AI country analysis profiles using Qwen 3.5-Plus with web search.
  * Pre-generated and stored in Firestore for instant access.
  *
- * Migrated from Claude Sonnet to Qwen 3.5-Plus:
+ * Migrated to Qwen 3.5-Plus:
  * - 87% cost reduction ($364/yr → $47/yr)
- * - Web search adds real-time grounding (Claude lacks this)
+ * - Web search adds real-time grounding (previous model lacked this)
  * - Quality sufficient for structured 5-section country profiles
  *
  * Uses: risk scores, GDELT spikes, nowcast predictions, RSS news, ReliefWeb reports.

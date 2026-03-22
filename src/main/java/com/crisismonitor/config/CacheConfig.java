@@ -64,7 +64,7 @@ public class CacheConfig implements CachingConfigurer {
     }
 
     /**
-     * RedisTemplate for direct Redis operations (e.g., Claude situations cache).
+     * RedisTemplate for direct Redis operations (e.g., AI situations cache).
      * Only created when Redis is available.
      */
     @Bean
@@ -163,7 +163,7 @@ public class CacheConfig implements CachingConfigurer {
         cacheConfigs.put("aiAnalysisCountry", aiConfig);
         cacheConfigs.put("aiAnalysisRegion", aiConfig);
         cacheConfigs.put("aiAnalysisRegionV2", aiConfig);
-        cacheConfigs.put("claudeSituations", aiConfig);
+        cacheConfigs.put("aiSituations", aiConfig);
 
         RedisCacheConfiguration oneHourConfig = defaultConfig.entryTtl(Duration.ofHours(1));
         cacheConfigs.put("topicIntelligence", defaultConfig);
@@ -221,7 +221,7 @@ public class CacheConfig implements CachingConfigurer {
         cacheConfigs.put("faoFoodPriceIndex", longTtlConfig);
         cacheConfigs.put("worldBankSFI", longTtlConfig);
 
-        // Topic reports — expensive to generate (Claude API + multiple data sources)
+        // Topic reports — expensive to generate (Qwen API + multiple data sources)
         // Cache for 2 hours, first user generates, all others read from cache
         cacheConfigs.put("topicReport", longTtlConfig);
 
