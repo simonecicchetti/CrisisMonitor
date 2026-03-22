@@ -4241,6 +4241,22 @@ const SidebarManager = {
         StructuralIndicesManager.init();
         // Regional Pulse lives in Countries now
         OverviewManager.loadRegionalPulse();
+        // Move Drivers content into Countries (once)
+        if (!this._driversMoved) {
+          const driversSection = document.querySelector('.content-section[data-section="drivers"]');
+          const driversTarget = document.getElementById('drivers-in-countries');
+          if (driversSection && driversTarget && driversTarget.children.length === 0) {
+            // Move inner content, keep section hidden
+            while (driversSection.firstChild) {
+              driversTarget.appendChild(driversSection.firstChild);
+            }
+            driversSection.style.display = 'none';
+            this._driversMoved = true;
+          }
+        }
+        // Initialize driver tabs
+        if (typeof DriverTabManager !== 'undefined') DriverTabManager.init();
+        if (typeof IntelligenceManager !== 'undefined') IntelligenceManager.loadWHOOutbreaks();
         break;
       case 'early-warning':
         RiskScoreMonitor.init();

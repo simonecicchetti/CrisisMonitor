@@ -6,7 +6,7 @@
     "newsFeed": "News Feed",
     "drivers": "Drivers",
     "intelligence": "Intelligence",
-    "nowcast": "Nowcast"
+    "nowcast": "Nowcast ML"
   },
   "auth": {
     "signIn": "Sign in",
@@ -115,7 +115,7 @@
     "sources": "Sources"
   },
   "nowcast": {
-    "title": "Food Insecurity Nowcast",
+    "title": "Nowcast ML",
     "modelActive": "Model Active",
     "countriesTracked": "countries tracked",
     "proxy": "Proxy",

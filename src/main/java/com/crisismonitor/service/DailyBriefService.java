@@ -1197,8 +1197,32 @@ public class DailyBriefService {
             "{\"globalPulseHeadline\":\"...\",\"globalPulseBody\":\"...\",\"fieldDispatchHeadline\":\"...\",\"fieldDispatchBody\":\"...\"}";
 
         try {
-            String rawContent = callQwen(AMANPOUR_STYLE, prompt, 600, false);
-            JsonNode json = extractJson(rawContent);
+            // Use qwen-flash for translations — much faster than qwen3.5-plus
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("model", "qwen-flash");
+            request.put("max_tokens", 600);
+            request.put("messages", List.of(
+                Map.of("role", "system", "content", "You are a professional translator. Translate accurately, preserving analytical tone and all numbers. Respond with JSON only, no markdown."),
+                Map.of("role", "user", "content", prompt)
+            ));
+
+            String response = qwenClient.post()
+                    .uri("/chat/completions")
+                    .header("Authorization", "Bearer " + dashscopeApiKey)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(30))
+                    .block();
+
+            if (response == null || response.isBlank()) return null;
+            JsonNode root = objectMapper.readTree(response);
+            String content = "";
+            if (root.has("choices") && root.path("choices").size() > 0) {
+                content = root.path("choices").path(0).path("message").path("content").asText("");
+            }
+            JsonNode json = extractJson(content);
             if (json == null) return null;
 
             EditorialColumns cols = new EditorialColumns();
@@ -1208,9 +1232,10 @@ public class DailyBriefService {
             cols.setFieldDispatchBody(json.path("fieldDispatchBody").asText(""));
             cols.setLanguage(targetLang);
             cols.setGeneratedAt(java.time.Instant.now().toString());
+            log.info("Column translation to {} completed", targetLang);
             return cols;
         } catch (Exception e) {
-            log.error("Column translation failed: {}", e.getMessage());
+            log.error("Column translation to {} failed: {}", targetLang, e.getMessage());
             return null;
         }
     }

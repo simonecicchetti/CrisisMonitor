@@ -6,7 +6,7 @@
     "newsFeed": "新闻",
     "drivers": "驱动因素",
     "intelligence": "情报",
-    "nowcast": "即时预测"
+    "nowcast": "Nowcast ML"
   },
   "auth": {
     "signIn": "登录",
@@ -48,7 +48,7 @@
     "loadingRegional": "正在加载区域数据..."
   },
   "earlyWarning": {
-    "title": "预测性预警",
+    "title": "Nowcast ML",
     "horizon": "30天视野",
     "critical": "危急",
     "alert": "警报",
@@ -61,7 +61,7 @@
     "multiIndicatorConfirmed": "多指标确认"
   },
   "newsFeedSection": {
-    "title": "新闻动态",
+    "title": "Nowcast ML",
     "multiSource": "来自人道主义机构和全球媒体的多源新闻",
     "media": "媒体",
     "reliefWeb": "ReliefWeb",
@@ -81,7 +81,7 @@
     "humanitarian": "人道主义"
   },
   "drivers": {
-    "title": "危机驱动因素",
+    "title": "Nowcast ML",
     "multiSource": "多源",
     "climate": "气候",
     "conflict": "冲突",
@@ -115,7 +115,7 @@
     "sources": "来源"
   },
   "nowcast": {
-    "title": "粮食不安全预测",
+    "title": "Nowcast ML",
     "modelActive": "模型运行中",
     "countriesTracked": "国家跟踪中",
     "proxy": "代理指标",
@@ -131,7 +131,7 @@
     "trend": "趋势"
   },
   "countryBrief": {
-    "title": "国家情报",
+    "title": "Nowcast ML",
     "selectCountry": "选择国家...",
     "generating": "正在生成情报简报...",
     "security": "安全与治理",
@@ -151,11 +151,11 @@
     "signInToReact": "请登录后互动"
   },
   "hazards": {
-    "title": "活跃自然灾害",
+    "title": "Nowcast ML",
     "active": "活跃"
   },
   "situations": {
-    "title": "态势情报",
+    "title": "Nowcast ML",
     "operationsMode": "作战模式",
     "detectAI": "AI态势检测",
     "criticalHigh": "危急+高",

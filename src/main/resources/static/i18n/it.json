@@ -6,7 +6,7 @@
     "newsFeed": "Notizie",
     "drivers": "Fattori",
     "intelligence": "Intelligence",
-    "nowcast": "Previsioni"
+    "nowcast": "Nowcast ML"
   },
   "auth": {
     "signIn": "Accedi",
@@ -48,7 +48,7 @@
     "loadingRegional": "Caricamento dati regionali..."
   },
   "earlyWarning": {
-    "title": "Allerta Precoce Predittiva",
+    "title": "Nowcast ML",
     "horizon": "orizzonte 30 giorni",
     "critical": "CRITICO",
     "alert": "ALLERTA",
@@ -61,7 +61,7 @@
     "multiIndicatorConfirmed": "confermato multi-indicatore"
   },
   "newsFeedSection": {
-    "title": "Notizie",
+    "title": "Nowcast ML",
     "multiSource": "Notizie multi-fonte da agenzie umanitarie e media globali",
     "media": "Media",
     "reliefWeb": "ReliefWeb",
@@ -81,7 +81,7 @@
     "humanitarian": "Umanitario"
   },
   "drivers": {
-    "title": "Fattori di Crisi",
+    "title": "Nowcast ML",
     "multiSource": "Multi-Fonte",
     "climate": "Clima",
     "conflict": "Conflitto",
@@ -115,7 +115,7 @@
     "sources": "Fonti"
   },
   "nowcast": {
-    "title": "Previsione Insicurezza Alimentare",
+    "title": "Nowcast ML",
     "modelActive": "Modello Attivo",
     "countriesTracked": "paesi monitorati",
     "proxy": "Proxy",
@@ -131,7 +131,7 @@
     "trend": "Tendenza"
   },
   "countryBrief": {
-    "title": "Intelligence Paese",
+    "title": "Nowcast ML",
     "selectCountry": "Seleziona un paese...",
     "generating": "Generazione briefing in corso...",
     "security": "Sicurezza e Governance",
@@ -151,11 +151,11 @@
     "signInToReact": "Accedi per reagire"
   },
   "hazards": {
-    "title": "Pericoli Naturali Attivi",
+    "title": "Nowcast ML",
     "active": "Attivi"
   },
   "situations": {
-    "title": "Intelligence Situazionale",
+    "title": "Nowcast ML",
     "operationsMode": "Modalità Operativa",
     "detectAI": "Rileva Situazioni (IA)",
     "criticalHigh": "Critici + Alti",

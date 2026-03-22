@@ -6,7 +6,7 @@
     "newsFeed": "الأخبار",
     "drivers": "العوامل",
     "intelligence": "الاستخبارات",
-    "nowcast": "التوقعات"
+    "nowcast": "Nowcast ML"
   },
   "auth": {
     "signIn": "تسجيل الدخول",
@@ -48,7 +48,7 @@
     "loadingRegional": "جاري تحميل البيانات الإقليمية..."
   },
   "earlyWarning": {
-    "title": "إنذار مبكر تنبؤي",
+    "title": "Nowcast ML",
     "horizon": "أفق 30 يوماً",
     "critical": "حرج",
     "alert": "تنبيه",
@@ -61,7 +61,7 @@
     "multiIndicatorConfirmed": "مؤكد متعدد المؤشرات"
   },
   "newsFeedSection": {
-    "title": "موجز الأخبار",
+    "title": "Nowcast ML",
     "multiSource": "أخبار متعددة المصادر من الوكالات الإنسانية والإعلام العالمي",
     "media": "إعلام",
     "reliefWeb": "ReliefWeb",
@@ -81,7 +81,7 @@
     "humanitarian": "إنساني"
   },
   "drivers": {
-    "title": "عوامل الأزمة",
+    "title": "Nowcast ML",
     "multiSource": "متعدد المصادر",
     "climate": "المناخ",
     "conflict": "النزاع",
@@ -115,7 +115,7 @@
     "sources": "المصادر"
   },
   "nowcast": {
-    "title": "توقعات انعدام الأمن الغذائي",
+    "title": "Nowcast ML",
     "modelActive": "النموذج نشط",
     "countriesTracked": "دولة مراقبة",
     "proxy": "مؤشر بديل",
@@ -131,7 +131,7 @@
     "trend": "الاتجاه"
   },
   "countryBrief": {
-    "title": "استخبارات البلد",
+    "title": "Nowcast ML",
     "selectCountry": "اختر دولة...",
     "generating": "جاري إنشاء الموجز الاستخباراتي...",
     "security": "الأمن والحوكمة",
@@ -151,11 +151,11 @@
     "signInToReact": "سجل الدخول للتفاعل"
   },
   "hazards": {
-    "title": "أخطار طبيعية نشطة",
+    "title": "Nowcast ML",
     "active": "نشطة"
   },
   "situations": {
-    "title": "استخبارات الوضع",
+    "title": "Nowcast ML",
     "operationsMode": "وضع العمليات",
     "detectAI": "كشف المواقف (ذكاء اصطناعي)",
     "criticalHigh": "حرج + مرتفع",
