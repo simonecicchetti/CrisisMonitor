@@ -45,14 +45,17 @@ public class IntelligenceSnapshotService {
         private String date;
         private String generatedAt;
         private String language;
-        // Sections
-        private String conflictOutlook;       // What will happen in conflict zones
-        private String foodSecurityOutlook;    // Food security trajectory
-        private String economicOutlook;       // Economic/market forecast
-        private String humanitarianOutlook;   // Humanitarian operations forecast
-        private String keyPredictions;        // 5-7 specific, falsifiable predictions
-        private String riskEscalations;       // Countries likely to escalate in 14 days
-        private String methodology;           // What data sources informed this
+        // Reactive sections (what the data shows)
+        private String conflictOutlook;
+        private String foodSecurityOutlook;
+        private String economicOutlook;
+        private String humanitarianOutlook;
+        private String keyPredictions;
+        private String riskEscalations;
+        // Proactive sections (what the data doesn't show yet)
+        private String emergingThreats;       // Threats building below the radar
+        private String cascadingEffects;      // Cross-border spillover chains
+        private String methodology;
     }
 
     /**
@@ -103,43 +106,57 @@ public class IntelligenceSnapshotService {
 
         log.info("Generating predictive analysis from {} char snapshot", snapshot.length());
 
-        String systemPrompt = "You are a senior crisis intelligence analyst producing a daily predictive briefing. " +
-            "You have access to comprehensive real-time data from multiple sources. " +
-            "Your job is NOT to summarize what happened — it is to assess what is LIKELY to happen in the next 7-14 days " +
-            "based on data patterns. Be specific. Name countries, timelines, thresholds.\n\n" +
-            "CRITICAL — LANGUAGE RULES:\n" +
-            "- NEVER use absolute language: 'will happen', 'will ignite', 'will crash'. These are PREDICTIONS, not facts.\n" +
+        String systemPrompt = "You are a senior crisis intelligence analyst producing a daily PROACTIVE intelligence briefing. " +
+            "You have two jobs:\n" +
+            "1. REACTIVE: Analyze what the data shows and forecast likely developments in 7-14 days.\n" +
+            "2. PROACTIVE: Identify threats that are BUILDING but not yet visible in the data — policy changes, " +
+            "political shifts, cross-border spillovers, second-order effects, supply chain vulnerabilities.\n\n" +
+            "Think in CAUSAL CHAINS: Policy X in Country A → economic pressure → migration to Country B → " +
+            "food insecurity spike → humanitarian crisis. Use web search to find signals the platform data misses.\n\n" +
+            "LANGUAGE RULES:\n" +
+            "- NEVER use absolute language: 'will happen', 'will ignite'. These are assessments, not facts.\n" +
             "- USE probabilistic language: 'is likely to', 'data suggests', 'high probability of', 'risk of', " +
-            "'indicators point toward', 'may lead to', 'could trigger', 'conditions are building for'.\n" +
-            "- Distinguish confidence levels: 'strong indicators suggest' (high confidence) vs 'there is a possibility' (low confidence).\n" +
-            "- Always tie predictions to specific data points: 'given the 336% currency devaluation, there is a high probability that...'\n" +
-            "- Write like you're briefing a UN Emergency Relief Coordinator who needs to decide where to pre-position resources.";
+            "'indicators point toward', 'conditions are building for'.\n" +
+            "- Distinguish confidence: 'strong indicators suggest' (high) vs 'early signals point to' (medium) vs 'there is a possibility' (low).\n" +
+            "- Tie every assessment to a data point or verifiable signal.\n" +
+            "- Write like you're briefing a UN Emergency Relief Coordinator who decides resource pre-positioning TODAY.";
 
         String prompt = "INTELLIGENCE SNAPSHOT — " + LocalDate.now() + "\n\n" + snapshot + "\n\n" +
-            "Based on ALL the data above, produce a predictive intelligence briefing.\n\n" +
+            "Produce a PROACTIVE intelligence briefing. Go beyond what the data shows — identify what's BUILDING.\n\n" +
             "RESPOND IN JSON (no markdown, no backticks):\n" +
             "{\n" +
-            "  \"conflictOutlook\": \"<150-200 words: What is likely to happen in active conflict zones in the next 7-14 days. " +
-                "Which fronts show indicators of escalation or de-escalation, and what data supports this assessment.>\",\n" +
-            "  \"foodSecurityOutlook\": \"<150-200 words: Food security trajectory based on nowcast predictions + price data. " +
-                "Which countries are approaching critical thresholds. What supply chain pressures are building.>\",\n" +
-            "  \"economicOutlook\": \"<100-150 words: Currency devaluations, commodity price pressures, and their likely humanitarian impact. " +
-                "Which economies show signs of approaching tipping points.>\",\n" +
-            "  \"humanitarianOutlook\": \"<100-150 words: Operational forecast. Where access is likely to shrink. Where funding gaps risk forcing program suspension. " +
-                "What displacement patterns are emerging.>\",\n" +
-            "  \"keyPredictions\": \"<5-7 specific, dated predictions in bullet format. Each must be falsifiable and use probabilistic language. " +
-                "Example: '• By April 5: Strong indicators suggest Sudan cereal prices in Khartoum could exceed 300% of 5-year average, driven by SDG devaluation.' " +
-                "Example: '• Within 10 days: Given recurring grid failures, Cuba faces a high probability of another nationwide blackout.' " +
-                "Cite the data that supports each prediction.>\",\n" +
-            "  \"riskEscalations\": \"<List of 5-8 countries most likely to see significant risk score increases in the next 14 days, " +
-                "with one-line data-backed reason each.>\"\n" +
+            "  \"conflictOutlook\": \"<150-200 words: Which conflict fronts show indicators of escalation or de-escalation. " +
+                "Include second-order effects: how does conflict in Country A affect Country B's stability?>\",\n" +
+            "  \"foodSecurityOutlook\": \"<150-200 words: Use nowcast predictions + price data. " +
+                "Which countries approach critical thresholds. What supply chain pressures are building. " +
+                "How do currency collapses translate to food access failures?>\",\n" +
+            "  \"economicOutlook\": \"<100-150 words: Currency devaluations, commodity pressures, and their cascading humanitarian impact. " +
+                "Which economies approach tipping points. How do sanctions, trade policy shifts, or energy markets create downstream crises?>\",\n" +
+            "  \"humanitarianOutlook\": \"<100-150 words: Where access is likely to shrink. Where funding gaps risk program suspension. " +
+                "What displacement flows are building and where will receiving communities face pressure.>\",\n" +
+            "  \"emergingThreats\": \"<150-200 words: PROACTIVE SCAN — threats building BELOW the radar. " +
+                "Use web search to identify: political shifts (elections, coups, policy changes) that could trigger crises; " +
+                "economic pressures not yet reflected in currency data; climate events building (approaching rainy/lean seasons); " +
+                "cross-border dynamics (e.g., restrictive migration policy in Country A creating pressure in Country B). " +
+                "Think 30-90 days ahead. Name specific countries, policies, timelines.>\",\n" +
+            "  \"cascadingEffects\": \"<100-150 words: Map 3-4 CAUSAL CHAINS currently active. Format: " +
+                "'[Trigger] → [First-order effect] → [Second-order effect] → [Humanitarian impact]'. " +
+                "Example: 'Hormuz blockade → oil price spike → fertilizer cost increase → planting season disruption in East Africa → " +
+                "food insecurity surge Q3 2026'. Be specific, cite countries.>\",\n" +
+            "  \"keyPredictions\": \"<7-10 specific, dated predictions in bullet format. Mix reactive (from data) and proactive (from analysis). " +
+                "Each must cite evidence. Use probabilistic language. " +
+                "Example: '• By April 5: Given SDG 336% devaluation, Khartoum cereal prices could exceed 300% of 5-year average (high confidence).' " +
+                "Example: '• Within 30 days: Chile's proposed migration enforcement policy may trigger 15-20% increase in Peru border crossings (medium confidence, based on policy timeline).' " +
+                "Include at least 2 proactive predictions about threats not yet in the data.>\",\n" +
+            "  \"riskEscalations\": \"<List of 5-8 countries most likely to see significant deterioration in 14 days, " +
+                "with one-line data-backed reason. Include at least 1-2 countries not currently flagged as high-risk but showing early warning signs.>\"\n" +
             "}";
 
         try {
             Map<String, Object> request = new LinkedHashMap<>();
             request.put("model", "qwen3.5-plus");
-            request.put("max_tokens", 3000);
-            request.put("temperature", 0.3);
+            request.put("max_tokens", 4500);
+            request.put("temperature", 0.4);
             request.put("enable_search", true);
             request.put("messages", List.of(
                 Map.of("role", "system", "content", systemPrompt),
@@ -311,6 +328,8 @@ public class IntelligenceSnapshotService {
             analysis.setHumanitarianOutlook(json.path("humanitarianOutlook").asText(""));
             analysis.setKeyPredictions(json.path("keyPredictions").asText(""));
             analysis.setRiskEscalations(json.path("riskEscalations").asText(""));
+            analysis.setEmergingThreats(json.path("emergingThreats").asText(""));
+            analysis.setCascadingEffects(json.path("cascadingEffects").asText(""));
             analysis.setMethodology("Generated from: " + LocalDate.now() + " platform snapshot — " +
                 "risk scores (47 countries), nowcast ML (80 countries), RSS headlines, GDELT media spikes, " +
                 "FAO food prices, currency data. Qwen3.5-Plus with web search enabled.");

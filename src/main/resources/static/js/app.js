@@ -4258,20 +4258,19 @@ const SidebarManager = {
   },
 
   loadSectionData(sectionId) {
-    // Load data only once per section
-    if (this.sectionDataLoaded.has(sectionId)) return;
+    // Load data only once per section (except countries which has its own retry logic)
+    if (this.sectionDataLoaded.has(sectionId) && sectionId !== 'countries') return;
 
     switch (sectionId) {
       case 'overview':
         OverviewManager.init();
         break;
       case 'countries':
-        if (window.CrisisMap) {
-          setTimeout(() => window.CrisisMap.init(), 100);
+        if (window.CrisisMap) setTimeout(() => window.CrisisMap.init(), 100);
+        if (!this.sectionDataLoaded.has('countries')) {
+          StructuralIndicesManager.init();
+          OverviewManager.loadRegionalPulse();
         }
-        StructuralIndicesManager.init();
-        OverviewManager.loadRegionalPulse();
-        // Always try to load country list (even if section was "loaded" before)
         this.loadAllCountriesList();
         break;
       case 'early-warning':
@@ -4421,6 +4420,8 @@ const SidebarManager = {
       setText('predictive-food-text', data.foodSecurityOutlook);
       setText('predictive-economic-text', data.economicOutlook);
       setText('predictive-humanitarian-text', data.humanitarianOutlook);
+      setText('predictive-emerging-text', data.emergingThreats);
+      setText('predictive-cascading-text', data.cascadingEffects);
       setText('predictive-predictions', data.keyPredictions);
       setText('predictive-escalations', data.riskEscalations);
       setText('predictive-methodology', data.methodology);

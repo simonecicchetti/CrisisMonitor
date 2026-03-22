@@ -801,8 +801,23 @@
                     <h4 style="font-size: 0.82rem; font-weight: 600; color: var(--accent-teal); margin-bottom: 6px;">Humanitarian Outlook</h4>
                     <p id="predictive-humanitarian-text" style="font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); margin:0;"></p>
                 </div>
+                <!-- Proactive sections -->
+                <div style="padding-top: 14px; border-top: 2px solid #f59e0b;">
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom: 12px;">
+                        <span style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: #f59e0b; font-weight: 600;">Proactive Threat Scan</span>
+                    </div>
+                </div>
+                <div id="predictive-emerging" style="margin-bottom: 16px;">
+                    <h4 style="font-size: 0.82rem; font-weight: 600; color: #f59e0b; margin-bottom: 6px;">Emerging Threats</h4>
+                    <p id="predictive-emerging-text" style="font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); margin:0;"></p>
+                </div>
+                <div id="predictive-cascading" style="margin-bottom: 16px;">
+                    <h4 style="font-size: 0.82rem; font-weight: 600; color: #f59e0b; margin-bottom: 6px;">Cascading Effects</h4>
+                    <div id="predictive-cascading-text" style="font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); white-space: pre-line;"></div>
+                </div>
+
                 <div style="padding-top: 14px; border-top: 1px solid var(--border-color);">
-                    <h4 style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">Key Predictions (7-14 days)</h4>
+                    <h4 style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">Key Predictions (7-30 days)</h4>
                     <div id="predictive-predictions" style="font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); white-space: pre-line;"></div>
                 </div>
                 <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-color);">
@@ -1443,7 +1458,7 @@
 </nav>
 
 <script th:src="@{/js/i18n.js(v=1)}"></script>
-<script th:src="@{/js/app.js(v=310)}"></script>
+<script th:src="@{/js/app.js(v=311)}"></script>
 <script th:src="@{/js/map.js(v=12)}"></script>
 
 </body>

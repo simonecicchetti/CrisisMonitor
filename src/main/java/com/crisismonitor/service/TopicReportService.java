@@ -1064,9 +1064,13 @@ public class TopicReportService {
             Write a 250-300 word analytical narrative that:
             - Synthesizes all data points into a coherent picture
             - Explains WHY things are happening, not just what
-            - Connects dots between countries and indicators
-            - Uses your geopolitical knowledge to provide context
+            - CROSS-BORDER ANALYSIS: how does the situation in Country A affect Country B?
+              Think: migration flows, trade disruptions, refugee pressure, conflict spillover,
+              policy changes in one country creating pressure in neighbors
+            - CAUSAL CHAINS: trace cause → effect → second-order effect
+            - Uses your geopolitical knowledge + web search to identify signals not in the data
             - Identifies trajectory: where is this heading in the next 30-90 days?
+            - Use probabilistic language: 'likely', 'indicators suggest', 'risk of'
             - Reads like a senior analyst briefing, not a news summary
             Start the narrative section with "---NARRATIVE---" on its own line.
 
@@ -1074,6 +1078,8 @@ public class TopicReportService {
             - Be bold in analysis but grounded in evidence
             - NO generic filler like "the situation remains concerning" — be SPECIFIC about WHY
             - Cross-reference platform data with your knowledge to reveal hidden patterns
+            - Consider countries OUTSIDE the monitored list if their policies affect monitored countries
+            - Think about neighboring countries: what happens in Chile affects Peru, what happens in Iran affects Iraq
 
             DATA:
             """ + safeContext;
