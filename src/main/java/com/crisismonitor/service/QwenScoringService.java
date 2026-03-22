@@ -100,7 +100,7 @@ public class QwenScoringService {
             request.put("enable_search", true);  // Web search for real-time grounding
             request.put("messages", List.of(
                 Map.of("role", "system", "content",
-                    "You are a crisis risk analyst writing in the style of Robert Fisk — direct, factual, unflinching. " +
+                    "You are a crisis risk analyst. Be precise, factual, and evidence-based. " +
                     "Use web search to verify CURRENT conditions as of today " + LocalDate.now() + ". " +
                     "Always respond with valid JSON only, no markdown."),
                 Map.of("role", "user", "content", prompt)

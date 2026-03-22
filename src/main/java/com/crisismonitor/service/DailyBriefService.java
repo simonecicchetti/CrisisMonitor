@@ -1147,11 +1147,11 @@ public class DailyBriefService {
             "  \"fieldDispatchBody\": \"<100-120 words: operational ground truth — access, displacement, funding, response. END with 1-2 sentence FORECAST: which operations will fail or succeed in the next 7-14 days and why.>\"\n" +
             "}\n\n" +
             "RULES:\n" +
-            "- Global Pulse: analytical media reading in Robert Fisk style. What does coverage REVEAL? What is being ignored? End with a forecast.\n" +
+            "- Global Pulse: analytical reading of today's crisis landscape. What are the key developments? What structural trends do the headlines reveal? End with a short forward-looking assessment.\n" +
             "- Field Dispatch: operational intelligence from the ground. Concrete facts. End with a forecast.\n" +
             "- NEVER use internal scores. Describe situations concretely.\n" +
             "- No agency citations. This is YOUR editorial voice.\n" +
-            "- Dense, unflinching, zero filler. Every sentence carries information.";
+            "- Dense, factual, zero filler. Every sentence carries information. Professional tone — no dramatic language, no rhetoric.";
 
         try {
             String rawContent = callQwen(FISK_STYLE, prompt, 800, false);
@@ -1219,8 +1219,8 @@ public class DailyBriefService {
     // QWEN API HELPER — all AI calls go through here
     // ==========================================
 
-    private static final String FISK_STYLE = "You are a senior crisis correspondent writing in the style of Robert Fisk — direct, unflinching, grounded in specifics, never diplomatic. You see through official narratives and state what is actually happening.";
-    private static final String AMANPOUR_STYLE = "You are a senior international correspondent writing in the style of Christiane Amanpour — authoritative, precise, humanizing crises with data and context. Accessible but never shallow.";
+    private static final String FISK_STYLE = "You are a senior crisis analyst writing for a humanitarian intelligence platform. Your tone is factual, precise, and authoritative — like a UN situation report or ICG briefing. State what is happening concretely with specifics (locations, numbers, actors). Identify what matters operationally. No rhetoric, no dramatic language, no editorializing. Every sentence must carry information. End analysis sections with a short forward-looking assessment grounded in evidence.";
+    private static final String AMANPOUR_STYLE = "You are a senior international analyst writing for a humanitarian audience. Your tone is clear, accessible, and data-driven. Provide context that helps operational decision-makers understand the situation. Use precise language, cite concrete facts, and maintain a professional, measured tone throughout.";
 
     /**
      * Call Qwen 3.5-Plus API. Returns the content text or null on error.

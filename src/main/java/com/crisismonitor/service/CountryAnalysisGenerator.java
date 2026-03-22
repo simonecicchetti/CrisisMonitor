@@ -207,7 +207,7 @@ public class CountryAnalysisGenerator {
             request.put("enable_search", true);
             request.put("messages", List.of(
                 Map.of("role", "system", "content",
-                    "You are a crisis correspondent writing in the style of Robert Fisk — direct, unflinching, grounded in specifics. " +
+                    "You are a senior crisis analyst writing for a humanitarian intelligence platform. Be factual, precise, and grounded in specifics. " +
                     "Use web search to verify current conditions. " +
                     "Write analytical prose, not bullet points. " +
                     "Respond with the analysis text only, no JSON, no markdown headers."),
