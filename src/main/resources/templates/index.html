@@ -254,6 +254,10 @@
                 <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>
                 <span class="sidebar-label">Nowcast ML</span>
             </button>
+            <button class="sidebar-item" data-section="market-signals">
+                <span class="sidebar-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-2-2-4 4"/></svg></span>
+                <span class="sidebar-label">Market Signals</span>
+            </button>
             </nav>
         <div class="sidebar-footer">
             <div class="sidebar-brand">
@@ -972,6 +976,25 @@
 
         </section>
 
+        <!-- ==================== SECTION: MARKET SIGNALS (experimental) ==================== -->
+        <section class="content-section" data-section="market-signals">
+            <div class="section-header-bar" style="margin-bottom: 12px;">
+                <h2>Market Signals</h2>
+                <span class="badge" style="font-size:0.7rem;background:rgba(245,158,11,0.15);color:#f59e0b;">Experimental</span>
+            </div>
+
+            <div class="glass-card" style="margin-bottom: var(--space-md); padding: 14px var(--space-md); border-left: 3px solid #f59e0b;">
+                <p style="font-size: 0.82rem; line-height: 1.6; color: var(--text-secondary); margin: 0;">
+                    Cross-referencing Nowcast ML food insecurity predictions with commodity price data to detect demand pressure signals.
+                    When food insecurity worsens in import-dependent countries, import demand rises — potentially leading commodity prices by 4-8 weeks.
+                </p>
+            </div>
+
+            <div id="market-signals-container">
+                <div style="text-align:center;padding:40px;color:var(--text-tertiary);">Loading market signals...</div>
+            </div>
+        </section>
+
         <!-- Nowcast Section -->
         <section class="content-section" data-section="nowcast">
             <div class="section-header-bar" style="margin-bottom: 12px;">
@@ -1392,7 +1415,7 @@
 </nav>
 
 <script th:src="@{/js/i18n.js(v=1)}"></script>
-<script th:src="@{/js/app.js(v=313)}"></script>
+<script th:src="@{/js/app.js(v=314)}"></script>
 <script th:src="@{/js/map.js(v=12)}"></script>
 
 </body>

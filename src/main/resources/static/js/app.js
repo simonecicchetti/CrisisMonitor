@@ -4295,6 +4295,9 @@ const SidebarManager = {
         OverviewManager.loadLiveNews().then(() => OverviewManager.renderHumanitarianUpdates());
         this.loadPredictiveAnalysis();
         break;
+      case 'market-signals':
+        this.loadMarketSignals();
+        break;
       case 'nowcast':
         NowcastManager.init();
         break;
@@ -4434,6 +4437,88 @@ const SidebarManager = {
       console.log('[Intelligence] Predictive analysis loaded');
     } catch (error) {
       console.warn('[Intelligence] Predictive analysis error:', error.message);
+    }
+  },
+
+  async loadMarketSignals() {
+    const container = document.getElementById('market-signals-container');
+    if (!container || container.dataset.loaded === 'true') return;
+
+    try {
+      const response = await fetch('/api/market-signals');
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.status === 'generating' || !data.signals) {
+        container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-tertiary);">Calculating market signals...</div>';
+        setTimeout(() => { container.dataset.loaded = ''; this.loadMarketSignals(); }, 15000);
+        return;
+      }
+
+      const strengthColors = { STRONG: '#ff6b61', MODERATE: '#f59e0b', WEAK: '#60a5fa', NONE: '#4ade80' };
+      const directionIcons = { UPWARD: '↑', DOWNWARD: '↓', STABLE: '→' };
+
+      let html = '';
+      data.signals.forEach(signal => {
+        const color = strengthColors[signal.signalStrength] || '#888';
+        const dirIcon = directionIcons[signal.direction] || '→';
+        const trend6m = signal.priceTrend6m ? signal.priceTrend6m.toFixed(1) : '0.0';
+
+        html += `<div class="glass-card" style="margin-bottom: var(--space-md); padding: 18px 22px;">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">`;
+        html += `<div>`;
+        html += `<h3 style="font-size:0.95rem;font-weight:600;margin:0;">${signal.commodity}</h3>`;
+        html += `<span style="font-size:0.75rem;color:var(--text-tertiary);">FAO Index: ${signal.currentPrice.toFixed(1)} ${dirIcon} ${trend6m > 0 ? '+' : ''}${trend6m}% (6m)</span>`;
+        html += `</div>`;
+        html += `<div style="display:flex;align-items:center;gap:10px;">`;
+        html += `<span style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:${color}22;color:${color};font-weight:600;">DPI ${signal.demandPressureIndex.toFixed(0)}</span>`;
+        html += `<span style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:${color}22;color:${color};font-weight:600;">${signal.signalStrength}</span>`;
+        html += `</div></div>`;
+
+        // Interpretation
+        if (signal.interpretation) {
+          html += `<p style="font-size:0.82rem;line-height:1.6;color:var(--text-secondary);margin:0 0 12px;">${Utils.escapeHtml(signal.interpretation)}</p>`;
+        }
+
+        // Exporter risk
+        if (signal.exporterRisk) {
+          html += `<div style="font-size:0.78rem;padding:8px 12px;border-radius:6px;background:rgba(255,107,97,0.1);color:#ff6b61;margin-bottom:12px;">`;
+          html += `⚠ Supply Risk: ${Utils.escapeHtml(signal.exporterRisk)}</div>`;
+        }
+
+        // Contributors table
+        if (signal.topContributors && signal.topContributors.length > 0) {
+          html += `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;"><thead>`;
+          html += `<tr style="border-bottom:1px solid var(--border-color);">`;
+          html += `<th style="text-align:left;padding:6px 8px;color:var(--text-tertiary);font-weight:500;">Country</th>`;
+          html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);font-weight:500;">Food Insecurity Δ</th>`;
+          html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);font-weight:500;">Import Vol</th>`;
+          html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);font-weight:500;">Pressure</th>`;
+          html += `</tr></thead><tbody>`;
+          signal.topContributors.forEach(c => {
+            const typeLabel = c.type === 'EXPORTER_RISK' ? ' ⚠ exporter' : '';
+            html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">`;
+            html += `<td style="padding:6px 8px;font-weight:500;">${Utils.escapeHtml(c.countryName)}${typeLabel}</td>`;
+            html += `<td style="padding:6px 8px;text-align:right;color:${c.predictedChange > 0 ? '#ff6b61' : '#4ade80'};">${c.predictedChange > 0 ? '+' : ''}${c.predictedChange.toFixed(1)}pp</td>`;
+            html += `<td style="padding:6px 8px;text-align:right;color:var(--text-tertiary);">${c.importVolume > 0 ? c.importVolume.toFixed(1) + 'Mt' : '—'}</td>`;
+            html += `<td style="padding:6px 8px;text-align:right;font-weight:600;">${c.contribution.toFixed(1)}</td>`;
+            html += `</tr>`;
+          });
+          html += `</tbody></table>`;
+        }
+        html += `</div>`;
+      });
+
+      // Methodology
+      if (data.methodology) {
+        html += `<div style="font-size:0.65rem;color:var(--text-tertiary);margin-top:8px;">${Utils.escapeHtml(data.methodology)}</div>`;
+      }
+
+      container.innerHTML = html;
+      container.dataset.loaded = 'true';
+      console.log('[MarketSignals] Loaded', data.signals.length, 'commodity signals');
+    } catch (error) {
+      console.error('[MarketSignals] Error:', error);
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-tertiary);">Error loading market signals</div>';
     }
   },
 

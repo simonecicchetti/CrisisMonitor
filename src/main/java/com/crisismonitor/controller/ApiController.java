@@ -68,6 +68,7 @@ public class ApiController {
     private final QwenScoringService qwenScoringService;
     private final DailyBriefService dailyBriefService;
     private final IntelligenceSnapshotService intelligenceSnapshotService;
+    private final MarketSignalService marketSignalService;
     private final GDACSService gdacsService;
 
     @org.springframework.beans.factory.annotation.Value("${ADMIN_API_KEY:notamy-admin-2026}")
@@ -891,6 +892,17 @@ public class ApiController {
     public Object getDisasterAlerts() {
         var alerts = gdacsService.getCurrentAlerts();
         return Map.of("alerts", alerts, "count", alerts.size());
+    }
+
+    // ==========================================
+    // MARKET SIGNALS (experimental)
+    // ==========================================
+
+    @GetMapping("/market-signals")
+    public Object getMarketSignals() {
+        var signals = marketSignalService.getMarketSignals();
+        if (signals != null) return signals;
+        return Map.of("status", "generating", "message", "Market signals are being calculated...");
     }
 
     // ==========================================
