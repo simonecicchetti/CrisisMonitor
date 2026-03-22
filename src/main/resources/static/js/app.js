@@ -4211,6 +4211,8 @@ const SidebarManager = {
       } else {
         section.classList.toggle('active', ds === sectionId);
       }
+      // Clear any inline display style so CSS class takes over
+      section.style.removeProperty('display');
     });
 
     // Sync bottom nav
