@@ -180,6 +180,36 @@
                         if (typeof window.OverviewManager.loadDailyBrief === 'function') window.OverviewManager.loadDailyBrief(lang);
                         if (typeof window.OverviewManager.loadEditorialColumns === 'function') window.OverviewManager.loadEditorialColumns();
                     }
+                    // Translate visible RSS headlines
+                    if (lang !== 'en') {
+                        var newsGrid = document.getElementById('live-news-grid');
+                        if (newsGrid) {
+                            var titles = newsGrid.querySelectorAll('.news-title, .story-title, h4, .headline');
+                            if (titles.length === 0) titles = newsGrid.querySelectorAll('a, span');
+                            var headlineTexts = [];
+                            var headlineEls = [];
+                            titles.forEach(function(el) {
+                                var text = el.textContent.trim();
+                                if (text.length > 10 && text.length < 200 && !el.dataset.translated) {
+                                    headlineTexts.push(text);
+                                    headlineEls.push(el);
+                                }
+                            });
+                            if (headlineTexts.length > 0) {
+                                fetch('/api/translate-headlines', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ headlines: headlineTexts.slice(0, 8), lang: lang })
+                                }).then(function(r) { return r.json(); }).then(function(data) {
+                                    var translated = data.headlines || [];
+                                    for (var i = 0; i < Math.min(translated.length, headlineEls.length); i++) {
+                                        headlineEls[i].textContent = translated[i];
+                                        headlineEls[i].dataset.translated = 'true';
+                                    }
+                                }).catch(function() {});
+                            }
+                        }
+                    }
                 });
             })();
             </script>

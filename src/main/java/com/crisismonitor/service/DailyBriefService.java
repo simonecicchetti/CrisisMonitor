@@ -1334,6 +1334,41 @@ public class DailyBriefService {
         }
     }
 
+    /**
+     * Translate a batch of headlines to target language via Qwen Flash.
+     */
+    public List<String> translateHeadlines(List<String> headlines, String language) {
+        String lang = resolveLanguage(language);
+        if ("en".equals(lang) || headlines == null || headlines.isEmpty()) return headlines;
+
+        String langName = SUPPORTED_LANGUAGES.getOrDefault(lang, lang);
+        StringBuilder source = new StringBuilder();
+        for (int i = 0; i < headlines.size(); i++) {
+            source.append(i + 1).append(". ").append(headlines.get(i)).append("\n");
+        }
+
+        String prompt = "Translate these news headlines from English to " + langName + ".\n" +
+            "Keep the same numbering. Translate accurately, keep proper nouns.\n\n" +
+            source + "\n" +
+            "Respond with ONLY the translated headlines, one per line, numbered.";
+
+        String result = callQwenFlash(prompt, 500);
+        if (result == null || result.isBlank()) return headlines;
+
+        // Parse numbered lines
+        List<String> translated = new ArrayList<>();
+        for (String line : result.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            // Remove numbering (1. 2. etc)
+            trimmed = trimmed.replaceFirst("^\\d+\\.?\\s*", "");
+            if (!trimmed.isEmpty()) translated.add(trimmed);
+        }
+
+        // Return translated if count matches, otherwise original
+        return translated.size() >= headlines.size() ? translated.subList(0, headlines.size()) : headlines;
+    }
+
     private String resolveLanguage(String lang) {
         if (lang == null || lang.isBlank()) return "en";
         String code = lang.toLowerCase().trim();

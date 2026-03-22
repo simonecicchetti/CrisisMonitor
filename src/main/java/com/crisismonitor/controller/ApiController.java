@@ -866,6 +866,23 @@ public class ApiController {
     }
 
     // ==========================================
+    // TRANSLATE HEADLINES
+    // ==========================================
+
+    @PostMapping("/translate-headlines")
+    public Object translateHeadlines(@RequestBody Map<String, Object> body) {
+        String lang = (String) body.getOrDefault("lang", "en");
+        if ("en".equals(lang)) return body; // No translation needed
+        @SuppressWarnings("unchecked")
+        List<String> headlines = (List<String>) body.get("headlines");
+        if (headlines == null || headlines.isEmpty()) return Map.of("headlines", List.of());
+        // Limit to 10 headlines max
+        if (headlines.size() > 10) headlines = headlines.subList(0, 10);
+        var translated = dailyBriefService.translateHeadlines(headlines, lang);
+        return Map.of("headlines", translated != null ? translated : headlines);
+    }
+
+    // ==========================================
     // GDACS DISASTER ALERTS
     // ==========================================
 
