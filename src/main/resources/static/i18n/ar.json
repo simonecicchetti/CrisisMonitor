@@ -48,7 +48,7 @@
     "loadingRegional": "جاري تحميل البيانات الإقليمية..."
   },
   "earlyWarning": {
-    "title": "Nowcast ML",
+    "title": "إنذار مبكر تنبؤي",
     "horizon": "أفق 30 يوماً",
     "critical": "حرج",
     "alert": "تنبيه",
@@ -61,7 +61,7 @@
     "multiIndicatorConfirmed": "مؤكد متعدد المؤشرات"
   },
   "newsFeedSection": {
-    "title": "Nowcast ML",
+    "title": "موجز الأخبار",
     "multiSource": "أخبار متعددة المصادر من الوكالات الإنسانية والإعلام العالمي",
     "media": "إعلام",
     "reliefWeb": "ReliefWeb",
@@ -81,7 +81,7 @@
     "humanitarian": "إنساني"
   },
   "drivers": {
-    "title": "Nowcast ML",
+    "title": "عوامل الأزمة",
     "multiSource": "متعدد المصادر",
     "climate": "المناخ",
     "conflict": "النزاع",
@@ -131,7 +131,7 @@
     "trend": "الاتجاه"
   },
   "countryBrief": {
-    "title": "Nowcast ML",
+    "title": "استخبارات الدولة",
     "selectCountry": "اختر دولة...",
     "generating": "جاري إنشاء الموجز الاستخباراتي...",
     "security": "الأمن والحوكمة",
@@ -151,11 +151,11 @@
     "signInToReact": "سجل الدخول للتفاعل"
   },
   "hazards": {
-    "title": "Nowcast ML",
+    "title": "أخطار طبيعية نشطة",
     "active": "نشطة"
   },
   "situations": {
-    "title": "Nowcast ML",
+    "title": "استخبارات الوضع",
     "operationsMode": "وضع العمليات",
     "detectAI": "كشف المواقف (ذكاء اصطناعي)",
     "criticalHigh": "حرج + مرتفع",

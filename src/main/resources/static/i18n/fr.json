@@ -48,7 +48,7 @@
     "loadingRegional": "Chargement des données régionales..."
   },
   "earlyWarning": {
-    "title": "Nowcast ML",
+    "title": "Alerte Précoce Prédictive",
     "horizon": "horizon 30 jours",
     "critical": "CRITIQUE",
     "alert": "ALERTE",
@@ -61,7 +61,7 @@
     "multiIndicatorConfirmed": "confirmé multi-indicateur"
   },
   "newsFeedSection": {
-    "title": "Nowcast ML",
+    "title": "Fil d'Actualités",
     "multiSource": "Nouvelles multi-sources des agences humanitaires et médias mondiaux",
     "media": "Médias",
     "reliefWeb": "ReliefWeb",
@@ -81,7 +81,7 @@
     "humanitarian": "Humanitaire"
   },
   "drivers": {
-    "title": "Nowcast ML",
+    "title": "Facteurs de Crise",
     "multiSource": "Multi-Source",
     "climate": "Climat",
     "conflict": "Conflit",
@@ -131,7 +131,7 @@
     "trend": "Tendance"
   },
   "countryBrief": {
-    "title": "Nowcast ML",
+    "title": "Intelligence Pays",
     "selectCountry": "Sélectionnez un pays...",
     "generating": "Génération du briefing...",
     "security": "Sécurité et Gouvernance",
@@ -151,11 +151,11 @@
     "signInToReact": "Connectez-vous pour réagir"
   },
   "hazards": {
-    "title": "Nowcast ML",
+    "title": "Dangers Naturels Actifs",
     "active": "Actifs"
   },
   "situations": {
-    "title": "Nowcast ML",
+    "title": "Intelligence Situationnelle",
     "operationsMode": "Mode Opérationnel",
     "detectAI": "Détecter Situations (IA)",
     "criticalHigh": "Critiques + Élevés",

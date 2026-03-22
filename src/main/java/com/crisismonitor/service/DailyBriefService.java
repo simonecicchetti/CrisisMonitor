@@ -1091,39 +1091,25 @@ public class DailyBriefService {
                 .append(", predicted=").append(String.format("%+.1fpp", p.getPredictedChange90d()))
                 .append("\n"));
 
-        // FAO context
-        try {
-            var fao = faoFoodPriceService.getLatest();
-            if (fao != null) {
-                ctx.append("\nGLOBAL FOOD PRICES (FAO): Food=")
-                   .append(String.format("%.1f", fao.getFoodIndex()))
-                   .append(", Cereals=").append(String.format("%.1f", fao.getCerealsIndex()))
-                   .append("\n");
-            }
-        } catch (Exception e) { /* skip */ }
-
-        String prompt = "You are Notamy News's food security analyst. You have access to a proprietary 4-model ONNX ensemble " +
+        String prompt = "You are interpreting output from a proprietary 4-model ONNX ensemble " +
             "(LightGBM + XGBoost, R²=0.983, MAE=1.20pp) that predicts 90-day changes in food insecurity.\n\n" +
-            "WHAT THE DATA MEANS:\n" +
-            "- 'Proxy' = average of two WFP indicators: % with poor food consumption (FCS) and % using crisis coping strategies (rCSI)\n" +
-            "- '90d Change' = predicted percentage point change in the proxy over 90 days. Positive = food insecurity WORSENING\n" +
-            "- Countries marked WORSENING have predicted change > +3pp. IMPROVING < -3pp\n" +
-            "- FCS% = people with poor/borderline food consumption. rCSI% = people using reduced coping strategies\n" +
-            "- Data comes from WFP HungerMap LIVE phone surveys (near-real-time, not annual)\n\n" +
-            "DATA:\n" + ctx + "\n\n" +
-            "Write a concise analytical reading of these predictions. Think: what would a WFP country director need to know?\n\n" +
+            "WHAT THE MODEL DATA MEANS:\n" +
+            "- 'Proxy' = average of FCS% (poor food consumption) and rCSI% (crisis coping strategies) from WFP surveys\n" +
+            "- '90d Change' = predicted percentage point change in proxy over 90 days. Positive = WORSENING\n" +
+            "- WORSENING = predicted change > +3pp. IMPROVING = predicted change < -3pp\n\n" +
+            "MODEL OUTPUT:\n" + ctx + "\n\n" +
+            "Interpret ONLY what the model predictions show. Do NOT add external context, geopolitical analysis, or information not present in the data above.\n\n" +
             "RESPOND IN JSON (no markdown):\n" +
             "{\n" +
-            "  \"headline\": \"<10-14 word analytical thesis about the food insecurity outlook>\",\n" +
-            "  \"paragraph1\": \"<70-90 words: which countries are deteriorating, how fast, specific numbers. Name the worst cases.>\",\n" +
-            "  \"paragraph2\": \"<70-90 words: regional patterns, conflict-hunger nexus, what supply/access disruptions are driving this. One forward-looking sentence.>\"\n" +
+            "  \"headline\": \"<10-14 word summary of what the model predicts>\",\n" +
+            "  \"paragraph1\": \"<70-90 words: which countries show the steepest deterioration, the specific percentage point increases, current and projected levels.>\",\n" +
+            "  \"paragraph2\": \"<70-90 words: patterns across the predictions — geographic clusters, which regions are improving vs worsening, notable outliers. One sentence on what operations teams should prioritize based on this data.>\"\n" +
             "}\n\n" +
             "RULES:\n" +
-            "- Specific country names and real-world numbers (displaced people, price changes). No filler.\n" +
-            "- NEVER use internal scores like '38.4/100' or 'proxy 58.2%'. Instead describe: 'severe food insecurity', 'critical hunger levels'.\n" +
-            "- Percentage point changes (+5.3pp) are OK because they describe real predicted deterioration.\n" +
-            "- No agency citations. This is YOUR analysis.\n" +
-            "- Write like a senior analyst briefing an executive director.";
+            "- Use ONLY data from the model output above. No external facts, no news, no speculation.\n" +
+            "- Use percentage point changes (+5.3pp) and actual proxy values (e.g. 'food insecurity at 38%').\n" +
+            "- Name specific countries and their numbers.\n" +
+            "- No agency citations. No filler. Dense, factual interpretation of model output.";
 
         try {
             String rawContent = callQwen(AMANPOUR_STYLE, prompt, 512, false);
