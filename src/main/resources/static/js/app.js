@@ -4168,6 +4168,18 @@ const SidebarManager = {
       });
     }
 
+    // Mobile bottom navigation
+    document.querySelectorAll('.bottom-nav-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const sectionId = item.dataset.section;
+        this.switchSection(sectionId);
+        // Update bottom nav active state
+        document.querySelectorAll('.bottom-nav-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        Haptics.light();
+      });
+    });
+
     // Restore saved section or default to overview
     const savedSection = localStorage.getItem('notamy-section') || 'overview';
     const sectionExists = document.querySelector(`.sidebar-item[data-section="${savedSection}"]`);
@@ -4182,7 +4194,7 @@ const SidebarManager = {
     const sidebarItems = document.querySelectorAll('.sidebar-item');
     const sections = document.querySelectorAll('.content-section');
 
-    // Update sidebar active state with accessibility
+    // Update sidebar + bottom nav active state
     sidebarItems.forEach(item => {
       const isActive = item.dataset.section === sectionId;
       item.classList.toggle('active', isActive);
@@ -4193,6 +4205,11 @@ const SidebarManager = {
     // Update section visibility
     sections.forEach(section => {
       section.classList.toggle('active', section.dataset.section === sectionId);
+    });
+
+    // Sync bottom nav
+    document.querySelectorAll('.bottom-nav-item').forEach(item => {
+      item.classList.toggle('active', item.dataset.section === sectionId);
     });
 
     this.currentSection = sectionId;

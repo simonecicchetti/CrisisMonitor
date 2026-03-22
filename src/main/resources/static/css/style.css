@@ -10119,3 +10119,75 @@ h1, h2, h3, h4, h5, h6 {
 .flag-count-3 { color: var(--high, #e67e22); }
 .flag-count-4 { color: var(--critical, #e74c3c); font-weight: 800; }
 .flag-count-5 { color: var(--critical, #e74c3c); font-weight: 800; text-shadow: 0 0 4px rgba(231,76,60,0.3); }
+
+/* ==========================================
+   MOBILE BOTTOM NAVIGATION
+   ========================================== */
+.mobile-bottom-nav {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 200;
+    background: var(--bg-primary);
+    border-top: 1px solid var(--border-color);
+    padding: 6px 0;
+    padding-bottom: env(safe-area-inset-bottom, 6px);
+    justify-content: space-around;
+    align-items: center;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+.bottom-nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 10px;
+    transition: background 0.15s, transform 0.1s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.bottom-nav-item svg {
+    width: 22px;
+    height: 22px;
+    stroke: var(--text-tertiary);
+    transition: stroke 0.15s;
+}
+
+.bottom-nav-item.active svg {
+    stroke: var(--accent-teal);
+}
+
+.bottom-nav-item:active {
+    transform: scale(0.92);
+}
+
+@media (max-width: 768px) {
+    .mobile-bottom-nav {
+        display: flex;
+    }
+
+    /* Hide sidebar and hamburger on mobile */
+    .sidebar {
+        display: none !important;
+    }
+    .sidebar-toggle {
+        display: none !important;
+    }
+
+    /* Add bottom padding to main content so it doesn't hide behind nav */
+    .main-content {
+        padding-bottom: 80px !important;
+    }
+
+    /* Hide the FAB on mobile (bottom nav replaces it) */
+    .ai-fab {
+        bottom: 76px;
+    }
+}

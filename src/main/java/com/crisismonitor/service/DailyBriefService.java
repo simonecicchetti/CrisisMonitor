@@ -317,7 +317,7 @@ public class DailyBriefService {
             "  ]\n" +
             "}";
 
-        String content = callQwen(AMANPOUR_STYLE, prompt, 1024, false);
+        String content = callQwenFlash(prompt, 1024);
         JsonNode json = extractJson(content);
         if (json == null) return null;
 
@@ -665,7 +665,7 @@ public class DailyBriefService {
             "{\"security\":\"...\",\"economy\":\"...\",\"foodSecurity\":\"...\",\"displacement\":\"...\",\"outlook\":\"...\"}";
 
         try {
-            String rawContent = callQwen(AMANPOUR_STYLE, prompt, 800, false);
+            String rawContent = callQwenFlash(prompt, 800);
             JsonNode json = extractJson(rawContent);
             if (json == null) return null;
 
@@ -875,7 +875,7 @@ public class DailyBriefService {
             "{\"headline\":\"...\",\"paragraph1\":\"...\",\"paragraph2\":\"...\"}";
 
         try {
-            String rawContent = callQwen(AMANPOUR_STYLE, prompt, 512, false);
+            String rawContent = callQwenFlash(prompt, 512);
             JsonNode json = extractJson(rawContent);
             if (json == null) return null;
 
