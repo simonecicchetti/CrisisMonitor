@@ -960,31 +960,88 @@ public class DailyBriefService {
         private int stableCount;
         private int improvingCount;
         private String generatedAt;
+        private String language;
     }
 
     /**
-     * Generate or retrieve cached nowcast analytical brief.
+     * Generate or retrieve cached nowcast analytical brief with language support.
      */
-    public NowcastBrief getNowcastBrief() {
-        String docId = "nowcast_" + LocalDate.now();
+    public NowcastBrief getNowcastBrief(String language) {
+        String lang = resolveLanguage(language);
+        String docId = "nowcast_" + LocalDate.now() + "_" + lang;
 
-        // Check cache
+        // Check cache for requested language
         Map<String, Object> cached = firestoreService.getDocument("nowcastBriefs", docId);
         if (cached != null) {
             return objectMapper.convertValue(cached, NowcastBrief.class);
         }
 
-        // Generate
-        NowcastBrief brief = generateNowcastBrief();
-        if (brief != null) {
-            try {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> data = objectMapper.convertValue(brief, Map.class);
-                data.put("timestamp", System.currentTimeMillis());
-                firestoreService.saveDocument("nowcastBriefs", docId, data);
-            } catch (Exception e) { /* logged below */ }
+        if ("en".equals(lang)) {
+            // Generate English
+            NowcastBrief brief = generateNowcastBrief();
+            if (brief != null) {
+                brief.setLanguage("en");
+                saveNowcastBrief(brief, docId);
+            }
+            return brief;
         }
-        return brief;
+
+        // Non-English: get English first, then translate
+        NowcastBrief enBrief = getNowcastBrief("en");
+        if (enBrief == null) return null;
+
+        log.info("Translating nowcast brief: en → {}", lang);
+        NowcastBrief translated = translateNowcastBrief(enBrief, lang);
+        if (translated != null) {
+            saveNowcastBrief(translated, docId);
+            return translated;
+        }
+        log.warn("Nowcast brief translation to {} failed, returning English", lang);
+        return enBrief;
+    }
+
+    public NowcastBrief getNowcastBrief() {
+        return getNowcastBrief("en");
+    }
+
+    private void saveNowcastBrief(NowcastBrief brief, String docId) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> data = objectMapper.convertValue(brief, Map.class);
+            data.put("timestamp", System.currentTimeMillis());
+            firestoreService.saveDocument("nowcastBriefs", docId, data);
+        } catch (Exception e) { log.error("Failed to save nowcast brief: {}", e.getMessage()); }
+    }
+
+    private NowcastBrief translateNowcastBrief(NowcastBrief enBrief, String targetLang) {
+        String langName = SUPPORTED_LANGUAGES.getOrDefault(targetLang, targetLang);
+        String source = "headline: " + enBrief.getHeadline() + "\n" +
+            "paragraph1: " + enBrief.getParagraph1() + "\n" +
+            "paragraph2: " + enBrief.getParagraph2();
+
+        String prompt = "Translate this analytical brief from English to " + langName + ".\n" +
+            "Keep analytical tone, numbers/percentages as-is, country names in " + langName + ".\n\n" +
+            source + "\n\nRESPOND IN JSON (no markdown):\n{\"headline\":\"...\",\"paragraph1\":\"...\",\"paragraph2\":\"...\"}";
+
+        try {
+            String rawContent = callQwenFlash(prompt, 600);
+            JsonNode json = extractJson(rawContent);
+            if (json == null) return null;
+
+            NowcastBrief translated = new NowcastBrief();
+            translated.setHeadline(json.path("headline").asText(""));
+            translated.setParagraph1(json.path("paragraph1").asText(""));
+            translated.setParagraph2(json.path("paragraph2").asText(""));
+            translated.setWorseningCount(enBrief.getWorseningCount());
+            translated.setStableCount(enBrief.getStableCount());
+            translated.setImprovingCount(enBrief.getImprovingCount());
+            translated.setLanguage(targetLang);
+            translated.setGeneratedAt(java.time.Instant.now().toString());
+            return translated.getHeadline().isBlank() ? null : translated;
+        } catch (Exception e) {
+            log.error("Nowcast brief translation to {} failed: {}", targetLang, e.getMessage());
+            return null;
+        }
     }
 
     private NowcastBrief generateNowcastBrief() {

@@ -897,8 +897,8 @@ public class ApiController {
     // ==========================================
 
     @GetMapping("/nowcast/brief")
-    public Object getNowcastBrief() {
-        var brief = dailyBriefService.getNowcastBrief();
+    public Object getNowcastBrief(@RequestParam(defaultValue = "en") String lang) {
+        var brief = dailyBriefService.getNowcastBrief(lang);
         if (brief != null) return brief;
         return Map.of("status", "none", "message", "Nowcast brief not yet generated");
     }
