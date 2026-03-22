@@ -59,6 +59,29 @@ public class IntelligenceSnapshotService {
     }
 
     /**
+     * Force regeneration — deletes cached version and generates fresh.
+     */
+    public PredictiveAnalysis regenerate(String language) {
+        String lang = language != null ? language.toLowerCase().trim() : "en";
+        if (lang.isBlank()) lang = "en";
+        String docId = "predictive_" + LocalDate.now() + "_" + lang;
+        // Overwrite with empty to invalidate, then generate fresh
+        firestoreService.saveDocument("predictiveAnalysis", docId, Map.of("invalidated", true));
+        log.info("Invalidated predictive analysis cache for {}", docId);
+        PredictiveAnalysis analysis = generateAnalysis();
+        if (analysis != null) {
+            analysis.setLanguage(lang);
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = objectMapper.convertValue(analysis, Map.class);
+                data.put("timestamp", System.currentTimeMillis());
+                firestoreService.saveDocument("predictiveAnalysis", docId, data);
+            } catch (Exception e) { log.error("Failed to save: {}", e.getMessage()); }
+        }
+        return analysis;
+    }
+
+    /**
      * Get or generate today's predictive analysis.
      */
     public PredictiveAnalysis getTodayAnalysis(String language) {
@@ -66,9 +89,9 @@ public class IntelligenceSnapshotService {
         if (lang.isBlank()) lang = "en";
         String docId = "predictive_" + LocalDate.now() + "_" + lang;
 
-        // Check cache
+        // Check cache (skip if invalidated)
         Map<String, Object> cached = firestoreService.getDocument("predictiveAnalysis", docId);
-        if (cached != null) {
+        if (cached != null && !cached.containsKey("invalidated") && cached.containsKey("conflictOutlook")) {
             return objectMapper.convertValue(cached, PredictiveAnalysis.class);
         }
 
@@ -335,9 +358,9 @@ public class IntelligenceSnapshotService {
             analysis.setRiskEscalations(json.path("riskEscalations").asText(""));
             analysis.setEmergingThreats(json.path("emergingThreats").asText(""));
             analysis.setCascadingEffects(json.path("cascadingEffects").asText(""));
-            analysis.setMethodology("Generated from: " + LocalDate.now() + " platform snapshot — " +
-                "risk scores (47 countries), nowcast ML (80 countries), RSS headlines, GDELT media spikes, " +
-                "FAO food prices, currency data. Qwen3.5-Plus with web search enabled.");
+            analysis.setMethodology("Generated from " + LocalDate.now() + " platform snapshot: " +
+                "risk scores (47 countries), nowcast ML predictions (80 countries), live news feeds, " +
+                "conflict media analysis, food price indices, and currency data.");
 
             if (analysis.getConflictOutlook().isBlank() && analysis.getKeyPredictions().isBlank()) {
                 log.warn("Analysis appears empty");

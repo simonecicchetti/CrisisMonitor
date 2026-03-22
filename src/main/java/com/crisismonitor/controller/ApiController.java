@@ -904,6 +904,15 @@ public class ApiController {
         return Map.of("status", "generating", "message", "Predictive analysis is being generated. This may take up to 60 seconds on first request.");
     }
 
+    @PostMapping("/intelligence/predictive/regenerate")
+    public Object regeneratePredictiveAnalysis(@RequestParam(defaultValue = "en") String lang,
+                                               @RequestHeader(value = "Authorization", required = false) String auth) {
+        if (!isAdmin(auth)) return Map.of("error", "Unauthorized");
+        var analysis = intelligenceSnapshotService.regenerate(lang);
+        if (analysis != null) return analysis;
+        return Map.of("error", "Failed to regenerate");
+    }
+
     // ==========================================
     // NOWCAST BRIEF
     // ==========================================
