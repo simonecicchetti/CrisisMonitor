@@ -968,7 +968,7 @@ public class DailyBriefService {
         private int promptVersion;
     }
 
-    private static final int NOWCAST_PROMPT_VERSION = 2;
+    private static final int NOWCAST_PROMPT_VERSION = 3;
 
     /**
      * Generate or retrieve cached nowcast analytical brief with language support.
@@ -1063,14 +1063,10 @@ public class DailyBriefService {
         var predictions = nowcastService.getNowcastAll();
         if (predictions == null || predictions.isEmpty()) return null;
 
-        // Build context
+        // Build comprehensive context with ALL available model data
         int worsening = 0, stable = 0, improving = 0;
         StringBuilder ctx = new StringBuilder();
-        ctx.append("Date: ").append(LocalDate.now()).append("\n\n");
-        ctx.append("FOOD INSECURITY NOWCAST PREDICTIONS (90-day outlook):\n");
-        ctx.append("Model: 4-model ONNX ensemble, R²=0.983, MAE=1.20pp\n\n");
 
-        // Sort by worst deterioration
         var sorted = predictions.stream()
             .sorted((a, b) -> Double.compare(
                 b.getPredictedChange90d() != null ? b.getPredictedChange90d() : 0,
@@ -1084,48 +1080,87 @@ public class DailyBriefService {
             else stable++;
         }
 
-        ctx.append("SUMMARY: ").append(worsening).append(" worsening, ")
-           .append(stable).append(" stable, ").append(improving).append(" improving\n\n");
+        ctx.append("OVERVIEW: ").append(predictions.size()).append(" countries tracked. ")
+           .append(worsening).append(" worsening, ").append(stable).append(" stable, ")
+           .append(improving).append(" improving.\n\n");
 
-        // Top worsening
-        ctx.append("WORSENING (predicted food insecurity increase):\n");
-        sorted.stream().filter(p -> p.getPredictedChange90d() != null && p.getPredictedChange90d() > 3).limit(10)
-            .forEach(p -> ctx.append("  ").append(p.getCountryName())
-                .append(": current=").append(String.format("%.1f%%", p.getCurrentProxy()))
-                .append(", predicted=").append(String.format("%+.1fpp", p.getPredictedChange90d()))
-                .append(" → ").append(String.format("%.1f%%", p.getProjectedProxy()))
-                .append("\n"));
+        // WORSENING — full data
+        ctx.append("WORSENING COUNTRIES (90d predicted change > +3pp):\n");
+        sorted.stream().filter(p -> p.getPredictedChange90d() != null && p.getPredictedChange90d() > 3)
+            .forEach(p -> {
+                ctx.append("  ").append(p.getCountryName()).append(" (").append(p.getRegion()).append("):\n");
+                ctx.append("    Current proxy: ").append(String.format("%.1f%%", p.getCurrentProxy()));
+                ctx.append(" → Projected: ").append(String.format("%.1f%%", p.getProjectedProxy()));
+                ctx.append(" (").append(String.format("%+.1fpp", p.getPredictedChange90d())).append(")\n");
+                ctx.append("    FCS: ").append(String.format("%.1f%%", p.getFcsPrevalence()));
+                ctx.append(p.getRcsiPrevalence() != null ?
+                    ", rCSI: " + String.format("%.1f%%", p.getRcsiPrevalence()) : ", rCSI: not available");
+                ctx.append(", Confidence: ").append(p.getConfidence()).append("\n");
+                ctx.append("    Trend: 30d ago=").append(String.format("%.1f%%", p.getProxy30dAgo()));
+                ctx.append(", 60d ago=").append(String.format("%.1f%%", p.getProxy60dAgo()));
+                ctx.append(", 90d ago=").append(String.format("%.1f%%", p.getProxy90dAgo()));
+                if (p.getActualChange30d() != null) ctx.append(", actual 30d change=").append(String.format("%+.1fpp", p.getActualChange30d()));
+                ctx.append("\n\n");
+            });
 
-        // Top improving
-        ctx.append("\nIMPROVING (predicted food insecurity decrease):\n");
-        sorted.stream().filter(p -> p.getPredictedChange90d() != null && p.getPredictedChange90d() < -3).limit(5)
-            .forEach(p -> ctx.append("  ").append(p.getCountryName())
-                .append(": current=").append(String.format("%.1f%%", p.getCurrentProxy()))
-                .append(", predicted=").append(String.format("%+.1fpp", p.getPredictedChange90d()))
-                .append("\n"));
+        // IMPROVING — full data for top 8
+        ctx.append("IMPROVING COUNTRIES (90d predicted change < -3pp, top 8):\n");
+        sorted.stream().filter(p -> p.getPredictedChange90d() != null && p.getPredictedChange90d() < -3).limit(8)
+            .forEach(p -> {
+                ctx.append("  ").append(p.getCountryName()).append(" (").append(p.getRegion()).append("): ");
+                ctx.append(String.format("%.1f%%", p.getCurrentProxy()));
+                ctx.append(" → ").append(String.format("%.1f%%", p.getProjectedProxy()));
+                ctx.append(" (").append(String.format("%+.1fpp", p.getPredictedChange90d())).append(")");
+                ctx.append(", confidence=").append(p.getConfidence()).append("\n");
+            });
 
-        String prompt = "You are interpreting output from a proprietary 4-model ONNX ensemble " +
-            "(LightGBM + XGBoost, R²=0.983, MAE=1.20pp) that predicts 90-day changes in food insecurity.\n\n" +
-            "WHAT THE MODEL DATA MEANS:\n" +
-            "- 'Proxy' = average of FCS% (poor food consumption) and rCSI% (crisis coping strategies) from WFP surveys\n" +
-            "- '90d Change' = predicted percentage point change in proxy over 90 days. Positive = WORSENING\n" +
-            "- WORSENING = predicted change > +3pp. IMPROVING = predicted change < -3pp\n\n" +
+        // HIGH SEVERITY countries (proxy > 40%) regardless of trend
+        ctx.append("\nHIGH SEVERITY (current proxy > 40%, regardless of trend):\n");
+        sorted.stream().filter(p -> p.getCurrentProxy() != null && p.getCurrentProxy() > 40).limit(10)
+            .forEach(p -> ctx.append("  ").append(p.getCountryName()).append(": ")
+                .append(String.format("%.1f%%", p.getCurrentProxy()))
+                .append(" (trend: ").append(String.format("%+.1fpp", p.getPredictedChange90d())).append(")\n"));
+
+        String prompt = "You are a food security data analyst interpreting ML model predictions.\n\n" +
+            "HOW TO READ THIS DATA:\n" +
+            "- 'Proxy' = composite food insecurity indicator combining:\n" +
+            "  • FCS% = percentage of population with poor/borderline food consumption (based on diet diversity and frequency)\n" +
+            "  • rCSI% = percentage using crisis coping strategies (skipping meals, eating less preferred foods, reducing portions)\n" +
+            "  When both are available, proxy = average of FCS and rCSI. When only FCS is available, proxy = FCS only.\n" +
+            "- SEVERITY THRESHOLDS (how to interpret proxy values):\n" +
+            "  • <15% = manageable — most households maintain adequate food intake\n" +
+            "  • 15-30% = stressed — significant minority faces food gaps\n" +
+            "  • 30-50% = crisis — one third or more of population has inadequate food consumption\n" +
+            "  • >50% = emergency — majority of population in severe food insecurity\n" +
+            "  • >70% = catastrophe — near-total collapse of food systems\n" +
+            "- DIVERGENCE: when FCS% is much higher than rCSI%, people are eating poorly but not yet coping desperately. " +
+            "When rCSI% is much higher than FCS%, people are coping hard to maintain food intake — a warning of imminent collapse.\n" +
+            "- rCSI 'not available' means the country lacks coping strategy survey data — the proxy relies on FCS only, which may understate severity.\n" +
+            "- TREND DATA (30d/60d/90d ago): shows whether deterioration is accelerating, decelerating, or steady.\n" +
+            "  If current > 30d ago > 60d ago → accelerating deterioration.\n" +
+            "  If actual 30d change is larger than model predicted → model may be underestimating the speed.\n" +
+            "- CONFIDENCE: HIGH = strong historical pattern match. MEDIUM = adequate data. LOW = limited data, wider uncertainty.\n\n" +
             "MODEL OUTPUT:\n" + ctx + "\n\n" +
-            "Interpret ONLY what the model predictions show. Do NOT add external context, geopolitical analysis, or information not present in the data above.\n\n" +
+            "Interpret STRICTLY what the model data shows. No external context, no geopolitics, no speculation.\n\n" +
             "RESPOND IN JSON (no markdown):\n" +
             "{\n" +
-            "  \"headline\": \"<10-14 word summary of what the model predicts>\",\n" +
-            "  \"paragraph1\": \"<70-90 words: which countries show the steepest deterioration, the specific percentage point increases, current and projected levels.>\",\n" +
-            "  \"paragraph2\": \"<70-90 words: patterns across the predictions — geographic clusters, which regions are improving vs worsening, notable outliers. One sentence on what operations teams should prioritize based on this data.>\"\n" +
+            "  \"headline\": \"<10-14 word analytical summary of the model's key finding>\",\n" +
+            "  \"paragraph1\": \"<80-100 words: the worsening countries — how fast, from what level, to what level. " +
+                "Note acceleration patterns (compare trend data). Flag where FCS/rCSI divergence signals hidden stress. " +
+                "Use the severity thresholds to give context: 'pushing toward crisis levels' or 'already in emergency range'.>\",\n" +
+            "  \"paragraph2\": \"<80-100 words: the broader picture — regional patterns, high-severity countries, improving outliers. " +
+                "Note where confidence is LOW (wider uncertainty). Flag countries where rCSI is missing (proxy may understate). " +
+                "One sentence on operational priority: which countries need pre-positioned resources based on this data.>\"\n" +
             "}\n\n" +
             "RULES:\n" +
-            "- Use ONLY data from the model output above. No external facts, no news, no speculation.\n" +
-            "- Use percentage point changes (+5.3pp) and actual proxy values (e.g. 'food insecurity at 38%').\n" +
-            "- Name specific countries and their numbers.\n" +
-            "- No agency citations. No filler. Dense, factual interpretation of model output.";
+            "- ONLY model data. No news, no external facts, no agency names.\n" +
+            "- Use percentage points (+5.3pp) and proxy values (38.4%).\n" +
+            "- Apply severity thresholds to make numbers meaningful: don't just say '38%', say 'in crisis range at 38%'.\n" +
+            "- Note data quality: flag LOW confidence predictions and missing rCSI.\n" +
+            "- Dense, precise. Every sentence carries analytical value.";
 
         try {
-            String rawContent = callQwen(AMANPOUR_STYLE, prompt, 512, false);
+            String rawContent = callQwen(AMANPOUR_STYLE, prompt, 800, false);
             JsonNode json = extractJson(rawContent);
             if (json == null) return null;
 
