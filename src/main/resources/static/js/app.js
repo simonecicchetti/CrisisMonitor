@@ -6735,6 +6735,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   safeInit('CountryDetail', () => CountryDetailManager.init());
   safeInit('CommandPalette', () => CommandPalette.init());
 
+  // Pre-load country list after warmup (so it's ready when user navigates to Countries)
+  setTimeout(() => {
+    if (!SidebarManager._countryListLoaded) {
+      console.log('[Preload] Loading country list in background...');
+      SidebarManager.loadAllCountriesList();
+    }
+  }, 10000);
+
   // Wait for DOM to be fully ready
   await new Promise(resolve => setTimeout(resolve, 100));
 

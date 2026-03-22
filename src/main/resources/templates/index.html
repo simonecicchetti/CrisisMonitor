@@ -380,7 +380,9 @@
                 <!-- Country List (40%) -->
                 <div class="countries-cards-panel">
                     <input type="text" id="country-search" placeholder="Search..." data-i18n-placeholder="countries.search" style="width:100%;padding:6px 10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-secondary);color:var(--text-primary);font-size:0.78rem;margin-bottom:8px;box-sizing:border-box;">
-                    <div id="country-list-container" style="max-height:calc(100vh - 180px);overflow-y:auto;"></div>
+                    <div id="country-list-container" style="max-height:calc(100vh - 180px);overflow-y:auto;">
+                        <div style="text-align:center;padding:20px;color:var(--text-tertiary);font-size:0.8rem;">Loading countries...</div>
+                    </div>
                     <div style="font-size:0.65rem;color:var(--text-tertiary);margin-top:6px;text-align:right;" id="country-list-count"></div>
                 </div>
             </div>
@@ -1458,7 +1460,7 @@
 </nav>
 
 <script th:src="@{/js/i18n.js(v=1)}"></script>
-<script th:src="@{/js/app.js(v=311)}"></script>
+<script th:src="@{/js/app.js(v=312)}"></script>
 <script th:src="@{/js/map.js(v=12)}"></script>
 
 </body>
