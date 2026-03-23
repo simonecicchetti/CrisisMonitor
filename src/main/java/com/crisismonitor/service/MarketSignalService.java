@@ -1,5 +1,6 @@
 package com.crisismonitor.service;
 
+import com.crisismonitor.model.NowcastResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -126,7 +127,7 @@ public class MarketSignalService {
         private String type;               // IMPORTER or EXPORTER
     }
 
-    private static final int MARKET_SIGNAL_VERSION = 3;
+    private static final int MARKET_SIGNAL_VERSION = 4;
 
     public MarketSignalReport getMarketSignals() {
         String docId = "market_" + LocalDate.now();
@@ -196,8 +197,10 @@ public class MarketSignalService {
         // Save daily snapshot to history
         saveDailySnapshot(report.getSignals());
 
-        // Compute validation from historical data
-        List<ValidationRecord> validation = computeValidation(report.getSignals());
+        // Compute validation: retrospective (from proxy history) + forward (from daily snapshots)
+        List<ValidationRecord> validation = new ArrayList<>();
+        validation.addAll(computeRetrospectiveValidation(predictions, faoTrend));
+        validation.addAll(computeValidation(report.getSignals()));
         report.setValidationHistory(validation);
         report.setDataPointsCollected(countHistoryDays());
 
@@ -311,6 +314,115 @@ public class MarketSignalService {
     /**
      * Count days of history by checking key dates (not scanning all 90).
      */
+    /**
+     * Retrospective validation using proxy history fields (30d/60d/90d ago).
+     * Calculates what the DPI WOULD HAVE BEEN at each past period using ACTUAL
+     * consumption changes, then compares with ACTUAL price changes.
+     */
+    private List<ValidationRecord> computeRetrospectiveValidation(
+            List<NowcastResult> predictions, List<FAOFoodPriceService.FoodPriceIndex> faoTrend) {
+
+        List<ValidationRecord> records = new ArrayList<>();
+        if (faoTrend == null || faoTrend.size() < 4) return records;
+
+        // Map predictions by ISO3
+        Map<String, NowcastResult> predMap = new HashMap<>();
+        for (var p : predictions) predMap.put(p.getIso3(), p);
+
+        // FAO prices at different points
+        int sz = faoTrend.size();
+        double priceNowCereals = getPriceValue(faoTrend.get(sz - 1), "cerealsIndex");
+        double priceNowOils = getPriceValue(faoTrend.get(sz - 1), "oilsIndex");
+
+        // Periods: 90d (~3 months ago), 60d (~2 months), 30d (~1 month)
+        record Period(String label, int lagWeeks, int faoOffset,
+                      java.util.function.Function<NowcastResult, Double> pastProxyGetter) {}
+
+        List<Period> periods = List.of(
+            new Period("~90 days ago", 12, sz >= 4 ? sz - 4 : 0, NowcastResult::getProxy90dAgo),
+            new Period("~60 days ago", 8, sz >= 3 ? sz - 3 : 0, NowcastResult::getProxy60dAgo),
+            new Period("~30 days ago", 4, sz >= 2 ? sz - 2 : 0, NowcastResult::getProxy30dAgo)
+        );
+
+        // Commodity definitions: name → (importers, exporters, priceField)
+        record CommodityDef(String name, Map<String, Double> importers,
+                           Map<String, Double> exporters, String priceField) {}
+
+        List<CommodityDef> commodities = List.of(
+            new CommodityDef("Cereals (Wheat)", WHEAT_IMPORTERS, WHEAT_EXPORTERS, "cerealsIndex"),
+            new CommodityDef("Maize", MAIZE_IMPORTERS, MAIZE_EXPORTERS, "cerealsIndex"),
+            new CommodityDef("Vegetable Oils", OIL_IMPORTERS, Map.of(), "oilsIndex")
+        );
+
+        for (Period period : periods) {
+            double pastPriceCereals = getPriceValue(faoTrend.get(period.faoOffset()), "cerealsIndex");
+            double pastPriceOils = getPriceValue(faoTrend.get(period.faoOffset()), "oilsIndex");
+
+            for (CommodityDef cd : commodities) {
+                double pastPrice = "oilsIndex".equals(cd.priceField()) ? pastPriceOils : pastPriceCereals;
+                double currentPrice = "oilsIndex".equals(cd.priceField()) ? priceNowOils : priceNowCereals;
+
+                if (pastPrice <= 0) continue;
+
+                // Calculate retrospective DPI: actual change × import volume
+                double retroDpi = 0;
+
+                for (var entry : cd.importers().entrySet()) {
+                    NowcastResult p = predMap.get(entry.getKey());
+                    if (p == null) continue;
+                    Double pastProxy = period.pastProxyGetter().apply(p);
+                    if (pastProxy == null || p.getCurrentProxy() == null) continue;
+                    double actualChange = p.getCurrentProxy() - pastProxy;
+                    if (actualChange > 0.5) {
+                        retroDpi += actualChange * entry.getValue();
+                    }
+                }
+
+                for (var entry : cd.exporters().entrySet()) {
+                    NowcastResult p = predMap.get(entry.getKey());
+                    if (p == null) continue;
+                    Double pastProxy = period.pastProxyGetter().apply(p);
+                    if (pastProxy == null || p.getCurrentProxy() == null) continue;
+                    double actualChange = p.getCurrentProxy() - pastProxy;
+                    if (actualChange > 2) {
+                        retroDpi += actualChange * entry.getValue() * 0.5;
+                    }
+                }
+
+                double priceChange = ((currentPrice - pastPrice) / pastPrice) * 100;
+                String strength = retroDpi > 20 ? "STRONG" : retroDpi > 10 ? "MODERATE" :
+                                 retroDpi > 5 ? "WEAK" : "NONE";
+
+                // Determine outcome
+                String outcome;
+                if ("STRONG".equals(strength) && priceChange > 0.5) outcome = "CONFIRMED";
+                else if ("STRONG".equals(strength) && priceChange < -1.0) outcome = "CONTRADICTED";
+                else if ("MODERATE".equals(strength) && priceChange > 0) outcome = "CONFIRMED";
+                else if (("WEAK".equals(strength) || "NONE".equals(strength)) && Math.abs(priceChange) < 2.0) outcome = "CONFIRMED";
+                else if ("NONE".equals(strength) && priceChange > 3.0) outcome = "MISSED"; // Price moved without our signal
+                else if (Math.abs(priceChange) < 0.3) outcome = "NEUTRAL";
+                else outcome = "MIXED";
+
+                ValidationRecord vr = new ValidationRecord();
+                vr.setCommodity(cd.name());
+                vr.setPredictionDate(period.label());
+                vr.setDpiAtPrediction(Math.round(retroDpi * 10.0) / 10.0);
+                vr.setStrengthAtPrediction(strength);
+                vr.setPriceAtPrediction(pastPrice);
+                vr.setPriceAtPredictionDate(faoTrend.get(period.faoOffset()).getDate());
+                vr.setPriceNow(currentPrice);
+                vr.setPriceNowDate(faoTrend.get(sz - 1).getDate());
+                vr.setPriceChangePercent(Math.round(priceChange * 100.0) / 100.0);
+                vr.setOutcome(outcome);
+                vr.setLagWeeks(period.lagWeeks());
+                records.add(vr);
+            }
+        }
+
+        log.info("Retrospective validation: {} records generated", records.size());
+        return records;
+    }
+
     private int countHistoryDays() {
         try {
             int count = 0;
