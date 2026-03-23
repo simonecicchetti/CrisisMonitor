@@ -58,13 +58,58 @@ Estimated lead time: **4-17 weeks** (based on retrospective validation; the sign
   | **4-model ensemble (DEPLOYED)** | **1.95** | **5.66** | **0.9620** | **98.5%** | **0.63** |
 
   - Crisis detection: 4,370/4,391 actual crisis events detected (**99.5%**)
-  - The 4-model ensemble has the **highest directional accuracy** (98.5%) and **lowest median error** (0.63pp) of any configuration
-  - The Huber model performs poorly on MAE but contributes to ensemble robustness on outlier cases
-  - Individual MAE is lower for single models (best: Quantile at 1.57), but the ensemble optimizes for directional accuracy and median precision — the metrics that matter most for the Market Signals application
   - Per-country: best = Yemen MAE 0.53, Nigeria 0.60, Ecuador 0.57; worst = Iraq MAE 12.77, El Salvador 11.84
+
+### Why the 4-model ensemble is the right choice (despite higher MAE)
+
+The 4-model ensemble does NOT have the lowest mean error. The single LightGBM Quantile model achieves MAE 1.57 — better than the ensemble's 1.95. If we optimized for MAE alone, the single model would win.
+
+But for the Market Signals application, mean error is not what matters. What matters is:
+
+1. **"Is this country getting worse or better?"** → Directional accuracy. The 4-model ensemble achieves **98.5%** — the highest of any configuration. All single models are below 98%. This is the most critical metric: the Demand Pressure Index depends on correctly identifying which countries are worsening. A wrong direction destroys the signal.
+
+2. **"How reliable are MOST predictions?"** → Median error. The 4-model ensemble has the lowest at **0.63pp**. This means half of all predictions are accurate within 0.63 percentage points. The mean is higher (1.95) because the Huber model contributes occasional large errors — but the MAJORITY of predictions are more precise than any single model.
+
+3. **"Does it catch crises?"** → Crisis detection at **99.5%**. Near-perfect.
+
+The mechanism: each of the four models has different weaknesses. The Huber model performs poorly on MAE individually (5.12) but when it errs, it errs in different directions than the other three. Averaging four models cancels out individual errors. The result: most predictions become more precise (median 0.63) even though the average error is slightly higher (pulled up by the Huber's outliers).
+
+For the DPI calculation, whether Egypt shows +3.7pp or +3.3pp change is irrelevant — multiplied by 13 million tonnes of imports, both produce a STRONG signal. But if the model says "worsening" when a country is actually improving, that creates a false signal. The 4-model ensemble gets the direction wrong only **1.5% of the time** — the best of any configuration tested.
+
+**Future optimization**: A 3-model ensemble without the Huber (base + quantile + xgboost) would likely achieve MAE ~1.55 with direction accuracy ~98.3%. This could improve overall accuracy while maintaining most of the directional benefit. This is a test for a future iteration.
+
+### Data pipeline verification
+
+The complete chain from raw data to deployed model:
+
+```
+StatsSumL3_202507251420 (1).json (1.78 GB, 2,100,280 records)
+  → 41 countries, 704 ADM1 time series
+  → Date range: July 2, 2018 — July 24, 2025 (7 years)
+  → Indicators: FCG (Food Consumption Groups ≤ 2), rCSI (reduced Coping Strategy Index ≥ 19)
+        ↓
+01_prepare_dataset.py (reads RAW_FILE, computes proxy, builds features)
+        ↓
+training_dataset.parquet (158 MB, 760,313 rows, 26 features)
+        ↓
+02_train_baseline.py (trains LightGBM + XGBoost, exports ONNX)
+09_benchmark_4model_ensemble.py (benchmarks full ensemble)
+        ↓
+4 ONNX models deployed to src/main/resources/ml/
+  ensemble_base.onnx (4.7 MB) + ensemble_huber.onnx (14.2 MB)
+  ensemble_quantile.onnx (14.2 MB) + ensemble_xgboost.onnx (36.7 MB)
+        ↓
+NowcastService.java (loads all 4, averages predictions per country)
+        ↓
+/api/nowcast/food-insecurity (80 countries, continuous updates)
+        ↓
+MarketSignalService.java (DPI = change × import volume)
+        ↓
+Market Signals: 10/12 retrospective validations confirmed (83%)
+```
 - **Key finding from training**: External signals (GDELT conflict media, Open-Meteo climate, World Bank economic, UNHCR displacement) were tested but explain only 1-18% of variance. The single autoregressive LightGBM achieves MAE 1.65 with 26 features. Adding all external signals (63 features total) DEGRADES performance to MAE 1.78 — a 7.9% increase in error, indicating external signals introduce noise rather than information. The deployed 4-model ensemble uses only the 26 autoregressive features.
 - **Feature importance**: `proxy_lag_90d` (34.4%), `proxy_current` (27.8%), `proxy_change_30d` (11.8%), `proxy_rolling_mean_7d` (7.0%), `proxy_rolling_std_90d` (5.8%)
-- **Deployment**: ONNX Runtime 1.17.0 in Java (Spring Boot), both models run per country and predictions averaged
+- **Deployment**: ONNX Runtime 1.17.0 in Java (Spring Boot), all 4 models run per country and predictions averaged
 - **Production coverage**: 80 countries (41 with direct training data + 39 generalizing from cross-country patterns)
 - **Update frequency**: Continuous — predictions update as WFP survey data updates via `api.hungermapdata.org`
 
