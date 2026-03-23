@@ -93,13 +93,15 @@ public class MarketSignalService {
         private double currentPrice;
         private double price6mAgo;
         private double price12mAgo;
-        private double priceTrend6m;       // % change 6m
+        private double priceTrend6m;
         private double demandPressureIndex;
-        private String signalStrength;     // STRONG, MODERATE, WEAK, NONE
-        private String direction;          // UPWARD, STABLE, DOWNWARD
+        private String signalStrength;
+        private String direction;
         private List<CountryContribution> topContributors;
         private String exporterRisk;
         private String interpretation;
+        private List<Double> sparkline;    // Last 6 monthly prices for mini chart
+        private String predictionHeadline; // Bold one-line prediction
     }
 
     @Data
@@ -127,7 +129,7 @@ public class MarketSignalService {
         private String type;               // IMPORTER or EXPORTER
     }
 
-    private static final int MARKET_SIGNAL_VERSION = 4;
+    private static final int MARKET_SIGNAL_VERSION = 5;
 
     public MarketSignalReport getMarketSignals() {
         String docId = "market_" + LocalDate.now();
@@ -204,12 +206,11 @@ public class MarketSignalService {
         report.setValidationHistory(validation);
         report.setDataPointsCollected(countHistoryDays());
 
-        report.setMethodology("Demand Pressure Index (DPI) = Σ(predicted_food_insecurity_change × annual_import_volume) " +
-            "for import-dependent countries, plus supply disruption risk from exporters weighted by export volume. " +
-            "Nowcast ML predictions are based on real-time consumption surveys across 80 countries. " +
-            "Limitations: DPI captures demand-side pressure only — supply factors (harvests, stocks, weather) are not modeled. " +
-            "Import volumes are annual estimates and may vary. Rice and Maize use the FAO Cereals Index as proxy (no separate index available). " +
-            "Signal strength thresholds are experimental. This analysis identifies CORRELATION patterns, not proven causation.");
+        report.setMethodology("Proprietary demand pressure analysis derived from real-time food consumption surveys " +
+            "across 80 countries, cross-referenced with commodity trade dependency patterns. " +
+            "Limitations: demand-side signals only — supply factors not modeled. " +
+            "Rice and Maize use the FAO Cereals Index as proxy. " +
+            "This analysis identifies correlation patterns, not proven causation.");
 
         log.info("Market signals generated: {} commodities, {} validation records, {} days of history",
             report.getSignals().size(), validation.size(), report.getDataPointsCollected());
@@ -537,8 +538,37 @@ public class MarketSignalService {
 
         // Direction already set above with 3m/6m logic
 
+        // Sparkline: last 6 monthly prices
+        if (trend != null && trend.size() >= 6) {
+            List<Double> spark = new ArrayList<>();
+            int trendSize = trend.size();
+            for (int i = Math.max(0, trendSize - 6); i < trendSize; i++) {
+                spark.add(getPriceValue(trend.get(i), priceField));
+            }
+            signal.setSparkline(spark);
+        }
+
+        // Prediction headline
+        signal.setPredictionHeadline(buildPredictionHeadline(signal));
         signal.setInterpretation(buildInterpretation(signal));
         return signal;
+    }
+
+    private String buildPredictionHeadline(CommoditySignal signal) {
+        String strength = signal.getSignalStrength();
+        String dir = signal.getDirection();
+        if ("STRONG".equals(strength) && "UPWARD".equals(dir)) {
+            return "Strong upward pressure — prices likely to continue rising";
+        } else if ("STRONG".equals(strength)) {
+            return "Strong demand pressure detected — monitor for price acceleration";
+        } else if ("MODERATE".equals(strength) && "UPWARD".equals(dir)) {
+            return "Moderate pressure building — prices trending upward";
+        } else if ("MODERATE".equals(strength)) {
+            return "Moderate demand signals — early indications of price pressure";
+        } else if ("WEAK".equals(strength)) {
+            return "Weak signal — limited demand pressure from monitored countries";
+        }
+        return "No significant demand pressure detected";
     }
 
     private String buildInterpretation(CommoditySignal signal) {

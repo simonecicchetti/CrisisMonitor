@@ -4455,101 +4455,130 @@ const SidebarManager = {
       }
 
       const strengthColors = { STRONG: '#ff6b61', MODERATE: '#f59e0b', WEAK: '#60a5fa', NONE: '#4ade80' };
-      const directionIcons = { UPWARD: '↑', DOWNWARD: '↓', STABLE: '→' };
+
+      // Helper: build SVG sparkline from array of values
+      function sparklineSVG(values, color) {
+        if (!values || values.length < 2) return '';
+        const w = 120, h = 32, pad = 2;
+        const min = Math.min(...values) * 0.98;
+        const max = Math.max(...values) * 1.02;
+        const range = max - min || 1;
+        const points = values.map((v, i) => {
+          const x = pad + (i / (values.length - 1)) * (w - pad * 2);
+          const y = h - pad - ((v - min) / range) * (h - pad * 2);
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle;">
+          <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="${points.split(' ').pop().split(',')[0]}" cy="${points.split(' ').pop().split(',')[1]}" r="3" fill="${color}"/>
+        </svg>`;
+      }
 
       let html = '';
       data.signals.forEach(signal => {
         const color = strengthColors[signal.signalStrength] || '#888';
-        const dirIcon = directionIcons[signal.direction] || '→';
+        const dpi = signal.demandPressureIndex;
+        const maxDpi = 150; // for bar scaling
+        const barWidth = Math.min(100, (dpi / maxDpi) * 100);
         const trend6m = signal.priceTrend6m ? signal.priceTrend6m.toFixed(1) : '0.0';
+        const dirColor = signal.direction === 'UPWARD' ? '#ff6b61' : signal.direction === 'DOWNWARD' ? '#4ade80' : '#888';
 
-        html += `<div class="glass-card" style="margin-bottom: var(--space-md); padding: 18px 22px;">`;
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">`;
-        html += `<div>`;
+        html += `<div class="glass-card" style="margin-bottom: var(--space-md); padding: 20px 22px;">`;
+
+        // Prediction headline
+        if (signal.predictionHeadline) {
+          html += `<div style="font-size:0.85rem;font-weight:600;color:${color};margin-bottom:10px;">${Utils.escapeHtml(signal.predictionHeadline)}</div>`;
+        }
+
+        // Commodity name + DPI bar
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">`;
         html += `<h3 style="font-size:0.95rem;font-weight:600;margin:0;">${signal.commodity}</h3>`;
-        html += `<span style="font-size:0.75rem;color:var(--text-tertiary);">FAO Index: ${signal.currentPrice.toFixed(1)} ${dirIcon} ${trend6m > 0 ? '+' : ''}${trend6m}% (6m)</span>`;
-        html += `</div>`;
-        html += `<div style="display:flex;align-items:center;gap:10px;">`;
-        html += `<span style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:${color}22;color:${color};font-weight:600;">DPI ${signal.demandPressureIndex.toFixed(0)}</span>`;
         html += `<span style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:${color}22;color:${color};font-weight:600;">${signal.signalStrength}</span>`;
+        html += `</div>`;
+
+        // DPI bar
+        html += `<div style="margin-bottom:14px;">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">`;
+        html += `<span style="font-size:0.7rem;color:var(--text-tertiary);">Demand Pressure</span>`;
+        html += `<span style="font-size:0.78rem;font-weight:700;color:${color};">${dpi.toFixed(0)}</span>`;
+        html += `</div>`;
+        html += `<div style="height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden;">`;
+        html += `<div style="height:100%;width:${barWidth}%;background:${color};border-radius:3px;transition:width 0.5s;"></div>`;
         html += `</div></div>`;
 
-        // Interpretation
-        if (signal.interpretation) {
-          html += `<p style="font-size:0.82rem;line-height:1.6;color:var(--text-secondary);margin:0 0 12px;">${Utils.escapeHtml(signal.interpretation)}</p>`;
-        }
+        // Price + sparkline
+        html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">`;
+        html += `<div>`;
+        html += `<span style="font-size:0.78rem;color:var(--text-tertiary);">Price Index </span>`;
+        html += `<span style="font-size:1.1rem;font-weight:700;color:var(--text-primary);">${signal.currentPrice.toFixed(1)}</span>`;
+        html += `<span style="font-size:0.78rem;font-weight:600;color:${dirColor};margin-left:6px;">${trend6m > 0 ? '▲' : trend6m < 0 ? '▼' : '—'} ${trend6m > 0 ? '+' : ''}${trend6m}%</span>`;
+        html += `</div>`;
+        html += `<div>${sparklineSVG(signal.sparkline, dirColor)}</div>`;
+        html += `</div>`;
 
         // Exporter risk
         if (signal.exporterRisk) {
           html += `<div style="font-size:0.78rem;padding:8px 12px;border-radius:6px;background:rgba(255,107,97,0.1);color:#ff6b61;margin-bottom:12px;">`;
-          html += `⚠ Supply Risk: ${Utils.escapeHtml(signal.exporterRisk)}</div>`;
+          html += `⚠ ${Utils.escapeHtml(signal.exporterRisk)}</div>`;
         }
 
-        // Contributors table
+        // Contributors as visual bars
         if (signal.topContributors && signal.topContributors.length > 0) {
-          html += `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;"><thead>`;
-          html += `<tr style="border-bottom:1px solid var(--border-color);">`;
-          html += `<th style="text-align:left;padding:6px 8px;color:var(--text-tertiary);font-weight:500;">Country</th>`;
-          html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);font-weight:500;">Food Insecurity Δ</th>`;
-          html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);font-weight:500;">Import Vol</th>`;
-          html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);font-weight:500;">Pressure</th>`;
-          html += `</tr></thead><tbody>`;
+          const maxContrib = Math.max(...signal.topContributors.map(c => c.contribution));
+          html += `<div style="margin-top:8px;">`;
           signal.topContributors.forEach(c => {
-            const typeLabel = c.type === 'EXPORTER_RISK' ? ' ⚠ exporter' : '';
-            html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">`;
-            html += `<td style="padding:6px 8px;font-weight:500;">${Utils.escapeHtml(c.countryName)}${typeLabel}</td>`;
-            html += `<td style="padding:6px 8px;text-align:right;color:${c.predictedChange > 0 ? '#ff6b61' : '#4ade80'};">${c.predictedChange > 0 ? '+' : ''}${c.predictedChange.toFixed(1)}pp</td>`;
-            html += `<td style="padding:6px 8px;text-align:right;color:var(--text-tertiary);">${c.importVolume > 0 ? c.importVolume.toFixed(1) + 'Mt' : '—'}</td>`;
-            html += `<td style="padding:6px 8px;text-align:right;font-weight:600;">${c.contribution.toFixed(1)}</td>`;
-            html += `</tr>`;
+            const cBarWidth = maxContrib > 0 ? (c.contribution / maxContrib) * 100 : 0;
+            const isExporter = c.type === 'EXPORTER_RISK';
+            const cColor = isExporter ? '#ff6b61' : color;
+            html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">`;
+            html += `<span style="width:100px;font-size:0.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${Utils.escapeHtml(c.countryName)}${isExporter ? ' ⚠' : ''}</span>`;
+            html += `<div style="flex:1;height:4px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden;">`;
+            html += `<div style="height:100%;width:${cBarWidth}%;background:${cColor};border-radius:2px;"></div></div>`;
+            html += `<span style="width:55px;font-size:0.7rem;color:var(--text-tertiary);text-align:right;">${c.predictedChange > 0 ? '+' : ''}${c.predictedChange.toFixed(1)}pp</span>`;
+            html += `<span style="width:30px;font-size:0.75rem;font-weight:600;text-align:right;">${c.contribution.toFixed(0)}</span>`;
+            html += `</div>`;
           });
-          html += `</tbody></table>`;
+          html += `</div>`;
         }
         html += `</div>`;
       });
 
-      // Validation History
+      // Validation summary + expandable detail
       if (data.validationHistory && data.validationHistory.length > 0) {
+        const vh = data.validationHistory;
+        const confirmed = vh.filter(v => v.outcome === 'CONFIRMED').length;
+        const total = vh.length;
+        const pct = Math.round(confirmed / total * 100);
+        const summaryColor = pct >= 60 ? '#4ade80' : pct >= 40 ? '#f59e0b' : '#ff6b61';
+
         html += `<div class="glass-card" style="margin-top:var(--space-md);padding:18px 22px;">`;
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">`;
         html += `<h3 style="font-size:0.9rem;font-weight:600;margin:0;">Signal Validation</h3>`;
-        html += `<span style="font-size:0.7rem;color:var(--text-tertiary);">${data.dataPointsCollected || 1} days of data collected</span>`;
+        html += `<span style="font-size:0.85rem;font-weight:700;color:${summaryColor};">${confirmed}/${total} Confirmed (${pct}%)</span>`;
         html += `</div>`;
-        html += `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;"><thead>`;
-        html += `<tr style="border-bottom:1px solid var(--border-color);">`;
-        html += `<th style="text-align:left;padding:6px 8px;color:var(--text-tertiary);">Commodity</th>`;
-        html += `<th style="text-align:center;padding:6px 8px;color:var(--text-tertiary);">Lag</th>`;
-        html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);">DPI Then</th>`;
-        html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);">Price Then</th>`;
-        html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);">Price Now</th>`;
-        html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);">Δ Price</th>`;
-        html += `<th style="text-align:center;padding:6px 8px;color:var(--text-tertiary);">Outcome</th>`;
-        html += `</tr></thead><tbody>`;
-        const outcomeColors = { CONFIRMED: '#4ade80', CONTRADICTED: '#ff6b61', NEUTRAL: '#888', PENDING: '#f59e0b' };
-        data.validationHistory.forEach(v => {
-          const oc = outcomeColors[v.outcome] || '#888';
-          html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">`;
-          html += `<td style="padding:6px 8px;">${Utils.escapeHtml(v.commodity)}</td>`;
-          html += `<td style="padding:6px 8px;text-align:center;">${v.lagWeeks}w</td>`;
-          html += `<td style="padding:6px 8px;text-align:right;">${v.dpiAtPrediction.toFixed(0)} ${v.strengthAtPrediction}</td>`;
-          html += `<td style="padding:6px 8px;text-align:right;">${v.priceAtPrediction.toFixed(1)}</td>`;
-          html += `<td style="padding:6px 8px;text-align:right;">${v.priceNow.toFixed(1)}</td>`;
-          html += `<td style="padding:6px 8px;text-align:right;color:${v.priceChangePercent > 0 ? '#ff6b61' : v.priceChangePercent < 0 ? '#4ade80' : '#888'};">${v.priceChangePercent > 0 ? '+' : ''}${v.priceChangePercent.toFixed(2)}%</td>`;
-          html += `<td style="padding:6px 8px;text-align:center;"><span style="padding:2px 8px;border-radius:4px;background:${oc}22;color:${oc};font-weight:600;font-size:0.7rem;">${v.outcome}</span></td>`;
-          html += `</tr>`;
+        // Summary bar
+        html += `<div style="height:8px;background:var(--bg-tertiary);border-radius:4px;overflow:hidden;margin-bottom:12px;">`;
+        html += `<div style="height:100%;width:${pct}%;background:${summaryColor};border-radius:4px;"></div>`;
+        html += `</div>`;
+        // Compact validation rows
+        html += `<div style="font-size:0.75rem;">`;
+        vh.forEach(v => {
+          const oc = { CONFIRMED: '#4ade80', CONTRADICTED: '#ff6b61', MISSED: '#f59e0b', NEUTRAL: '#888', MIXED: '#888' };
+          const outcomeColor = oc[v.outcome] || '#888';
+          html += `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.04);">`;
+          html += `<span style="flex:1;color:var(--text-secondary);">${v.commodity}</span>`;
+          html += `<span style="width:30px;color:var(--text-tertiary);text-align:center;">${v.lagWeeks}w</span>`;
+          html += `<span style="width:50px;text-align:right;color:var(--text-tertiary);">DPI ${v.dpiAtPrediction.toFixed(0)}</span>`;
+          html += `<span style="width:55px;text-align:right;color:${v.priceChangePercent > 0 ? '#ff6b61' : v.priceChangePercent < 0 ? '#4ade80' : '#888'};">${v.priceChangePercent > 0 ? '+' : ''}${v.priceChangePercent.toFixed(1)}%</span>`;
+          html += `<span style="width:70px;text-align:center;"><span style="padding:1px 6px;border-radius:3px;background:${outcomeColor}22;color:${outcomeColor};font-weight:600;font-size:0.65rem;">${v.outcome}</span></span>`;
+          html += `</div>`;
         });
-        html += `</tbody></table></div>`;
-      } else {
-        // No validation yet — show data collection status
-        html += `<div class="glass-card" style="margin-top:var(--space-md);padding:18px 22px;text-align:center;color:var(--text-tertiary);">`;
-        html += `<p style="margin:0;font-size:0.82rem;">Recording signals... ${data.dataPointsCollected || 1} day(s) of data collected.</p>`;
-        html += `<p style="margin:6px 0 0;font-size:0.72rem;">Validation requires 4+ weeks of historical data. First results expected in ~4 weeks.</p>`;
-        html += `</div>`;
+        html += `</div></div>`;
       }
 
-      // Methodology
+      // Methodology (IP-safe)
       if (data.methodology) {
-        html += `<div style="font-size:0.65rem;color:var(--text-tertiary);margin-top:8px;">${Utils.escapeHtml(data.methodology)}</div>`;
+        html += `<div style="font-size:0.6rem;color:var(--text-tertiary);margin-top:8px;opacity:0.7;">${Utils.escapeHtml(data.methodology)}</div>`;
       }
 
       container.innerHTML = html;
