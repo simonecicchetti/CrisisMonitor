@@ -129,7 +129,7 @@ public class MarketSignalService {
         private String type;               // IMPORTER or EXPORTER
     }
 
-    private static final int MARKET_SIGNAL_VERSION = 5;
+    private static final int MARKET_SIGNAL_VERSION = 6;
 
     public MarketSignalReport getMarketSignals() {
         String docId = "market_" + LocalDate.now();
@@ -199,9 +199,9 @@ public class MarketSignalService {
         // Save daily snapshot to history
         saveDailySnapshot(report.getSignals());
 
-        // Compute validation: retrospective (from proxy history) + forward (from daily snapshots)
+        // Compute validation: deep retrospective (Firestore proxy history) + forward (daily snapshots)
         List<ValidationRecord> validation = new ArrayList<>();
-        validation.addAll(computeRetrospectiveValidation(predictions, faoTrend));
+        validation.addAll(computeDeepRetrospective(faoTrend));
         validation.addAll(computeValidation(report.getSignals()));
         report.setValidationHistory(validation);
         report.setDataPointsCollected(countHistoryDays());
@@ -316,111 +316,159 @@ public class MarketSignalService {
      * Count days of history by checking key dates (not scanning all 90).
      */
     /**
-     * Retrospective validation using proxy history fields (30d/60d/90d ago).
-     * Calculates what the DPI WOULD HAVE BEEN at each past period using ACTUAL
-     * consumption changes, then compares with ACTUAL price changes.
+     * Deep retrospective validation using Firestore proxy history.
+     * The bootstrap saves proxy data at days_ago = {120, 105, 90, 75, 60, 45, 30, 21, 14, 7, 3, 1, 0}.
+     * We reconstruct monthly DPI snapshots and compare with actual FAO price changes.
      */
-    private List<ValidationRecord> computeRetrospectiveValidation(
-            List<NowcastResult> predictions, List<FAOFoodPriceService.FoodPriceIndex> faoTrend) {
-
+    private List<ValidationRecord> computeDeepRetrospective(List<FAOFoodPriceService.FoodPriceIndex> faoTrend) {
         List<ValidationRecord> records = new ArrayList<>();
-        if (faoTrend == null || faoTrend.size() < 4) return records;
+        if (faoTrend == null || faoTrend.size() < 6) return records;
 
-        // Map predictions by ISO3
-        Map<String, NowcastResult> predMap = new HashMap<>();
-        for (var p : predictions) predMap.put(p.getIso3(), p);
+        // Load all proxy history from Firestore (last 120 days)
+        List<Map<String, Object>> allHistory = firestoreService.getAllProxyHistory(130);
+        if (allHistory.isEmpty()) {
+            log.info("No proxy history in Firestore for retrospective validation");
+            return records;
+        }
 
-        // FAO prices at different points
-        int sz = faoTrend.size();
-        double priceNowCereals = getPriceValue(faoTrend.get(sz - 1), "cerealsIndex");
-        double priceNowOils = getPriceValue(faoTrend.get(sz - 1), "oilsIndex");
+        // Group proxy history by date → {iso3 → proxy}
+        // Approximate to monthly snapshots
+        TreeMap<LocalDate, Map<String, Double>> monthlySnapshots = new TreeMap<>();
+        for (Map<String, Object> record : allHistory) {
+            String iso3 = (String) record.get("iso3");
+            String dateStr = (String) record.get("date");
+            Number proxyNum = (Number) record.get("proxy");
+            if (iso3 == null || dateStr == null || proxyNum == null) continue;
 
-        // Periods: 90d (~3 months ago), 60d (~2 months), 30d (~1 month)
-        record Period(String label, int lagWeeks, int faoOffset,
-                      java.util.function.Function<NowcastResult, Double> pastProxyGetter) {}
+            try {
+                LocalDate date = LocalDate.parse(dateStr);
+                // Round to nearest month start for grouping
+                LocalDate monthKey = date.withDayOfMonth(1);
+                monthlySnapshots.computeIfAbsent(monthKey, k -> new HashMap<>())
+                    .put(iso3, proxyNum.doubleValue());
+            } catch (Exception e) { /* skip bad dates */ }
+        }
 
-        List<Period> periods = List.of(
-            new Period("~90 days ago", 12, sz >= 4 ? sz - 4 : 0, NowcastResult::getProxy90dAgo),
-            new Period("~60 days ago", 8, sz >= 3 ? sz - 3 : 0, NowcastResult::getProxy60dAgo),
-            new Period("~30 days ago", 4, sz >= 2 ? sz - 2 : 0, NowcastResult::getProxy30dAgo)
-        );
+        // Also add current data as "today's" snapshot
+        try {
+            var currentPredictions = nowcastService.getNowcastAll();
+            if (currentPredictions != null) {
+                LocalDate todayMonth = LocalDate.now().withDayOfMonth(1);
+                Map<String, Double> todaySnap = monthlySnapshots.computeIfAbsent(todayMonth, k -> new HashMap<>());
+                for (var p : currentPredictions) {
+                    if (p.getCurrentProxy() != null) {
+                        todaySnap.put(p.getIso3(), p.getCurrentProxy());
+                    }
+                }
+            }
+        } catch (Exception e) { /* skip */ }
 
-        // Commodity definitions: name → (importers, exporters, priceField)
+        if (monthlySnapshots.size() < 2) {
+            log.info("Not enough monthly snapshots ({}) for deep retrospective", monthlySnapshots.size());
+            return records;
+        }
+
+        log.info("Deep retrospective: {} monthly snapshots spanning {} to {}",
+            monthlySnapshots.size(), monthlySnapshots.firstKey(), monthlySnapshots.lastKey());
+
+        // Commodity definitions
         record CommodityDef(String name, Map<String, Double> importers,
                            Map<String, Double> exporters, String priceField) {}
-
         List<CommodityDef> commodities = List.of(
             new CommodityDef("Cereals (Wheat)", WHEAT_IMPORTERS, WHEAT_EXPORTERS, "cerealsIndex"),
             new CommodityDef("Maize", MAIZE_IMPORTERS, MAIZE_EXPORTERS, "cerealsIndex"),
             new CommodityDef("Vegetable Oils", OIL_IMPORTERS, Map.of(), "oilsIndex")
         );
 
-        for (Period period : periods) {
-            double pastPriceCereals = getPriceValue(faoTrend.get(period.faoOffset()), "cerealsIndex");
-            double pastPriceOils = getPriceValue(faoTrend.get(period.faoOffset()), "oilsIndex");
+        // Build FAO price lookup by month
+        Map<String, FAOFoodPriceService.FoodPriceIndex> faoByMonth = new HashMap<>();
+        for (var fpi : faoTrend) {
+            if (fpi.getDate() != null) {
+                faoByMonth.put(fpi.getDate(), fpi); // key like "2025-09"
+            }
+        }
+
+        // For each consecutive pair of monthly snapshots, compute DPI
+        List<LocalDate> months = new ArrayList<>(monthlySnapshots.keySet());
+        for (int i = 0; i < months.size() - 1; i++) {
+            LocalDate fromMonth = months.get(i);
+            LocalDate toMonth = months.get(months.size() - 1); // always compare to latest
+
+            Map<String, Double> fromSnap = monthlySnapshots.get(fromMonth);
+            Map<String, Double> toSnap = monthlySnapshots.get(toMonth);
+
+            // Find FAO prices for these months
+            String fromFaoKey = String.format("%d-%02d", fromMonth.getYear(), fromMonth.getMonthValue());
+            String toFaoKey = String.format("%d-%02d", toMonth.getYear(), toMonth.getMonthValue());
+
+            // FAO data might not exist for the exact month — find closest
+            FAOFoodPriceService.FoodPriceIndex fromFao = faoByMonth.get(fromFaoKey);
+            FAOFoodPriceService.FoodPriceIndex toFao = faoByMonth.get(toFaoKey);
+            // Fallback: use latest FAO if toMonth not found
+            if (toFao == null && !faoTrend.isEmpty()) toFao = faoTrend.get(faoTrend.size() - 1);
+            if (fromFao == null) continue; // Can't validate without starting price
+
+            int lagWeeks = (int) ((toMonth.toEpochDay() - fromMonth.toEpochDay()) / 7);
+            String periodLabel = fromMonth.getMonth().toString().substring(0, 3) + " " + fromMonth.getYear();
 
             for (CommodityDef cd : commodities) {
-                double pastPrice = "oilsIndex".equals(cd.priceField()) ? pastPriceOils : pastPriceCereals;
-                double currentPrice = "oilsIndex".equals(cd.priceField()) ? priceNowOils : priceNowCereals;
+                double fromPrice = getPriceValue(fromFao, cd.priceField());
+                double toPrice = getPriceValue(toFao, cd.priceField());
+                if (fromPrice <= 0) continue;
 
-                if (pastPrice <= 0) continue;
-
-                // Calculate retrospective DPI: actual change × import volume
+                // Calculate DPI: change in proxy × import volume
                 double retroDpi = 0;
 
                 for (var entry : cd.importers().entrySet()) {
-                    NowcastResult p = predMap.get(entry.getKey());
-                    if (p == null) continue;
-                    Double pastProxy = period.pastProxyGetter().apply(p);
-                    if (pastProxy == null || p.getCurrentProxy() == null) continue;
-                    double actualChange = p.getCurrentProxy() - pastProxy;
-                    if (actualChange > 0.5) {
-                        retroDpi += actualChange * entry.getValue();
+                    Double fromProxy = fromSnap.get(entry.getKey());
+                    Double toProxy = toSnap.get(entry.getKey());
+                    if (fromProxy == null || toProxy == null) continue;
+                    double change = toProxy - fromProxy;
+                    if (change > 0.5) {
+                        retroDpi += change * entry.getValue();
                     }
                 }
 
                 for (var entry : cd.exporters().entrySet()) {
-                    NowcastResult p = predMap.get(entry.getKey());
-                    if (p == null) continue;
-                    Double pastProxy = period.pastProxyGetter().apply(p);
-                    if (pastProxy == null || p.getCurrentProxy() == null) continue;
-                    double actualChange = p.getCurrentProxy() - pastProxy;
-                    if (actualChange > 2) {
-                        retroDpi += actualChange * entry.getValue() * 0.5;
+                    Double fromProxy = fromSnap.get(entry.getKey());
+                    Double toProxy = toSnap.get(entry.getKey());
+                    if (fromProxy == null || toProxy == null) continue;
+                    double change = toProxy - fromProxy;
+                    if (change > 2) {
+                        retroDpi += change * entry.getValue() * 0.5;
                     }
                 }
 
-                double priceChange = ((currentPrice - pastPrice) / pastPrice) * 100;
+                double priceChange = ((toPrice - fromPrice) / fromPrice) * 100;
                 String strength = retroDpi > 20 ? "STRONG" : retroDpi > 10 ? "MODERATE" :
                                  retroDpi > 5 ? "WEAK" : "NONE";
 
-                // Determine outcome
                 String outcome;
                 if ("STRONG".equals(strength) && priceChange > 0.5) outcome = "CONFIRMED";
                 else if ("STRONG".equals(strength) && priceChange < -1.0) outcome = "CONTRADICTED";
                 else if ("MODERATE".equals(strength) && priceChange > 0) outcome = "CONFIRMED";
                 else if (("WEAK".equals(strength) || "NONE".equals(strength)) && Math.abs(priceChange) < 2.0) outcome = "CONFIRMED";
-                else if ("NONE".equals(strength) && priceChange > 3.0) outcome = "MISSED"; // Price moved without our signal
+                else if ("NONE".equals(strength) && priceChange > 3.0) outcome = "MISSED";
                 else if (Math.abs(priceChange) < 0.3) outcome = "NEUTRAL";
                 else outcome = "MIXED";
 
                 ValidationRecord vr = new ValidationRecord();
                 vr.setCommodity(cd.name());
-                vr.setPredictionDate(period.label());
+                vr.setPredictionDate(periodLabel);
                 vr.setDpiAtPrediction(Math.round(retroDpi * 10.0) / 10.0);
                 vr.setStrengthAtPrediction(strength);
-                vr.setPriceAtPrediction(pastPrice);
-                vr.setPriceAtPredictionDate(faoTrend.get(period.faoOffset()).getDate());
-                vr.setPriceNow(currentPrice);
-                vr.setPriceNowDate(faoTrend.get(sz - 1).getDate());
+                vr.setPriceAtPrediction(fromPrice);
+                vr.setPriceAtPredictionDate(fromFaoKey);
+                vr.setPriceNow(toPrice);
+                vr.setPriceNowDate(toFao != null ? toFao.getDate() : toFaoKey);
                 vr.setPriceChangePercent(Math.round(priceChange * 100.0) / 100.0);
                 vr.setOutcome(outcome);
-                vr.setLagWeeks(period.lagWeeks());
+                vr.setLagWeeks(lagWeeks);
                 records.add(vr);
             }
         }
 
-        log.info("Retrospective validation: {} records generated", records.size());
+        log.info("Deep retrospective: {} validation records from {} monthly snapshots", records.size(), months.size());
         return records;
     }
 
