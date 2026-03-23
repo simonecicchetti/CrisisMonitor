@@ -818,26 +818,34 @@ public class ApiController {
         // Country-specific report (region starts with "country:")
         if (region != null && region.startsWith("country:")) {
             String iso3 = region.substring(8).toUpperCase();
-            // Try pre-generated country report
+            // Try pre-generated country report (skip if stale)
             Map<String, Object> preGenerated = reportSchedulerService.getPreGeneratedReport(topic, "country_" + iso3);
             if (preGenerated != null) {
-                preGenerated.put("source", "pre-generated");
-                return preGenerated;
+                String narrative = (String) preGenerated.get("narrative");
+                if (narrative != null && !narrative.isBlank() && narrative.length() > 50) {
+                    preGenerated.put("source", "pre-generated");
+                    return preGenerated;
+                }
             }
-            // Generate live using country as single-country region
             return topicReportService.generateReport(topic, iso3.toLowerCase(), 7);
         }
 
         // Try pre-generated regional report first (instant, no API cost)
+        // Skip if report is stale (no narrative) — regenerate instead
         if (region != null && !region.isEmpty()) {
             Map<String, Object> preGenerated = reportSchedulerService.getPreGeneratedReport(topic, region);
             if (preGenerated != null) {
-                preGenerated.put("source", "pre-generated");
-                return preGenerated;
+                String narrative = (String) preGenerated.get("narrative");
+                boolean hasNarrative = narrative != null && !narrative.isBlank() && narrative.length() > 50;
+                if (hasNarrative) {
+                    preGenerated.put("source", "pre-generated");
+                    return preGenerated;
+                }
+                // Stale report (no narrative) — fall through to live generation
             }
         }
 
-        // Fallback: generate live
+        // Generate live
         return topicReportService.generateReport(topic, region, 7);
     }
 
