@@ -855,9 +855,10 @@ public class TopicReportService {
 
                 case "migration" -> {
                     // Migration: IDPs + refugees + risk context + situations
-                    ctx.append("DISPLACEMENT DATA:\n");
+                    ctx.append("DISPLACEMENT DATA (from DTM operational tracking — these are PARTIAL figures from specific tracking operations, NOT comprehensive displacement totals):\n");
+                    ctx.append("IMPORTANT: Do NOT present DTM figures as total displacement. Real numbers are often 10-50x higher. If citing, say 'DTM-tracked' not 'total'.\n");
                     for (CountryMetrics cm : countryMatrix.stream().limit(10).collect(Collectors.toList())) {
-                        ctx.append(String.format("  %s: stock=%s, signal=%d\n",
+                        ctx.append(String.format("  %s: DTM-tracked=%s, media+reports=%d\n",
                             cm.getCountry(), cm.getStockData(), cm.getSignalCount()));
                     }
 
@@ -1120,6 +1121,9 @@ public class TopicReportService {
             - Cross-reference platform data with your knowledge to reveal hidden patterns
             - Consider countries OUTSIDE the monitored list if their policies affect monitored countries
             - Think about neighboring countries: what happens in Chile affects Peru, what happens in Iran affects Iraq
+            - DATA INTEGRITY: DTM stock figures are from SPECIFIC tracking operations — real displacement totals are often 10-50x higher. NEVER present DTM-tracked numbers as comprehensive totals.
+            - SEPARATE evidence from inference. When you observe data, say "data shows". When you infer, say "this suggests" or "indicators point to".
+            - Use probabilistic language for forecasts: "likely", "risk of", "indicators suggest". Never "will trigger" or "will cause".
 
             DATA:
             """ + safeContext;
