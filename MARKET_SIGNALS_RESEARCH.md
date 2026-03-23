@@ -21,11 +21,39 @@ Estimated lead time: **4-8 weeks**.
 ## The Data
 
 ### Source 1: Nowcast ML Model
-- **Input**: Food consumption surveys across 80 countries (FCS% and rCSI% indicators)
-- **Output**: 90-day predicted change in food insecurity proxy per country
-- **Model**: 4-model ONNX ensemble (LightGBM + XGBoost)
-- **Accuracy**: R²=0.983, MAE=1.20 percentage points, directional accuracy 98.6%
-- **Update frequency**: Continuous (as survey data updates)
+- **Training data**: `StatsSumL3_202507251420.json` — 1.7 GB raw export from WFP VAM (Vulnerability Analysis and Mapping)
+  - 2,100,280 raw records from daily CATI phone surveys (Computer-Assisted Telephone Interviewing)
+  - 41 countries, 704 ADM1 (sub-national) time series
+  - Date range: July 2, 2018 — July 24, 2025 (~7 years)
+  - Two indicators: FCG (Food Consumption Groups ≤ 2, measuring poor/borderline consumption) and rCSI (reduced Coping Strategy Index ≥ 19, measuring crisis-level coping strategies)
+  - 822,718 matched data points where both indicators are available (99.7% alignment)
+- **Proxy definition**: `proxy = avg(% with FCG ≤ 2, % with rCSI ≥ 19)`
+- **Target variable**: `target_pct_change_90d` — percent change in proxy over the preceding 90 days
+- **Model architecture**: 2-Model Ensemble — average of two LightGBM gradient boosted decision tree models
+  - Model 1: LightGBM with MAE (L1) loss, 1,000 trees, learning rate 0.05 → exported to `ensemble_base.onnx` (4.5 MB)
+  - Model 2: LightGBM with Huber loss (alpha=5.0), 3,000 trees, learning rate 0.02 → exported to `ensemble_huber.onnx` (13.9 MB)
+  - Huber loss is robust to outliers; averaging the two models reduces prediction variance by 19.4%
+- **Features**: 26 autoregressive features derived entirely from the food insecurity proxy time series itself:
+  - Current values (proxy, FCG, rCSI)
+  - Lagged values (7d, 14d, 30d, 60d, 90d)
+  - Rolling means and standard deviations (7d, 14d, 30d, 60d, 90d windows)
+  - Momentum (7d, 14d, 30d percent change)
+  - Trend (30d linear regression slope) and volatility (30d coefficient of variation)
+  - Seasonality (month encoded as sin/cos)
+  - Data quality (normalized survey sample size)
+- **Training split**: Train 630,467 rows (2018-2023), Validation 42,033 (Jan-Jun 2024), Test 87,813 (Jul 2024-Jul 2025) — strict temporal split, no data leakage
+- **Test set performance**:
+  - MAE: **1.33 percentage points**
+  - RMSE: 3.84 pp
+  - R²: **0.9825**
+  - Directional accuracy: **98.4%** (correctly predicts worsening vs improving)
+  - Crisis detection: 4,388/4,391 actual crisis events detected (99.9%)
+  - Median error: 0.66 pp (half of all predictions within 0.66 pp of actual)
+- **Key finding from training**: External signals (GDELT conflict media, Open-Meteo climate, World Bank economic, UNHCR displacement) were tested but explain only 1-18% of variance. The autoregressive model using food insecurity history alone achieves R²=0.98. Adding external signals slightly DEGRADES performance (MAE 1.78 vs 1.33), indicating they introduce noise.
+- **Feature importance**: `proxy_lag_90d` (34.4%), `proxy_current` (27.8%), `proxy_change_30d` (11.8%), `proxy_rolling_mean_7d` (7.0%), `proxy_rolling_std_90d` (5.8%)
+- **Deployment**: ONNX Runtime 1.17.0 in Java (Spring Boot), both models run per country and predictions averaged
+- **Production coverage**: 80 countries (41 with direct training data + 39 generalizing from cross-country patterns)
+- **Update frequency**: Continuous — predictions update as WFP survey data updates via `api.hungermapdata.org`
 
 ### Source 2: FAO Food Price Index
 - **Data**: Monthly global commodity price indices (Cereals, Oils, Dairy, Meat, Sugar)
@@ -178,9 +206,12 @@ This is not a replacement for supply-side analysis. It is a complementary signal
 
 ## Technical Notes
 
-- Nowcast ML model runs 4 ONNX models in ensemble (2 LightGBM + 2 XGBoost variants)
-- Proxy = average of FCS prevalence (% with poor food consumption) and rCSI prevalence (% using crisis coping strategies)
-- DPI calculation, signal thresholds, and validation logic are implemented in `MarketSignalService.java`
+- Nowcast ML model: 2-model LightGBM ensemble (MAE loss + Huber loss), exported as ONNX, 18.5 MB total
+- Training data: 760,313 rows from 7 years of WFP CATI phone surveys (`StatsSumL3_202507251420.json`, 1.7 GB)
+- 26 autoregressive features — no external signals used (tested but found to add noise)
+- Proxy = average of FCG ≤ 2 prevalence and rCSI ≥ 19 prevalence
+- DPI calculation, signal thresholds, and validation logic: `MarketSignalService.java`
 - Historical proxy data bootstrapped from WFP HungerMap API at 13 time points spanning 120 days
-- All validation data is stored in Firestore collections: `marketSignals`, `marketSignalHistory`, `proxyHistory`
-- FAO Food Price Index data sourced from FAO CSV endpoint, 24-month rolling window
+- Validation data stored in Firestore: `marketSignals`, `marketSignalHistory`, `proxyHistory`
+- FAO Food Price Index: monthly CSV from FAO, 24-month rolling window
+- Full model documentation: `ml/MODEL_DOCUMENTATION.md`
