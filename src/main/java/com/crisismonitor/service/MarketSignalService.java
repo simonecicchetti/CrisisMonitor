@@ -123,13 +123,14 @@ public class MarketSignalService {
     public static class CountryContribution {
         private String countryName;
         private String iso3;
-        private double predictedChange;    // From nowcast
-        private double importVolume;       // Mt/year
-        private double contribution;       // change × volume
-        private String type;               // IMPORTER or EXPORTER
+        private double predictedChange;    // From nowcast (pp)
+        private int weight;                // Normalized 0-100 (relative contribution, no units exposed)
+        private String type;               // IMPORTER or EXPORTER_RISK
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        transient double _rawContribution; // Internal only, never serialized
     }
 
-    private static final int MARKET_SIGNAL_VERSION = 7;
+    private static final int MARKET_SIGNAL_VERSION = 8;
 
     public MarketSignalReport getMarketSignals() {
         String docId = "market_" + LocalDate.now();
@@ -534,22 +535,21 @@ public class MarketSignalService {
                 cc.setCountryName(nameMap.getOrDefault(iso3, iso3));
                 cc.setIso3(iso3);
                 cc.setPredictedChange(change);
-                cc.setImportVolume(importVol);
-                cc.setContribution(Math.round(contribution * 10.0) / 10.0);
+                cc.setWeight(0); // Normalized below
                 cc.setType("IMPORTER");
+                cc._rawContribution = contribution; // Internal, not serialized
                 signal.getTopContributors().add(cc);
             }
         }
 
         // Supply-side risk: exporters with worsening food insecurity
-        // Weighted by EXPORT volume (not arbitrary multiplier)
         StringBuilder exporterRisk = new StringBuilder();
         for (var entry : exporters.entrySet()) {
             String iso3 = entry.getKey();
             double exportVol = entry.getValue();
             double change = changeMap.getOrDefault(iso3, 0.0);
             if (change > 2) {
-                double supplyRisk = change * exportVol * 0.5; // 50% of export volume as risk weight
+                double supplyRisk = change * exportVol * 0.5;
                 exporterRisk.append(nameMap.getOrDefault(iso3, iso3))
                     .append(": food insecurity ").append(String.format("%+.1fpp", change))
                     .append(", major exporter — supply disruption risk. ");
@@ -558,19 +558,27 @@ public class MarketSignalService {
                 cc.setCountryName(nameMap.getOrDefault(iso3, iso3));
                 cc.setIso3(iso3);
                 cc.setPredictedChange(change);
-                cc.setImportVolume(exportVol); // Display export vol in the same field
-                cc.setContribution(Math.round(supplyRisk * 10.0) / 10.0);
+                cc.setWeight(0); // Normalized below
                 cc.setType("EXPORTER_RISK");
+                cc._rawContribution = supplyRisk; // Internal, not serialized
                 signal.getTopContributors().add(cc);
                 dpi += supplyRisk;
             }
         }
         signal.setExporterRisk(exporterRisk.length() > 0 ? exporterRisk.toString().trim() : null);
 
-        // Sort contributors by contribution, keep top 6
-        signal.getTopContributors().sort((a, b) -> Double.compare(b.getContribution(), a.getContribution()));
+        // Sort contributors by raw contribution, keep top 6, then normalize to 0-100
+        signal.getTopContributors().sort((a, b) -> Double.compare(b._rawContribution, a._rawContribution));
         if (signal.getTopContributors().size() > 6) {
             signal.setTopContributors(new ArrayList<>(signal.getTopContributors().subList(0, 6)));
+        }
+        // Normalize weights: highest contributor = 100, rest proportional
+        double maxRaw = signal.getTopContributors().isEmpty() ? 1 :
+            signal.getTopContributors().stream().mapToDouble(c -> c._rawContribution).max().orElse(1);
+        if (maxRaw > 0) {
+            for (CountryContribution cc : signal.getTopContributors()) {
+                cc.setWeight((int) Math.round((cc._rawContribution / maxRaw) * 100));
+            }
         }
 
         signal.setDemandPressureIndex(Math.round(dpi * 10.0) / 10.0);
@@ -623,20 +631,20 @@ public class MarketSignalService {
 
         if ("STRONG".equals(strength) && "UPWARD".equals(direction)) {
             return String.format("Strong demand pressure (DPI %.0f) aligns with rising prices (+%.1f%% 6m). " +
-                "Consumption deterioration in major importers is likely contributing to and may accelerate price increases.",
+                "Consumption patterns in key countries suggest continued upward pressure.",
                 dpi, signal.getPriceTrend6m());
         } else if ("STRONG".equals(strength) && !"UPWARD".equals(direction)) {
-            return String.format("Strong demand pressure (DPI %.0f) detected but prices not yet rising. " +
-                "This divergence may signal upcoming price pressure within 4-8 weeks as import demand materializes.",
+            return String.format("Strong demand pressure (DPI %.0f) detected but prices not yet reflecting this signal. " +
+                "This divergence is worth monitoring closely.",
                 dpi);
         } else if ("MODERATE".equals(strength)) {
-            return String.format("Moderate demand pressure (DPI %.0f) from worsening food insecurity in import-dependent countries. " +
-                "Monitor for acceleration — if more countries tip into worsening, signal strengthens.", dpi);
+            return String.format("Moderate demand pressure (DPI %.0f) detected from worsening food consumption patterns. " +
+                "Monitor for acceleration — if more countries deteriorate, signal strengthens.", dpi);
         } else if ("WEAK".equals(strength)) {
-            return String.format("Weak demand signal (DPI %.0f). Limited worsening among major importers. " +
-                "Current commodity price movements driven by other factors.", dpi);
+            return String.format("Weak demand signal (DPI %.0f). Limited deterioration in food consumption patterns. " +
+                "Current price movements likely driven by other factors.", dpi);
         }
-        return "No significant demand pressure detected from food insecurity patterns.";
+        return "No significant demand pressure detected.";
     }
 
     private double getPriceValue(Object faoData, String field) {

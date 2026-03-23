@@ -4524,16 +4524,14 @@ const SidebarManager = {
 
         // Contributors as visual bars
         if (signal.topContributors && signal.topContributors.length > 0) {
-          const maxContrib = Math.max(...signal.topContributors.map(c => c.contribution));
           html += `<div style="margin-top:8px;">`;
           signal.topContributors.forEach(c => {
-            const cBarWidth = maxContrib > 0 ? (c.contribution / maxContrib) * 100 : 0;
             const isExporter = c.type === 'EXPORTER_RISK';
             const cColor = isExporter ? '#ff6b61' : color;
             html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">`;
             html += `<span style="width:100px;font-size:0.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${Utils.escapeHtml(c.countryName)}${isExporter ? ' ⚠' : ''}</span>`;
             html += `<div style="flex:1;height:4px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden;">`;
-            html += `<div style="height:100%;width:${cBarWidth}%;background:${cColor};border-radius:2px;"></div></div>`;
+            html += `<div style="height:100%;width:${c.weight || 0}%;background:${cColor};border-radius:2px;"></div></div>`;
             html += `<span style="width:55px;font-size:0.7rem;color:var(--text-tertiary);text-align:right;">${c.predictedChange > 0 ? '+' : ''}${c.predictedChange.toFixed(1)}pp</span>`;
             html += `</div>`;
           });
