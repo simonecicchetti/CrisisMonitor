@@ -30,7 +30,24 @@ We built a system that takes real-time food consumption survey data from 80 coun
 
 **FAO data is monthly with 3 weeks lag.** For a commodity trader this is useless. They work by the minute. Our signal arrives too late for trading.
 
-**WFP data is public.** Anyone with technical skills can replicate what we've built. We don't have a data moat.
+**The WFP daily API is public, but the training dataset is not.** The WFP HungerMap API provides daily country-level snapshots. However, the historical ADM1-level export we trained on (StatsSumL3, 1.78 GB, 2.1M records across 7 years at sub-national resolution) is not available through the public API — it is a specific data export. The ML model, the DPI concept, and the combination of consumption predictions with import volumes are original work.
+
+### What exists in the market — and what doesn't
+
+Commodity price forecasting is a well-established field. What exists:
+- **Supply-side models** (satellite crop monitoring, weather models, vessel tracking) — used by Cargill, Glencore, ADM, Louis Dreyfus. These predict how much grain will be produced and shipped. They are mature, expensive, and focused on supply.
+- **FEWS NET** (Famine Early Warning Systems) — predicts food crises but does NOT connect to commodity prices. Output is IPC phase classifications, not price signals.
+- **WFP HungerMap LIVE** — shows current food insecurity in real-time but does NOT make 90-day predictions and does NOT correlate with commodity prices.
+- **IMF/World Bank commodity forecasts** — use macroeconomic models (GDP, trade flows, monetary policy). They do NOT use household-level consumption survey data.
+- **Academic research** — extensively studies how food PRICES affect food INSECURITY (price → hunger). The reverse direction (hunger → price) is largely unstudied.
+
+What does NOT exist (as far as we can determine):
+- A model trained on real-time phone survey consumption data to predict per-country food insecurity trajectories
+- A Demand Pressure Index that weights those predictions by commodity import volumes
+- The specific hypothesis that consumption deterioration in importing countries is a leading indicator for commodity prices
+- Any system that connects WFP survey data to FAO commodity price movements
+
+The commodity trading world focuses on supply. The humanitarian world focuses on need. Nobody connects them. That is what we built.
 
 ### Who would pay for this — realistically
 
