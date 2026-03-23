@@ -109,13 +109,19 @@ public class MarketSignalService {
         private String type;               // IMPORTER or EXPORTER
     }
 
+    private static final int MARKET_SIGNAL_VERSION = 2;
+
     public MarketSignalReport getMarketSignals() {
         String docId = "market_" + LocalDate.now();
 
-        // Cache check
+        // Cache check — skip if old version (missing maize, wrong exporter weights)
         Map<String, Object> cached = firestoreService.getDocument("marketSignals", docId);
         if (cached != null && cached.containsKey("signals")) {
-            return objectMapper.convertValue(cached, MarketSignalReport.class);
+            int cachedVersion = cached.containsKey("version") ? ((Number) cached.get("version")).intValue() : 0;
+            if (cachedVersion >= MARKET_SIGNAL_VERSION) {
+                return objectMapper.convertValue(cached, MarketSignalReport.class);
+            }
+            log.info("Market signal cache outdated (v{} < v{}), regenerating", cachedVersion, MARKET_SIGNAL_VERSION);
         }
 
         MarketSignalReport report = generateReport();
@@ -124,6 +130,7 @@ public class MarketSignalService {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> data = objectMapper.convertValue(report, Map.class);
                 data.put("timestamp", System.currentTimeMillis());
+                data.put("version", MARKET_SIGNAL_VERSION);
                 firestoreService.saveDocument("marketSignals", docId, data);
             } catch (Exception e) {
                 log.error("Failed to save market signals: {}", e.getMessage());
