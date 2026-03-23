@@ -8,6 +8,60 @@
 
 ---
 
+## Honest Assessment: What This Is and What It Isn't
+
+### What we built
+
+We built a system that takes real-time food consumption survey data from 80 countries, processes it through an ML model trained on 7 years of data, and cross-references it with commodity import volumes. The initial results show correlation with cereal prices.
+
+### What is true
+
+**The ML model works.** 98.5% directional accuracy, trained on 2.1M real records, 7 years of data. This is verified through benchmarks.
+
+**The economic logic is sound.** If people in Egypt eat worse → Egypt buys more wheat → wheat price goes up. This is basic economics, not speculation.
+
+**The DPI correlates with cereal prices in the data we have.** 4/4 for cereals, 10/12 overall. This is a fact.
+
+### What is NOT true (yet)
+
+**12 data points prove nothing.** In finance, you'd need 2-3 years of out-of-sample data to make a serious claim. 4 months is an indication, not proof. The correlation could be coincidence.
+
+**The cereal correlation could be entirely driven by Ukraine.** Ukraine is at war → internal food insecurity worsens AND exports drop → price rises. Both are caused by the SAME thing (the war), not one by the other. We have not proven that consumption CAUSES price — it could be that both are effects of the same cause.
+
+**FAO data is monthly with 3 weeks lag.** For a commodity trader this is useless. They work by the minute. Our signal arrives too late for trading.
+
+**WFP data is public.** Anyone with technical skills can replicate what we've built. We don't have a data moat.
+
+### Who would pay for this — realistically
+
+**Commodity traders: NO.** Data too slow (monthly), signal too raw, unproven. Cargill and Glencore spend hundreds of millions on satellite imagery, vessel tracking, weather models. Ours is ONE of a thousand inputs they already have.
+
+**Humanitarian organizations (WFP, UNICEF, NGOs): YES, but they pay little.** They need to know WHERE to send food, not the price of wheat. Our per-country predictions are genuinely useful for operational planning. But software budgets in NGOs are small.
+
+**Governments of importing countries: POTENTIALLY YES.** Egypt's procurement office would want to know 4-8 weeks in advance whether to accelerate wheat purchases. But selling to a government takes years of relationships, procurement processes, bureaucracy.
+
+**Development finance (World Bank, regional banks): YES.** "Anticipatory financing" — if DPI exceeds a threshold, unlock emergency funds before the crisis hits. This is a real and growing use case. The World Bank is actively looking for data-driven early warning tools.
+
+**Parametric insurance: YES, interesting.** If DPI > X → automatic payout for food crisis coverage. Parametric catastrophe insurance is growing. Our DPI could serve as a trigger.
+
+### The honest answer
+
+**We have not discovered something monetizable TODAY.** We have discovered something **potentially monetizable in 12-18 months** if the correlation holds.
+
+**What IS monetizable TODAY is the platform as a whole** — not Market Signals alone. A crisis intelligence platform with 47 risk scores, ML nowcast on 80 countries, proactive predictive analysis, news aggregation, and experimental Market Signals. This as a SaaS for NGOs, governments, and development institutions has a market. Price: $500-2000/month per organization. Market: thousands of NGOs, hundreds of governments, dozens of financial institutions.
+
+**Market Signals is the differentiator** — it's the thing nobody else has. But it's not the product, it's the hook. The product is the complete platform.
+
+**What to build for monetization:**
+1. Continue accumulating Market Signals data (costs zero, runs automatically)
+2. In 6 months: if correlation holds, publish a paper/blog post with results
+3. The paper attracts attention → credibility → clients
+4. Meanwhile, sell the platform as an operational tool for humanitarian organizations
+
+The discovery is real. But it's at research stage, not product stage. The smart move is to let it mature while monetizing the rest of the platform.
+
+---
+
 ## The Hypothesis
 
 Real-time food consumption survey data, processed through a machine learning model that predicts 90-day food insecurity trajectories, can serve as a **leading indicator for commodity price movements**.
