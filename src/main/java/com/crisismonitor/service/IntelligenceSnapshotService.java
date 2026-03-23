@@ -32,6 +32,10 @@ public class IntelligenceSnapshotService {
     private final FirestoreService firestoreService;
     private final ObjectMapper objectMapper;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private MarketSignalService marketSignalService;
+
     @Value("${DASHSCOPE_API_KEY:}")
     private String dashscopeApiKey;
 
@@ -131,61 +135,33 @@ public class IntelligenceSnapshotService {
 
         log.info("Generating predictive analysis from {} char snapshot", snapshot.length());
 
-        String systemPrompt = "You are a senior crisis intelligence analyst producing a daily PROACTIVE intelligence briefing. " +
-            "You have two jobs:\n" +
-            "1. REACTIVE: Analyze what the data shows and forecast likely developments in 7-14 days.\n" +
-            "2. PROACTIVE: Identify threats that are BUILDING but not yet visible in the data — policy changes, " +
-            "political shifts, cross-border spillovers, second-order effects, supply chain vulnerabilities.\n\n" +
-            "Think in CAUSAL CHAINS: Policy X in Country A → economic pressure → migration to Country B → " +
-            "food insecurity spike → humanitarian crisis. Use web search to find signals the platform data misses.\n\n" +
-            "LANGUAGE RULES:\n" +
-            "- NEVER use absolute language: 'will happen', 'will ignite'. These are assessments, not facts.\n" +
-            "- USE probabilistic language: 'is likely to', 'data suggests', 'high probability of', 'risk of', " +
-            "'indicators point toward', 'conditions are building for'.\n" +
-            "- Distinguish confidence: 'strong indicators suggest' (high) vs 'early signals point to' (medium) vs 'there is a possibility' (low).\n" +
-            "- Tie every assessment to a data point or verifiable signal.\n" +
-            "- NEVER mention agency names (FAO, WFP, UNHCR, WHO, IOM). Describe situations and data, not sources.\n" +
-            "- NEVER use specific dates in predictions. Use [SHORT-TERM] (1-2 weeks) or [MEDIUM-TERM] (1-3 months).\n" +
-            "- Write like you're briefing a decision-maker who allocates humanitarian resources.";
+        String systemPrompt = "You are a senior crisis intelligence analyst. Write CONCISE, dense analysis. " +
+            "Every sentence must carry information — no filler, no repetition. " +
+            "Use probabilistic language: 'likely', 'suggests', 'risk of'. Never 'will happen'. " +
+            "Never mention agency names. No specific dates — use [SHORT-TERM] or [MEDIUM-TERM]. " +
+            "Integrate commodity demand pressure signals (DPI) into the food security analysis when available.";
 
         String prompt = "INTELLIGENCE SNAPSHOT — " + LocalDate.now() + "\n\n" + snapshot + "\n\n" +
-            "Produce a PROACTIVE intelligence briefing. Go beyond what the data shows — identify what's BUILDING.\n\n" +
+            "Write a CONCISE predictive briefing. Maximum clarity, minimum words.\n\n" +
             "RESPOND IN JSON (no markdown, no backticks):\n" +
             "{\n" +
-            "  \"conflictOutlook\": \"<150-200 words: Which conflict fronts show indicators of escalation or de-escalation. " +
-                "Include second-order effects: how does conflict in Country A affect Country B's stability?>\",\n" +
-            "  \"foodSecurityOutlook\": \"<150-200 words: Use nowcast predictions + price data. " +
-                "Which countries approach critical thresholds. What supply chain pressures are building. " +
-                "How do currency collapses translate to food access failures?>\",\n" +
-            "  \"economicOutlook\": \"<100-150 words: Currency devaluations, commodity pressures, and their cascading humanitarian impact. " +
-                "Which economies approach tipping points. How do sanctions, trade policy shifts, or energy markets create downstream crises?>\",\n" +
-            "  \"humanitarianOutlook\": \"<100-150 words: Where access is likely to shrink. Where funding gaps risk program suspension. " +
-                "What displacement flows are building and where will receiving communities face pressure.>\",\n" +
-            "  \"emergingThreats\": \"<150-200 words: PROACTIVE SCAN — threats building BELOW the radar. " +
-                "Use web search to identify: political shifts (elections, coups, policy changes) that could trigger crises; " +
-                "economic pressures not yet reflected in currency data; climate events building (approaching rainy/lean seasons); " +
-                "cross-border dynamics (e.g., restrictive migration policy in Country A creating pressure in Country B). " +
-                "Think 30-90 days ahead. Name specific countries, policies, timelines.>\",\n" +
-            "  \"cascadingEffects\": \"<100-150 words: Map 3-4 CAUSAL CHAINS currently active. Format: " +
-                "'[Trigger] → [First-order effect] → [Second-order effect] → [Humanitarian impact]'. " +
-                "Example: 'Hormuz blockade → oil price spike → fertilizer cost increase → planting season disruption in East Africa → " +
-                "food insecurity surge Q3 2026'. Be specific, cite countries.>\",\n" +
-            "  \"keyPredictions\": \"<7-10 predictions in bullet format, each tagged [SHORT-TERM] (1-2 weeks) or [MEDIUM-TERM] (1-3 months). " +
-                "Mix reactive (from data) and proactive (from analysis). No specific dates. Use probabilistic language. " +
-                "Example: '• [SHORT-TERM] Given SDG 336% devaluation, Khartoum cereal prices are likely to exceed 300% of 5-year average (high confidence).' " +
-                "Example: '• [MEDIUM-TERM] Chile migration enforcement policies may trigger increased Peru border crossings (medium confidence).' " +
-                "Include at least 2 proactive predictions. NEVER mention agency names. " +
-                "CRITICAL: every prediction must be CREDIBLE and PROBABLE — grounded in specific data from the snapshot. " +
-                "Do NOT make dramatic predictions for shock value. If data doesn't support a prediction, don't make it. " +
-                "A boring but accurate prediction is infinitely more valuable than a dramatic but baseless one.>\",\n" +
-            "  \"riskEscalations\": \"<List of 5-8 countries most likely to see significant deterioration in 14 days, " +
-                "with one-line data-backed reason. Include at least 1-2 countries not currently flagged as high-risk but showing early warning signs.>\"\n" +
+            "  \"conflictOutlook\": \"<80-100 words: key conflict fronts, escalation/de-escalation indicators, cross-border spillover risks.>\",\n" +
+            "  \"foodSecurityOutlook\": \"<80-100 words: integrate nowcast predictions WITH commodity demand pressure signals (DPI). " +
+                "Which countries approach thresholds. How DPI signals connect to price pressure on staple foods.>\",\n" +
+            "  \"economicOutlook\": \"<60-80 words: currency collapses, commodity price pressures, cascading humanitarian impact.>\",\n" +
+            "  \"humanitarianOutlook\": \"<60-80 words: access constraints, displacement flows, funding gaps.>\",\n" +
+            "  \"emergingThreats\": \"<80-100 words: 4-5 threats building below the radar. Policy shifts, approaching seasons, " +
+                "cross-border dynamics. Use web search. Name countries.>\",\n" +
+            "  \"cascadingEffects\": \"<3-4 causal chains, one line each. Format: 'Trigger → effect → second-order → humanitarian impact'.>\",\n" +
+            "  \"keyPredictions\": \"<5-6 predictions, tagged [SHORT-TERM] or [MEDIUM-TERM]. Each one line, with confidence level. " +
+                "Must be credible and data-grounded. Include at least 1 based on commodity demand pressure signals.>\",\n" +
+            "  \"riskEscalations\": \"<5-6 countries, one-line reason each. Include 1-2 not currently flagged.>\"\n" +
             "}";
 
         try {
             Map<String, Object> request = new LinkedHashMap<>();
             request.put("model", "qwen3.5-plus");
-            request.put("max_tokens", 4500);
+            request.put("max_tokens", 2500);
             request.put("temperature", 0.4);
             request.put("enable_search", true);
             request.put("messages", List.of(
@@ -318,6 +294,24 @@ public class IntelligenceSnapshotService {
             currencies.stream().limit(15).forEach(c -> sb.append("  ").append(c.toString()).append("\n"));
             sb.append("\n");
         }
+
+        // 7. Market Signals (DPI)
+        try {
+            var marketReport = marketSignalService.getMarketSignals();
+            if (marketReport != null && marketReport.getSignals() != null) {
+                sb.append("=== COMMODITY DEMAND PRESSURE (proprietary signals) ===\n");
+                for (var sig : marketReport.getSignals()) {
+                    sb.append(sig.getCommodity()).append(": DPI=").append(String.format("%.0f", sig.getDemandPressureIndex()))
+                      .append(" [").append(sig.getSignalStrength()).append("]")
+                      .append(", price=").append(String.format("%.1f", sig.getCurrentPrice()))
+                      .append(" (").append(sig.getDirection()).append(")\n");
+                }
+                sb.append("Validation: ").append(marketReport.getValidationHistory() != null ? marketReport.getValidationHistory().stream()
+                    .filter(v -> "CONFIRMED".equals(v.getOutcome())).count() : 0)
+                  .append("/").append(marketReport.getValidationHistory() != null ? marketReport.getValidationHistory().size() : 0)
+                  .append(" confirmed historically\n\n");
+            }
+        } catch (Exception e) { log.debug("Market signals unavailable for snapshot: {}", e.getMessage()); }
 
         sb.append("=== END OF SNAPSHOT ===\nDate: ").append(LocalDate.now()).append("\n");
         return sb.toString();
