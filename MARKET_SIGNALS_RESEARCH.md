@@ -14,7 +14,7 @@ Real-time food consumption survey data, processed through a machine learning mod
 
 The mechanism: when food insecurity worsens in import-dependent countries, those countries increase food imports to prevent further deterioration. This creates demand pressure on global commodity markets. Because the consumption data comes from continuous phone surveys (near real-time), it captures the impact on households **before** the resulting import demand is reflected in commodity prices.
 
-Estimated lead time: **4-8 weeks**.
+Estimated lead time: **4-17 weeks** (based on retrospective validation; the signal was detectable at all tested lag periods from 4 to 17 weeks).
 
 ---
 
@@ -29,10 +29,15 @@ Estimated lead time: **4-8 weeks**.
   - 822,718 matched data points where both indicators are available (99.7% alignment)
 - **Proxy definition**: `proxy = avg(% with FCG ≤ 2, % with rCSI ≥ 19)`
 - **Target variable**: `target_pct_change_90d` — percent change in proxy over the preceding 90 days
-- **Model architecture**: 2-Model Ensemble — average of two LightGBM gradient boosted decision tree models
-  - Model 1: LightGBM with MAE (L1) loss, 1,000 trees, learning rate 0.05 → exported to `ensemble_base.onnx` (4.5 MB)
-  - Model 2: LightGBM with Huber loss (alpha=5.0), 3,000 trees, learning rate 0.02 → exported to `ensemble_huber.onnx` (13.9 MB)
-  - Huber loss is robust to outliers; averaging the two models reduces prediction variance by 19.4%
+- **Model architecture**: 4-Model Ensemble — average of four gradient boosted decision tree models with different loss functions and algorithms, providing robustness through diversity
+  - Model 1: LightGBM with MAE (L1) loss, 1,000 trees, learning rate 0.05 → `ensemble_base.onnx` (4.7 MB)
+  - Model 2: LightGBM with Huber loss (alpha=5.0), 3,000 trees, learning rate 0.02 → `ensemble_huber.onnx` (14.2 MB)
+  - Model 3: LightGBM with Quantile loss → `ensemble_quantile.onnx` (14.2 MB)
+  - Model 4: XGBoost → `ensemble_xgboost.onnx` (36.7 MB)
+  - All 4 models use the same 26 autoregressive features
+  - Predictions from all 4 models are averaged at inference time (`NowcastService.java` line 388)
+  - Total ensemble size: ~70 MB ONNX
+  - Note: Models 1 and 2 are documented in detail in `ml/02_train_baseline.py` and `ml/MODEL_DOCUMENTATION.md`. Models 3 and 4 were trained using the same feature set and training split; exact hyperparameters for these two models are not recorded in the pipeline scripts.
 - **Features**: 26 autoregressive features derived entirely from the food insecurity proxy time series itself:
   - Current values (proxy, FCG, rCSI)
   - Lagged values (7d, 14d, 30d, 60d, 90d)
@@ -42,14 +47,15 @@ Estimated lead time: **4-8 weeks**.
   - Seasonality (month encoded as sin/cos)
   - Data quality (normalized survey sample size)
 - **Training split**: Train 630,467 rows (2018-2023), Validation 42,033 (Jan-Jun 2024), Test 87,813 (Jul 2024-Jul 2025) — strict temporal split, no data leakage
-- **Test set performance**:
-  - MAE: **1.33 percentage points**
+- **Test set performance** (documented for the 2-model subset; the full 4-model ensemble in production is expected to perform equal or better due to additional model diversity):
+  - MAE: **1.33 percentage points** (2-model documented benchmark)
   - RMSE: 3.84 pp
   - R²: **0.9825**
   - Directional accuracy: **98.4%** (correctly predicts worsening vs improving)
   - Crisis detection: 4,388/4,391 actual crisis events detected (99.9%)
   - Median error: 0.66 pp (half of all predictions within 0.66 pp of actual)
-- **Key finding from training**: External signals (GDELT conflict media, Open-Meteo climate, World Bank economic, UNHCR displacement) were tested but explain only 1-18% of variance. The autoregressive model using food insecurity history alone achieves R²=0.98. Adding external signals slightly DEGRADES performance (MAE 1.78 vs 1.33), indicating they introduce noise.
+  - Note: These metrics are from `ml/MODEL_DOCUMENTATION.md` and were measured on the 2-model ensemble (base + huber). The production 4-model ensemble (base + huber + quantile + xgboost) was not separately benchmarked on the test set.
+- **Key finding from training**: External signals (GDELT conflict media, Open-Meteo climate, World Bank economic, UNHCR displacement) were tested but explain only 1-18% of variance. The autoregressive model using food insecurity history alone achieves R²=0.98 (Model D, MAE 1.65). Adding all external signals to this model (Model E, 63 features) DEGRADES performance to MAE 1.78 — a 7.9% increase in error, indicating external signals introduce noise rather than information. The deployed 2-model ensemble (Model F) uses only the 26 autoregressive features and achieves the best MAE of 1.33.
 - **Feature importance**: `proxy_lag_90d` (34.4%), `proxy_current` (27.8%), `proxy_change_30d` (11.8%), `proxy_rolling_mean_7d` (7.0%), `proxy_rolling_std_90d` (5.8%)
 - **Deployment**: ONNX Runtime 1.17.0 in Java (Spring Boot), both models run per country and predictions averaged
 - **Production coverage**: 80 countries (41 with direct training data + 39 generalizing from cross-country patterns)
@@ -206,7 +212,7 @@ This is not a replacement for supply-side analysis. It is a complementary signal
 
 ## Technical Notes
 
-- Nowcast ML model: 2-model LightGBM ensemble (MAE loss + Huber loss), exported as ONNX, 18.5 MB total
+- Nowcast ML model: 4-model ensemble (LightGBM MAE + LightGBM Huber + LightGBM Quantile + XGBoost), exported as ONNX, ~70 MB total
 - Training data: 760,313 rows from 7 years of WFP CATI phone surveys (`StatsSumL3_202507251420.json`, 1.7 GB)
 - 26 autoregressive features — no external signals used (tested but found to add noise)
 - Proxy = average of FCG ≤ 2 prevalence and rCSI ≥ 19 prevalence
