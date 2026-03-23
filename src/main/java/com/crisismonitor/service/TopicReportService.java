@@ -414,9 +414,36 @@ public class TopicReportService {
             log.warn("Error reading cached GDELT data: {}", e.getMessage());
         }
 
-        // Sources come from GDELT spikes (already in memory fallback) — NO live API calls
-        // Additional sources populated in buildTopicSpecificContext via risk scores, nowcast, etc.
-        log.info("Sources from GDELT headlines: {}, building report with topic-specific data", allSources.size());
+        // Supplement with RSS + ReliefWeb headlines (when GDELT is empty or sparse)
+        @SuppressWarnings("unchecked")
+        List<Map<String, String>> cachedNews = cacheWarmupService.getFallback("newsHeadlines");
+        if (cachedNews != null) {
+            for (Map<String, String> h : cachedNews) {
+                String hIso3 = h.getOrDefault("iso3", "");
+                String hTitle = h.getOrDefault("title", "");
+                String hType = h.getOrDefault("type", "Media");
+                String hSource = h.getOrDefault("source", "");
+
+                if (!countriesToSearch.contains(hIso3)) continue;
+                if (hTitle.isBlank()) continue;
+
+                // Check topic match
+                boolean topicMatch = keywords.isEmpty() || keywords.stream()
+                    .anyMatch(kw -> hTitle.toLowerCase().contains(kw.toLowerCase()));
+                // For ReliefWeb, be more permissive (always include if country matches)
+                if (!topicMatch && !"ReliefWeb".equals(hType)) continue;
+
+                CountryData cd = countryDataMap.computeIfAbsent(hIso3, k -> new CountryData(hIso3));
+                cd.reportsCount++;
+                if (cd.headlines.size() < 3) {
+                    cd.headlines.add(hTitle);
+                }
+                allSources.add(new SourceItem(hType, hTitle, h.get("url"), hSource,
+                    LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d"))));
+            }
+        }
+        log.info("Sources: {} GDELT + RSS/ReliefWeb, {} countries in data map",
+            allSources.size(), countryDataMap.size());
 
         // ========================================
         // LAYER 4: Build Country Matrix (Stock vs Flow)
@@ -955,6 +982,8 @@ public class TopicReportService {
 
         // Build topic-specific context
         String context = buildTopicSpecificContext(topic, region, countries, countryMatrix, sources);
+        log.info("Topic report context: {} chars, {} countries in matrix, {} sources",
+            context.length(), countryMatrix.size(), sources.size());
 
         // Call AI with topic-specific prompt
         String synthesis = callAIForSynthesis(topic, context);
@@ -962,6 +991,7 @@ public class TopicReportService {
         String narrative = null;
 
         if (synthesis != null && !synthesis.isEmpty()) {
+            log.info("AI synthesis received: {} chars", synthesis.length());
             // Split bullets and narrative
             String bulletsPart = synthesis;
             if (synthesis.contains("---NARRATIVE---")) {
@@ -1004,20 +1034,30 @@ public class TopicReportService {
             }
         }
 
-        // Fallback: generate from data if AI fails or returns empty
+        // Fallback: use source titles or country headlines if AI fails
         if (developments.isEmpty()) {
-            for (CountryMetrics cm : countryMatrix.stream().limit(3).collect(Collectors.toList())) {
-                KeyDevelopment kd = new KeyDevelopment();
-                if (cm.getTopHeadline() != null) {
+            // First try: country matrix headlines
+            for (CountryMetrics cm : countryMatrix.stream().limit(5).collect(Collectors.toList())) {
+                if (cm.getTopHeadline() != null && !cm.getTopHeadline().isBlank()) {
+                    KeyDevelopment kd = new KeyDevelopment();
                     kd.setBullet(cm.getCountry() + ": " + cm.getTopHeadline());
-                } else {
-                    kd.setBullet(cm.getCountry() + ": " + cm.getMediaCount() + " media mentions, " + cm.getReportsCount() + " reports");
+                    kd.setCountry(cm.getCountry());
+                    kd.setEvidenceType("operational");
+                    developments.add(kd);
                 }
-                kd.setCountry(cm.getCountry());
-                kd.setTrend(cm.getTrend());
-                kd.setEvidenceType(cm.getMediaCount() > 0 ? "media" : "operational");
-                developments.add(kd);
             }
+            // Second try: source titles (ReliefWeb, RSS)
+            if (developments.isEmpty()) {
+                for (SourceItem src : sources.stream()
+                        .filter(s -> s.getTitle() != null && s.getTitle().length() > 20)
+                        .limit(5).collect(Collectors.toList())) {
+                    KeyDevelopment kd = new KeyDevelopment();
+                    kd.setBullet(src.getTitle());
+                    kd.setEvidenceType("operational");
+                    developments.add(kd);
+                }
+            }
+            log.info("Fallback key developments: {} items (AI synthesis unavailable)", developments.size());
         }
 
         // Store narrative for caller to retrieve
