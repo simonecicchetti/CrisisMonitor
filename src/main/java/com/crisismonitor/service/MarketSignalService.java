@@ -129,7 +129,7 @@ public class MarketSignalService {
         private String type;               // IMPORTER or EXPORTER
     }
 
-    private static final int MARKET_SIGNAL_VERSION = 6;
+    private static final int MARKET_SIGNAL_VERSION = 7;
 
     public MarketSignalReport getMarketSignals() {
         String docId = "market_" + LocalDate.now();
@@ -206,10 +206,8 @@ public class MarketSignalService {
         report.setValidationHistory(validation);
         report.setDataPointsCollected(countHistoryDays());
 
-        report.setMethodology("Proprietary demand pressure analysis derived from real-time food consumption surveys " +
-            "across 80 countries, cross-referenced with commodity trade dependency patterns. " +
-            "Limitations: demand-side signals only — supply factors not modeled. " +
-            "Rice and Maize use the FAO Cereals Index as proxy. " +
+        report.setMethodology("Proprietary analysis combining real-time food consumption data from 80 countries " +
+            "with commodity market indicators. Demand-side signals only — supply factors not modeled. " +
             "This analysis identifies correlation patterns, not proven causation.");
 
         log.info("Market signals generated: {} commodities, {} validation records, {} days of history",
@@ -554,8 +552,7 @@ public class MarketSignalService {
                 double supplyRisk = change * exportVol * 0.5; // 50% of export volume as risk weight
                 exporterRisk.append(nameMap.getOrDefault(iso3, iso3))
                     .append(": food insecurity ").append(String.format("%+.1fpp", change))
-                    .append(", exports ~").append(String.format("%.0fMt", exportVol))
-                    .append("/year — supply disruption risk. ");
+                    .append(", major exporter — supply disruption risk. ");
 
                 CountryContribution cc = new CountryContribution();
                 cc.setCountryName(nameMap.getOrDefault(iso3, iso3));

@@ -4535,7 +4535,6 @@ const SidebarManager = {
             html += `<div style="flex:1;height:4px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden;">`;
             html += `<div style="height:100%;width:${cBarWidth}%;background:${cColor};border-radius:2px;"></div></div>`;
             html += `<span style="width:55px;font-size:0.7rem;color:var(--text-tertiary);text-align:right;">${c.predictedChange > 0 ? '+' : ''}${c.predictedChange.toFixed(1)}pp</span>`;
-            html += `<span style="width:30px;font-size:0.75rem;font-weight:600;text-align:right;">${c.contribution.toFixed(0)}</span>`;
             html += `</div>`;
           });
           html += `</div>`;
