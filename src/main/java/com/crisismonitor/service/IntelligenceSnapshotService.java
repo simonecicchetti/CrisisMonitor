@@ -93,11 +93,12 @@ public class IntelligenceSnapshotService {
         if (lang.isBlank()) lang = "en";
         String docId = "predictive_" + LocalDate.now() + "_" + lang;
 
-        // Check cache (skip if invalidated or missing new fields like emergingThreats)
+        // Check cache — v2 requires emergingThreats + short format (methodology contains "commodity")
         Map<String, Object> cached = firestoreService.getDocument("predictiveAnalysis", docId);
         if (cached != null && !cached.containsKey("invalidated")
+                && cached.containsKey("emergingThreats")
                 && cached.containsKey("conflictOutlook")
-                && cached.containsKey("emergingThreats")) {
+                && String.valueOf(cached.getOrDefault("methodology", "")).contains("commodity")) {
             return objectMapper.convertValue(cached, PredictiveAnalysis.class);
         }
 
@@ -355,8 +356,8 @@ public class IntelligenceSnapshotService {
             analysis.setEmergingThreats(json.path("emergingThreats").asText(""));
             analysis.setCascadingEffects(json.path("cascadingEffects").asText(""));
             analysis.setMethodology("Generated from " + LocalDate.now() + " platform snapshot: " +
-                "risk scores (47 countries), nowcast ML predictions (80 countries), live news feeds, " +
-                "conflict media analysis, food price indices, and currency data.");
+                "risk scores (47 countries), nowcast ML predictions (80 countries), commodity demand pressure signals, " +
+                "live news feeds, conflict media analysis, and currency data.");
 
             if (analysis.getConflictOutlook().isBlank() && analysis.getKeyPredictions().isBlank()) {
                 log.warn("Analysis appears empty");
