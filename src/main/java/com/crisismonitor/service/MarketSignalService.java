@@ -81,22 +81,39 @@ public class MarketSignalService {
         private String date;
         private String generatedAt;
         private List<CommoditySignal> signals;
+        private List<ValidationRecord> validationHistory;
+        private int dataPointsCollected;
         private String methodology;
     }
 
     @Data
     public static class CommoditySignal {
         private String commodity;
-        private double currentPrice;       // FAO index value
-        private double price6mAgo;         // For trend
+        private double currentPrice;
+        private double price6mAgo;
         private double price12mAgo;
-        private double priceTrend6m;       // % change
+        private double priceTrend6m;       // % change 6m
         private double demandPressureIndex;
         private String signalStrength;     // STRONG, MODERATE, WEAK, NONE
         private String direction;          // UPWARD, STABLE, DOWNWARD
         private List<CountryContribution> topContributors;
-        private String exporterRisk;       // Supply-side signal (e.g., Ukraine)
-        private String interpretation;     // One-line analysis
+        private String exporterRisk;
+        private String interpretation;
+    }
+
+    @Data
+    public static class ValidationRecord {
+        private String commodity;
+        private String predictionDate;     // When we made the prediction
+        private double dpiAtPrediction;
+        private String strengthAtPrediction;
+        private double priceAtPrediction;
+        private String priceAtPredictionDate; // FAO month
+        private double priceNow;
+        private String priceNowDate;
+        private double priceChangePercent;
+        private String outcome;            // CONFIRMED, CONTRADICTED, PENDING
+        private int lagWeeks;
     }
 
     @Data
@@ -109,7 +126,7 @@ public class MarketSignalService {
         private String type;               // IMPORTER or EXPORTER
     }
 
-    private static final int MARKET_SIGNAL_VERSION = 2;
+    private static final int MARKET_SIGNAL_VERSION = 3;
 
     public MarketSignalReport getMarketSignals() {
         String docId = "market_" + LocalDate.now();
@@ -176,6 +193,14 @@ public class MarketSignalService {
         report.getSignals().add(calculateSignal("Vegetable Oils", OIL_IMPORTERS, Map.of(),
             changeMap, nameMap, fao, faoTrend, "oilsIndex"));
 
+        // Save daily snapshot to history
+        saveDailySnapshot(report.getSignals());
+
+        // Compute validation from historical data
+        List<ValidationRecord> validation = computeValidation(report.getSignals());
+        report.setValidationHistory(validation);
+        report.setDataPointsCollected(countHistoryDays());
+
         report.setMethodology("Demand Pressure Index (DPI) = Σ(predicted_food_insecurity_change × annual_import_volume) " +
             "for import-dependent countries, plus supply disruption risk from exporters weighted by export volume. " +
             "Nowcast ML predictions are based on real-time consumption surveys across 80 countries. " +
@@ -183,8 +208,124 @@ public class MarketSignalService {
             "Import volumes are annual estimates and may vary. Rice and Maize use the FAO Cereals Index as proxy (no separate index available). " +
             "Signal strength thresholds are experimental. This analysis identifies CORRELATION patterns, not proven causation.");
 
-        log.info("Market signals generated: {} commodities analyzed", report.getSignals().size());
+        log.info("Market signals generated: {} commodities, {} validation records, {} days of history",
+            report.getSignals().size(), validation.size(), report.getDataPointsCollected());
         return report;
+    }
+
+    /**
+     * Save today's DPI + prices as a historical data point.
+     */
+    private void saveDailySnapshot(List<CommoditySignal> signals) {
+        String docId = "history_" + LocalDate.now();
+        try {
+            Map<String, Object> snapshot = new LinkedHashMap<>();
+            snapshot.put("date", LocalDate.now().toString());
+            snapshot.put("timestamp", System.currentTimeMillis());
+
+            for (CommoditySignal s : signals) {
+                String key = s.getCommodity().toLowerCase().replaceAll("[^a-z]", "_");
+                Map<String, Object> commodityData = new LinkedHashMap<>();
+                commodityData.put("dpi", s.getDemandPressureIndex());
+                commodityData.put("strength", s.getSignalStrength());
+                commodityData.put("price", s.getCurrentPrice());
+                commodityData.put("direction", s.getDirection());
+                snapshot.put(key, commodityData);
+            }
+
+            firestoreService.saveDocument("marketSignalHistory", docId, snapshot);
+        } catch (Exception e) {
+            log.warn("Failed to save market signal history: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Look back 4 and 8 weeks, compare DPI predictions with actual price changes.
+     */
+    private List<ValidationRecord> computeValidation(List<CommoditySignal> currentSignals) {
+        List<ValidationRecord> records = new ArrayList<>();
+
+        // Check 4-week and 8-week lookbacks
+        for (int lagWeeks : new int[]{4, 8}) {
+            LocalDate lookbackDate = LocalDate.now().minusWeeks(lagWeeks);
+            String docId = "history_" + lookbackDate;
+
+            Map<String, Object> pastSnapshot = firestoreService.getDocument("marketSignalHistory", docId);
+            if (pastSnapshot == null) continue;
+
+            for (CommoditySignal current : currentSignals) {
+                String key = current.getCommodity().toLowerCase().replaceAll("[^a-z]", "_");
+                Object pastObj = pastSnapshot.get(key);
+                if (pastObj == null) continue;
+
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> past = (Map<String, Object>) pastObj;
+                    double pastDpi = ((Number) past.get("dpi")).doubleValue();
+                    double pastPrice = ((Number) past.get("price")).doubleValue();
+                    String pastStrength = (String) past.get("strength");
+                    double currentPrice = current.getCurrentPrice();
+
+                    double priceChange = pastPrice > 0 ? ((currentPrice - pastPrice) / pastPrice) * 100 : 0;
+
+                    // Determine outcome
+                    String outcome;
+                    if ("STRONG".equals(pastStrength) && priceChange > 1.0) {
+                        outcome = "CONFIRMED";
+                    } else if ("STRONG".equals(pastStrength) && priceChange < -1.0) {
+                        outcome = "CONTRADICTED";
+                    } else if ("MODERATE".equals(pastStrength) && priceChange > 0) {
+                        outcome = "CONFIRMED";
+                    } else if ("WEAK".equals(pastStrength) && Math.abs(priceChange) < 2.0) {
+                        outcome = "CONFIRMED";
+                    } else if ("NONE".equals(pastStrength) && Math.abs(priceChange) < 2.0) {
+                        outcome = "CONFIRMED";
+                    } else if (Math.abs(priceChange) < 0.5) {
+                        outcome = "NEUTRAL"; // Price didn't move enough to judge
+                    } else {
+                        outcome = "CONTRADICTED";
+                    }
+
+                    ValidationRecord vr = new ValidationRecord();
+                    vr.setCommodity(current.getCommodity());
+                    vr.setPredictionDate(lookbackDate.toString());
+                    vr.setDpiAtPrediction(pastDpi);
+                    vr.setStrengthAtPrediction(pastStrength);
+                    vr.setPriceAtPrediction(pastPrice);
+                    vr.setPriceAtPredictionDate(String.valueOf(past.getOrDefault("priceDate", lookbackDate.toString())));
+                    vr.setPriceNow(currentPrice);
+                    vr.setPriceNowDate(LocalDate.now().toString());
+                    vr.setPriceChangePercent(Math.round(priceChange * 100.0) / 100.0);
+                    vr.setOutcome(outcome);
+                    vr.setLagWeeks(lagWeeks);
+                    records.add(vr);
+                } catch (Exception e) {
+                    log.debug("Validation parse error for {}: {}", key, e.getMessage());
+                }
+            }
+        }
+
+        return records;
+    }
+
+    /**
+     * Count days of history by checking key dates (not scanning all 90).
+     */
+    private int countHistoryDays() {
+        try {
+            int count = 0;
+            // Check every 3rd day for efficiency (estimate = count × 3)
+            for (int i = 0; i < 90; i += 3) {
+                String docId = "history_" + LocalDate.now().minusDays(i);
+                if (firestoreService.getDocument("marketSignalHistory", docId) != null) {
+                    count++;
+                }
+            }
+            // First day is today (always exists after save), so minimum 1
+            return Math.max(1, count * 3); // Approximate
+        } catch (Exception e) {
+            return 1;
+        }
     }
 
     private CommoditySignal calculateSignal(String commodity, Map<String, Double> importers,

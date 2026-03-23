@@ -4508,6 +4508,45 @@ const SidebarManager = {
         html += `</div>`;
       });
 
+      // Validation History
+      if (data.validationHistory && data.validationHistory.length > 0) {
+        html += `<div class="glass-card" style="margin-top:var(--space-md);padding:18px 22px;">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">`;
+        html += `<h3 style="font-size:0.9rem;font-weight:600;margin:0;">Signal Validation</h3>`;
+        html += `<span style="font-size:0.7rem;color:var(--text-tertiary);">${data.dataPointsCollected || 1} days of data collected</span>`;
+        html += `</div>`;
+        html += `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;"><thead>`;
+        html += `<tr style="border-bottom:1px solid var(--border-color);">`;
+        html += `<th style="text-align:left;padding:6px 8px;color:var(--text-tertiary);">Commodity</th>`;
+        html += `<th style="text-align:center;padding:6px 8px;color:var(--text-tertiary);">Lag</th>`;
+        html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);">DPI Then</th>`;
+        html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);">Price Then</th>`;
+        html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);">Price Now</th>`;
+        html += `<th style="text-align:right;padding:6px 8px;color:var(--text-tertiary);">Δ Price</th>`;
+        html += `<th style="text-align:center;padding:6px 8px;color:var(--text-tertiary);">Outcome</th>`;
+        html += `</tr></thead><tbody>`;
+        const outcomeColors = { CONFIRMED: '#4ade80', CONTRADICTED: '#ff6b61', NEUTRAL: '#888', PENDING: '#f59e0b' };
+        data.validationHistory.forEach(v => {
+          const oc = outcomeColors[v.outcome] || '#888';
+          html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">`;
+          html += `<td style="padding:6px 8px;">${Utils.escapeHtml(v.commodity)}</td>`;
+          html += `<td style="padding:6px 8px;text-align:center;">${v.lagWeeks}w</td>`;
+          html += `<td style="padding:6px 8px;text-align:right;">${v.dpiAtPrediction.toFixed(0)} ${v.strengthAtPrediction}</td>`;
+          html += `<td style="padding:6px 8px;text-align:right;">${v.priceAtPrediction.toFixed(1)}</td>`;
+          html += `<td style="padding:6px 8px;text-align:right;">${v.priceNow.toFixed(1)}</td>`;
+          html += `<td style="padding:6px 8px;text-align:right;color:${v.priceChangePercent > 0 ? '#ff6b61' : v.priceChangePercent < 0 ? '#4ade80' : '#888'};">${v.priceChangePercent > 0 ? '+' : ''}${v.priceChangePercent.toFixed(2)}%</td>`;
+          html += `<td style="padding:6px 8px;text-align:center;"><span style="padding:2px 8px;border-radius:4px;background:${oc}22;color:${oc};font-weight:600;font-size:0.7rem;">${v.outcome}</span></td>`;
+          html += `</tr>`;
+        });
+        html += `</tbody></table></div>`;
+      } else {
+        // No validation yet — show data collection status
+        html += `<div class="glass-card" style="margin-top:var(--space-md);padding:18px 22px;text-align:center;color:var(--text-tertiary);">`;
+        html += `<p style="margin:0;font-size:0.82rem;">Recording signals... ${data.dataPointsCollected || 1} day(s) of data collected.</p>`;
+        html += `<p style="margin:6px 0 0;font-size:0.72rem;">Validation requires 4+ weeks of historical data. First results expected in ~4 weeks.</p>`;
+        html += `</div>`;
+      }
+
       // Methodology
       if (data.methodology) {
         html += `<div style="font-size:0.65rem;color:var(--text-tertiary);margin-top:8px;">${Utils.escapeHtml(data.methodology)}</div>`;
