@@ -6186,7 +6186,7 @@ const TopicReportGenerator = {
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minutes for live generation
       const response = await fetch(`/api/intelligence/topic-report?topic=${this.currentTopic}&region=${this.currentRegion}&days=7`, {
         signal: controller.signal
       });
@@ -6215,7 +6215,11 @@ const TopicReportGenerator = {
     } catch (error) {
       console.error('Failed to generate report:', error);
       if (status) status.textContent = 'Error';
-      alert('Failed to generate report. Please try again.');
+      if (error.name === 'AbortError') {
+        alert('Report generation is taking longer than expected. The report is still being generated server-side — try again in 30 seconds.');
+      } else {
+        alert('Failed to generate report: ' + error.message);
+      }
     } finally {
       if (btn) {
         btn.querySelector('.btn-text').style.display = 'inline';
