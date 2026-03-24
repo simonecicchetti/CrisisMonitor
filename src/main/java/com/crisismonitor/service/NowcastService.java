@@ -55,8 +55,24 @@ public class NowcastService {
         "proxy_change_7d", "proxy_change_14d", "proxy_change_30d",
         "proxy_trend_30d", "proxy_volatility_30d",
         "month_sin", "month_cos",
-        "sample_quality"
+        "sample_quality",
+        "is_lean_season" // V2: agricultural lean season indicator
     };
+
+    // Lean season months per country (period between harvests when food is scarce)
+    private static final Map<String, int[]> LEAN_SEASONS = Map.ofEntries(
+        Map.entry("MLI", new int[]{6,7,8}), Map.entry("BFA", new int[]{6,7,8}),
+        Map.entry("NER", new int[]{6,7,8}), Map.entry("TCD", new int[]{6,7,8}),
+        Map.entry("NGA", new int[]{6,7,8}), Map.entry("CMR", new int[]{6,7,8}),
+        Map.entry("ETH", new int[]{3,4,5,10,11}), Map.entry("SOM", new int[]{3,4,5,10,11}),
+        Map.entry("KEN", new int[]{3,4,5,10,11}), Map.entry("UGA", new int[]{1,2,3}),
+        Map.entry("SSD", new int[]{5,6,7}), Map.entry("SDN", new int[]{6,7,8}),
+        Map.entry("COD", new int[]{2,3,4}), Map.entry("CAF", new int[]{5,6,7}),
+        Map.entry("MOZ", new int[]{1,2,3}), Map.entry("ZWE", new int[]{1,2,3}),
+        Map.entry("AFG", new int[]{3,4,5}), Map.entry("HTI", new int[]{3,4,5}),
+        Map.entry("GTM", new int[]{4,5,6,7}), Map.entry("HND", new int[]{5,6,7}),
+        Map.entry("SLV", new int[]{5,6,7}), Map.entry("NIC", new int[]{5,6,7})
+    );
 
     @PostConstruct
     public void init() {
@@ -362,6 +378,14 @@ public class NowcastService {
 
         // Sample quality (default 1.0 = good)
         features[25] = 1.0f;
+
+        // V2: Lean season indicator (agricultural calendar)
+        int[] leanMonths = LEAN_SEASONS.get(iso3);
+        if (leanMonths != null) {
+            for (int lm : leanMonths) {
+                if (lm == month) { features[26] = 1.0f; break; }
+            }
+        }
 
         // Run ensemble inference (average of multiple models)
         try {
