@@ -63,10 +63,13 @@ public class NowcastService {
         try {
             env = OrtEnvironment.getEnvironment();
 
-            // Load ensemble models (4 models, averaged for better accuracy)
+            // Load ensemble models (3-model: base + quantile + xgboost)
+            // Huber removed — it degraded ensemble performance (MAE 5.12 individually,
+            // crisis detection only 85.9%). 3-model achieves MAE 1.29 vs 4-model's 1.95.
             String[] ensembleFiles = {
-                "ml/ensemble_base.onnx", "ml/ensemble_huber.onnx",
-                "ml/ensemble_xgboost.onnx", "ml/ensemble_quantile.onnx"
+                "ml/ensemble_base.onnx",
+                "ml/ensemble_quantile.onnx",
+                "ml/ensemble_xgboost.onnx"
             };
             for (String file : ensembleFiles) {
                 try {
