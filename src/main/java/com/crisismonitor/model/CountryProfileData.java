@@ -43,6 +43,10 @@ public class CountryProfileData {
     private String summary;
     private String scoreSource;
 
+    // Nowcast ML
+    private Double nowcastPrediction;  // Predicted 90d % change
+    private Integer nowcastAmplifier;  // How much it boosted food score
+
     // Trend
     private String trend;              // rising, falling, stable, new
     private String trendIcon;

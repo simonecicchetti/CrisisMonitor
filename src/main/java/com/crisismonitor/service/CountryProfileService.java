@@ -178,7 +178,9 @@ public class CountryProfileService {
                        .climateReason(risk.getClimateReason())
                        .economicReason(risk.getEconomicReason())
                        .summary(risk.getSummary())
-                       .scoreSource(risk.getScoreSource());
+                       .scoreSource(risk.getScoreSource())
+                       .nowcastPrediction(risk.getNowcastPrediction())
+                       .nowcastAmplifier(risk.getNowcastAmplifier());
             }
         } catch (Exception e) {
             log.debug("No risk score for {}: {}", iso3, e.getMessage());

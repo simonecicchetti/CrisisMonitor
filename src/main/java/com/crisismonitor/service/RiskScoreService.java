@@ -415,7 +415,7 @@ public class RiskScoreService {
         // problem of geometric mean. p=1 is arithmetic, p=2 is quadratic. p=1.5 is
         // the sweet spot: countries with one extreme signal score higher than arithmetic
         // mean, matching real-world severity (INFORM Risk methodology research).
-        // Weights: Conflict 30%, Food Security 30%, Climate 25%, Economic 15%
+        // Weights: Conflict 35%, Food Security 35%, Climate 15%, Economic 15%
         // Cap economic contribution at 60 to prevent pure currency shocks from inflating scores.
         // Exception: countries at war (conflict baseline >= 60) where economic collapse compounds
         // the humanitarian crisis — allow up to 80 to reflect the compounding effect.
@@ -768,20 +768,31 @@ public class RiskScoreService {
                 double predicted = nowcast.getPredictedChange90d();
                 rs.setNowcastPrediction(predicted);
 
-                // Only amplify when significant worsening predicted (>3pp, well above MAE=1.05)
-                if (predicted > 3.0) {
-                    int amp = (int) Math.min(15, predicted * 0.8);
+                // Amplify when worsening predicted above noise floor (>1.5pp, ~1.5x MAE=1.05)
+                if (predicted > 1.5) {
+                    int amp = (int) Math.min(15, predicted * 1.0);
                     int oldFood = rs.getFoodSecurityScore();
                     int newFood = Math.min(100, oldFood + amp);
                     rs.setFoodSecurityScore(newFood);
                     rs.setNowcastAmplifier(amp);
 
                     // Recalculate overall score with amplified food
+                    // Use same weight redistribution and economic cap logic as other paths
                     double p = 1.5;
-                    double powerSum = 0.35 * Math.pow(Math.max(1, rs.getConflictScore()), p)
-                                    + 0.35 * Math.pow(Math.max(1, newFood), p)
-                                    + 0.15 * Math.pow(Math.max(1, rs.getClimateScore()), p)
-                                    + 0.15 * Math.pow(Math.max(1, Math.min(rs.getEconomicScore(), 60)), p);
+                    int conflict = rs.getConflictScore();
+                    double wC = 0.35, wF = 0.35, wCl = 0.15, wE = 0.15;
+                    if (conflict <= 5) {
+                        wF += wC * 0.5;
+                        wE += wC * 0.5;
+                        wC = 0;
+                    }
+                    int conflictBaseVal = CONFLICT_BASELINE.getOrDefault(rs.getIso3(), 0);
+                    int eCap = conflictBaseVal >= 60 ? 80 : 60;
+                    int eCapped = Math.min(rs.getEconomicScore(), eCap);
+                    double powerSum = wC * Math.pow(Math.max(1, conflict), p)
+                                    + wF * Math.pow(Math.max(1, newFood), p)
+                                    + wCl * Math.pow(Math.max(1, rs.getClimateScore()), p)
+                                    + wE * Math.pow(Math.max(1, eCapped), p);
                     int newOverall = (int) Math.pow(powerSum, 1.0 / p);
                     rs.setScore(Math.max(rs.getScore(), newOverall)); // Only increase, never decrease
                     rs.setRiskLevel(rs.getScore() >= 60 ? "CRITICAL" : rs.getScore() >= 48 ? "ALERT" :
