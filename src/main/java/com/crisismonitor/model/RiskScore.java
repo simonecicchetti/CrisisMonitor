@@ -67,6 +67,10 @@ public class RiskScore {
     private String trend;                 // "rising", "falling", "stable", "new"
     private String trendIcon;             // "↑", "↓", "→", "●"
 
+    // ===== NOWCAST ML =====
+    private Double nowcastPrediction;     // Predicted 90d % change
+    private Integer nowcastAmplifier;     // How much it boosted food score
+
     // ===== AI SCORING (Qwen) =====
     private String foodReason;        // Why this food score
     private String conflictReason;    // Why this conflict score

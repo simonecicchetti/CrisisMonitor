@@ -11,17 +11,22 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Risk Score Service - Predictive crisis scoring engine
+ * Risk Score Service - Unified crisis scoring engine
  *
- * Combines multiple leading indicators using weighted power mean (p=1.5):
- * 1. Conflict (30%) - GDELT + ACLED baselines + multi-signal
- * 2. Food Security (30%) - IPC phase + WFP FCS/rCSI fallback
- * 3. Climate (25%) - precipitation anomaly + NDVI calibration
- * 4. Economic (15%) - currency devaluation (capped at 60)
+ * Three-layer architecture:
+ * Layer 1 (Formula): Real-time data → deterministic scores
+ *   - Conflict (35%) - GDELT + ACLED baselines + multi-signal
+ *   - Food Security (35%) - WFP FCS/rCSI + Nowcast ML trajectory
+ *   - Climate (15%) - precipitation anomaly + NDVI calibration
+ *   - Economic (15%) - currency devaluation (capped at 60)
  *
- * Power mean naturally emphasizes extreme component values without
- * the zero-breakage problem of geometric mean (INFORM methodology).
- * Humanitarian gate reduces scores when only climate/economic are elevated.
+ * Layer 2 (ML Nowcast): 3-model ensemble predicts 90-day food insecurity trajectory.
+ *   Amplifies food score when worsening predicted (early warning).
+ *
+ * Layer 3 (AI Analyst): LLM + web search produces contextual scores with reasoning.
+ *   Overlays formula scores weekly. Verified conflicts/crises set minimum floors.
+ *
+ * Scoring: Weighted power mean (p=1.5). Humanitarian gate reduces pure climate/economic scores.
  */
 @Slf4j
 @Service
@@ -43,6 +48,10 @@ public class RiskScoreService {
     @org.springframework.beans.factory.annotation.Autowired
     @org.springframework.context.annotation.Lazy
     private QwenScoringService qwenScoringService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private NowcastService nowcastService;
 
     // ISO2 to ISO3 mapping - all monitored countries
     private static final Map<String, String> ISO2_TO_ISO3 = Map.ofEntries(
@@ -377,6 +386,7 @@ public class RiskScoreService {
 
         String foodSource = foodSecurityScore == foodScoreA ? "WFP_FCS" :
                            foodSecurityScore == foodScoreB ? "WFP_Severity" : "WorldBank_SFI";
+        // (Nowcast amplifier applied as final step in getAllRiskScores, after Qwen overlay)
         log.debug("Food score for {}: A(FCS)={}, B(Tier)={}, C(WB)={} → max={} (source={})",
                 iso3, foodScoreA, foodScoreB, foodScoreC, foodSecurityScore, foodSource);
 
@@ -561,6 +571,7 @@ public class RiskScoreService {
                 .currencyChange30d(currencyChange)
                 .gdeltZScore(gdeltZScore)
                 .ipcPhase(ipcPhase)
+                .nowcastAmplifier(null)  // Set by applyNowcastAmplifier() after Qwen overlay
                 .calculatedAt(LocalDateTime.now())
                 .build();
     }
@@ -589,8 +600,12 @@ public class RiskScoreService {
             }
         }
 
-        // Overlay Qwen AI scores (replaces formula scores where available)
+        // Layer 3: Overlay Qwen AI scores (replaces formula scores where available)
         overlayQwenScores(scores);
+
+        // Layer 2: Apply Nowcast ML trajectory amplifier (AFTER Qwen overlay)
+        // This is the final step — amplifies food score regardless of source (formula or Qwen)
+        applyNowcastAmplifier(scores);
 
         // Sort by score descending (highest risk first)
         scores.sort((a, b) -> Integer.compare(b.getScore(), a.getScore()));
@@ -652,10 +667,14 @@ public class RiskScoreService {
                     wEcon += wConflict * 0.5;
                     wConflict = 0;
                 }
+                // Apply same economic cap as formula path
+                int conflictFloorVal = CONFLICT_BASELINE.getOrDefault(rs.getIso3(), 0);
+                int econCap = conflictFloorVal >= 60 ? 80 : 60;
+                int econCapped = Math.min(economicScore, econCap);
                 double powerSum = wConflict * Math.pow(Math.max(1, finalConflict), p)
                                 + wFood * Math.pow(Math.max(1, foodScore), p)
                                 + wClimate * Math.pow(Math.max(1, climateScore), p)
-                                + wEcon * Math.pow(Math.max(1, economicScore), p);
+                                + wEcon * Math.pow(Math.max(1, econCapped), p);
                 int recalcOverall = (int) Math.pow(powerSum, 1.0 / p);
                 rs.setScore(recalcOverall);
 
@@ -726,6 +745,59 @@ public class RiskScoreService {
                 .filter(RiskScore::isConfirmed)
                 .filter(s -> s.getScore() >= 51)
                 .toList();
+    }
+
+    /**
+     * Layer 2: Apply Nowcast ML trajectory amplifier to food scores.
+     * Runs AFTER Qwen overlay so it applies to ALL countries regardless of score source.
+     * If ML predicts worsening >3pp in 90 days, amplifies food score proportionally.
+     * Only amplifies, never reduces (conservative early warning).
+     */
+    private void applyNowcastAmplifier(List<RiskScore> scores) {
+        try {
+            var nowcasts = nowcastService.getNowcastAll();
+            if (nowcasts == null) return;
+
+            int amplified = 0;
+            for (RiskScore rs : scores) {
+                NowcastResult nowcast = nowcasts.stream()
+                        .filter(n -> rs.getIso3().equals(n.getIso3()))
+                        .findFirst().orElse(null);
+                if (nowcast == null || nowcast.getPredictedChange90d() == null) continue;
+
+                double predicted = nowcast.getPredictedChange90d();
+                rs.setNowcastPrediction(predicted);
+
+                // Only amplify when significant worsening predicted (>3pp, well above MAE=1.05)
+                if (predicted > 3.0) {
+                    int amp = (int) Math.min(15, predicted * 0.8);
+                    int oldFood = rs.getFoodSecurityScore();
+                    int newFood = Math.min(100, oldFood + amp);
+                    rs.setFoodSecurityScore(newFood);
+                    rs.setNowcastAmplifier(amp);
+
+                    // Recalculate overall score with amplified food
+                    double p = 1.5;
+                    double powerSum = 0.35 * Math.pow(Math.max(1, rs.getConflictScore()), p)
+                                    + 0.35 * Math.pow(Math.max(1, newFood), p)
+                                    + 0.15 * Math.pow(Math.max(1, rs.getClimateScore()), p)
+                                    + 0.15 * Math.pow(Math.max(1, Math.min(rs.getEconomicScore(), 60)), p);
+                    int newOverall = (int) Math.pow(powerSum, 1.0 / p);
+                    rs.setScore(Math.max(rs.getScore(), newOverall)); // Only increase, never decrease
+                    rs.setRiskLevel(rs.getScore() >= 60 ? "CRITICAL" : rs.getScore() >= 48 ? "ALERT" :
+                                   rs.getScore() >= 38 ? "WARNING" : rs.getScore() >= 22 ? "WATCH" : "STABLE");
+
+                    amplified++;
+                    log.info("Nowcast amplifier {}: predicted={}, food {}→{}, overall→{}",
+                            rs.getIso3(), String.format("%+.1f", predicted), oldFood, newFood, rs.getScore());
+                }
+            }
+            if (amplified > 0) {
+                log.info("Nowcast amplifier: {}/{} countries had food score boosted", amplified, scores.size());
+            }
+        } catch (Exception e) {
+            log.debug("Nowcast amplifier skipped: {}", e.getMessage());
+        }
     }
 
     /**

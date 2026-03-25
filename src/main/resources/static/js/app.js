@@ -3940,10 +3940,10 @@ const CountryDetailManager = {
     // === SCORE BREAKDOWN: 4-driver bars ===
     if (hasScore) {
       const drivers = [
-        { label: 'Food Security', score: p.foodSecurityScore, weight: '30%', color: 'var(--status-critical)', reason: p.foodReason },
-        { label: 'Climate', score: p.climateScore, weight: '25%', color: '#64d2ff', reason: p.climateReason },
-        { label: 'Conflict', score: p.conflictScore, weight: '25%', color: 'var(--status-high)', reason: p.conflictReason },
-        { label: 'Economic', score: p.economicScore, weight: '20%', color: 'var(--accent-purple)', reason: p.economicReason }
+        { label: 'Food Security', score: p.foodSecurityScore, weight: '35%', color: 'var(--status-critical)', reason: p.foodReason, amplifier: p.nowcastAmplifier },
+        { label: 'Conflict', score: p.conflictScore, weight: '35%', color: 'var(--status-high)', reason: p.conflictReason },
+        { label: 'Climate', score: p.climateScore, weight: '15%', color: '#64d2ff', reason: p.climateReason },
+        { label: 'Economic', score: p.economicScore, weight: '15%', color: 'var(--accent-purple)', reason: p.economicReason }
       ];
       html += `<div class="country-section">
         <h4>Risk Score Breakdown</h4>
@@ -3954,12 +3954,13 @@ const CountryDetailManager = {
               <div class="cp-driver-bar-bg">
                 <div class="cp-driver-bar" style="width: ${d.score || 0}%; background: ${d.color};"></div>
               </div>
-              <span class="cp-driver-score">${d.score != null ? d.score : '-'}</span>
+              <span class="cp-driver-score">${d.score != null ? d.score : '-'}${d.amplifier ? `<span style="font-size:0.6rem;color:#30d158;margin-left:2px;">+${d.amplifier}</span>` : ''}</span>
             </div>
+            ${d.amplifier ? `<div style="font-size:0.68rem;color:#30d158;margin:-4px 0 4px 2px;">ML Nowcast: worsening predicted (+${p.nowcastPrediction ? p.nowcastPrediction.toFixed(1) : '?'}pp in 90d)</div>` : ''}
             ${d.reason ? `<div style="font-size:0.72rem;color:var(--text-tertiary);margin:-4px 0 8px 0;line-height:1.3;padding-left:2px;">${Utils.escapeHtml(d.reason)}</div>` : ''}
           `).join('')}
         </div>
-        ${p.drivers && p.drivers.length ? `<div class="cp-driver-tags">${p.drivers.map(d => `<span class="cp-driver-tag">${Utils.escapeHtml(d)}</span>`).join('')}${p.scoreSource === 'qwen' ? '<span style="font-size:0.6rem;padding:2px 6px;border-radius:4px;background:rgba(100,210,255,0.15);color:#64d2ff;margin-left:8px;">AI Scored</span>' : ''}</div>` : ''}
+        ${p.drivers && p.drivers.length ? `<div class="cp-driver-tags">${p.drivers.map(d => `<span class="cp-driver-tag">${Utils.escapeHtml(d)}</span>`).join('')}${p.scoreSource === 'qwen' ? '<span style="font-size:0.6rem;padding:2px 6px;border-radius:4px;background:rgba(100,210,255,0.15);color:#64d2ff;margin-left:8px;">AI Scored</span>' : '<span style="font-size:0.6rem;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,0.05);color:var(--text-tertiary);margin-left:8px;">Formula</span>'}${p.nowcastAmplifier ? '<span style="font-size:0.6rem;padding:2px 6px;border-radius:4px;background:rgba(48,209,88,0.15);color:#30d158;margin-left:4px;">ML Enhanced</span>' : ''}</div>` : ''}
         ${p.summary ? `<div style="margin-top:10px;padding:10px 12px;background:rgba(100,210,255,0.06);border-radius:8px;font-size:0.8rem;color:var(--text-secondary);line-height:1.5;"><span style="font-size:0.65rem;font-weight:600;color:#64d2ff;text-transform:uppercase;margin-right:6px;">AI Assessment</span>${Utils.escapeHtml(p.summary)}</div>` : ''}
       </div>`;
     }
@@ -3987,6 +3988,15 @@ const CountryDetailManager = {
       }
       if (p.rcsiPrevalence) {
         html += `<div class="metric"><span class="metric-label">Crisis coping (rCSI)</span><span class="metric-value">${(p.rcsiPrevalence * 100).toFixed(1)}%${p.rcsiPeople ? ` (${this._fmtNum(p.rcsiPeople)})` : ''}</span></div>`;
+      }
+      if (p.nowcastPrediction != null) {
+        const pred = p.nowcastPrediction;
+        const predColor = pred > 5 ? 'var(--status-critical)' : pred > 2 ? 'var(--status-high)' : pred < -2 ? '#30d158' : 'var(--text-secondary)';
+        const predLabel = pred > 5 ? 'Significant worsening' : pred > 2 ? 'Moderate worsening' : pred > 0 ? 'Slight worsening' : pred < -2 ? 'Improving' : 'Stable';
+        html += `<div class="metric" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border-subtle);">
+          <span class="metric-label">90-day ML Forecast</span>
+          <span class="metric-value" style="color:${predColor}">${pred > 0 ? '+' : ''}${pred.toFixed(1)}pp <span style="font-size:0.75rem;opacity:0.7;">${predLabel}</span></span>
+        </div>`;
       }
       html += `</div></div>`;
     }
@@ -5505,9 +5515,9 @@ const EWPanelManager = {
 
     // Build sub-scores display
     const subScores = [];
-    if (score.conflictScore != null) subScores.push({ label: 'Conflict', value: score.conflictScore, weight: '30%' });
-    if (score.foodSecurityScore != null) subScores.push({ label: 'Food', value: score.foodSecurityScore, weight: '30%' });
-    if (score.climateScore != null) subScores.push({ label: 'Climate', value: score.climateScore, weight: '25%' });
+    if (score.foodSecurityScore != null) subScores.push({ label: 'Food', value: score.foodSecurityScore, weight: '35%' });
+    if (score.conflictScore != null) subScores.push({ label: 'Conflict', value: score.conflictScore, weight: '35%' });
+    if (score.climateScore != null) subScores.push({ label: 'Climate', value: score.climateScore, weight: '15%' });
     if (score.economicScore != null) subScores.push({ label: 'Economic', value: score.economicScore, weight: '15%' });
 
     const subScoresHtml = subScores.length > 0 ? `
