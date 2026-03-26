@@ -7189,7 +7189,22 @@ const NowcastManager = {
       return;
     }
 
-    tbody.innerHTML = filtered.map(p => {
+    // Group by region
+    const regionOrder = ['East Africa', 'West Africa', 'Central Africa', 'Southern Africa', 'MENA', 'South Asia', 'East & SE Asia', 'LAC', 'Europe', 'Pacific'];
+    const grouped = {};
+    filtered.forEach(p => { const r = p.region || 'Other'; if (!grouped[r]) grouped[r] = []; grouped[r].push(p); });
+    Object.values(grouped).forEach(arr => arr.sort((a, b) => (a.countryName || '').localeCompare(b.countryName || '')));
+
+    let html = '';
+    [...regionOrder, ...Object.keys(grouped).filter(r => !regionOrder.includes(r))].forEach(reg => {
+      if (!grouped[reg] || !grouped[reg].length) return;
+      html += `<tr><td colspan="8" style="padding:12px 12px 6px;font-size:0.72rem;font-weight:600;color:#3ea6ff;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid rgba(62,166,255,0.2);">${reg} (${grouped[reg].length})</td></tr>`;
+      html += grouped[reg].map(p => this._renderNowcastRow(p)).join('');
+    });
+    tbody.innerHTML = html;
+  },
+
+  _renderNowcastRow(p) {
       const change = p.predictedChange90d;
       const changeColor = change > 5 ? 'var(--accent-red)' : change > 0 ? 'var(--accent-orange)' : change < -5 ? '#4ade80' : change < 0 ? '#86efac' : 'var(--text-secondary)';
       const changeStr = change != null ? (change > 0 ? '+' : '') + change.toFixed(1) + '%' : '-';
@@ -7224,7 +7239,6 @@ const NowcastManager = {
         <td style="padding:10px 6px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-secondary);">${projVal}</td>
         <td style="padding:10px 12px;text-align:center;color:${p._caveat ? 'var(--accent-orange)' : trendColor};font-size:0.9rem;">${p._caveat ? '&#9888;' : trendIcon}</td>
       </tr>${caveatRow}`;
-    }).join('');
   }
 };
 
