@@ -968,7 +968,7 @@ public class DailyBriefService {
         private int promptVersion;
     }
 
-    private static final int NOWCAST_PROMPT_VERSION = 3;
+    private static final int NOWCAST_PROMPT_VERSION = 4; // v4: includes external risk divergence data
 
     /**
      * Generate or retrieve cached nowcast analytical brief with language support.
@@ -1121,6 +1121,34 @@ public class DailyBriefService {
                 .append(String.format("%.1f%%", p.getCurrentProxy()))
                 .append(" (trend: ").append(String.format("%+.1fpp", p.getPredictedChange90d())).append(")\n"));
 
+        // EXTERNAL RISK DIVERGENCE — countries where ML says stable but other signals disagree
+        try {
+            @SuppressWarnings("unchecked")
+            List<com.crisismonitor.model.RiskScore> riskScores = cacheWarmupService.getFallback("allRiskScores");
+            if (riskScores != null) {
+                List<com.crisismonitor.model.RiskScore> divergent = riskScores.stream()
+                    .filter(rs -> rs.getNowcastCaveat() != null)
+                    .sorted((a, b) -> Integer.compare(b.getScore(), a.getScore()))
+                    .collect(Collectors.toList());
+                if (!divergent.isEmpty()) {
+                    ctx.append("\nEXTERNAL RISK DIVERGENCE (").append(divergent.size())
+                       .append(" countries where ML predicts stable but other signals disagree):\n");
+                    ctx.append("IMPORTANT: The ML model only sees survey trends. These countries have EXTERNAL risk factors ");
+                    ctx.append("(conflict, climate, AI assessment) that the model cannot capture. Mention these in your analysis.\n");
+                    for (var rs : divergent) {
+                        ctx.append("  ").append(rs.getCountryName()).append(": ");
+                        ctx.append("crisis score=").append(rs.getScore()).append("/100 (").append(rs.getRiskLevel()).append("), ");
+                        ctx.append("food=").append(rs.getFoodSecurityScore()).append(", ");
+                        ctx.append("conflict=").append(rs.getConflictScore()).append(", ");
+                        ctx.append("climate=").append(rs.getClimateScore()).append(". ");
+                        ctx.append("Warning: ").append(rs.getNowcastCaveat()).append("\n");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not add divergence data to nowcast brief: {}", e.getMessage());
+        }
+
         String prompt = "You are a food security data analyst interpreting ML model predictions.\n\n" +
             "HOW TO READ THIS DATA:\n" +
             "- 'Proxy' = composite food insecurity indicator combining:\n" +
@@ -1150,10 +1178,13 @@ public class DailyBriefService {
                 "Use the severity thresholds to give context: 'pushing toward crisis levels' or 'already in emergency range'.>\",\n" +
             "  \"paragraph2\": \"<80-100 words: the broader picture — regional patterns, high-severity countries, improving outliers. " +
                 "Note where confidence is LOW (wider uncertainty). Flag countries where rCSI is missing (proxy may understate). " +
+                "CRITICAL: if EXTERNAL RISK DIVERGENCE data is present, you MUST mention it. These are countries where " +
+                "the ML model says stable but conflict, climate, or AI assessment indicates otherwise. " +
+                "Name the top 3-4 divergent countries and what the risk is. " +
                 "One sentence on operational priority: which countries need pre-positioned resources based on this data.>\"\n" +
             "}\n\n" +
             "RULES:\n" +
-            "- ONLY model data. No news, no external facts, no agency names.\n" +
+            "- Use model data AND external risk divergence data if provided. No news, no agency names.\n" +
             "- Use percentage points (+5.3pp) and proxy values (38.4%).\n" +
             "- Apply severity thresholds to make numbers meaningful: don't just say '38%', say 'in crisis range at 38%'.\n" +
             "- Note data quality: flag LOW confidence predictions and missing rCSI.\n" +
