@@ -376,6 +376,7 @@ public class MarketSignalService {
         List<CommodityDef> commodities = List.of(
             new CommodityDef("Cereals (Wheat)", WHEAT_IMPORTERS, WHEAT_EXPORTERS, "cerealsIndex"),
             new CommodityDef("Maize", MAIZE_IMPORTERS, MAIZE_EXPORTERS, "cerealsIndex"),
+            new CommodityDef("Rice", RICE_IMPORTERS, Map.of(), "cerealsIndex"),
             new CommodityDef("Vegetable Oils", OIL_IMPORTERS, Map.of(), "oilsIndex")
         );
 
@@ -447,7 +448,7 @@ public class MarketSignalService {
                 else if ("STRONG".equals(strength) && priceChange < -1.0) outcome = "CONTRADICTED";
                 else if ("MODERATE".equals(strength) && priceChange > 0) outcome = "CONFIRMED";
                 else if (("WEAK".equals(strength) || "NONE".equals(strength)) && Math.abs(priceChange) < 2.0) outcome = "CONFIRMED";
-                else if ("NONE".equals(strength) && priceChange > 3.0) outcome = "MISSED";
+                else if ("NONE".equals(strength) && priceChange > 3.0) outcome = "SUPPLY-DRIVEN";
                 else if (Math.abs(priceChange) < 0.3) outcome = "NEUTRAL";
                 else outcome = "MIXED";
 

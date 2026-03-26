@@ -1167,7 +1167,7 @@
                 var fcs = p.fcsPrevalence != null ? p.fcsPrevalence.toFixed(1) + '%' : '-';
                 var rcsi = p.rcsiPrevalence != null ? p.rcsiPrevalence.toFixed(1) + '%' : '-';
                 var proj = p.projectedProxy != null ? p.projectedProxy.toFixed(1) + '%' : '-';
-                var riskBadge = caveat ? '<span style="font-size:0.58rem;color:#ff9500;margin-left:4px;">risks</span>' : '';
+                var riskBadge = caveat ? ' <span style="font-size:0.58rem;color:#ff9500;margin-left:4px;">risks</span>' : '';
                 var caveatRow = caveat ? '<tr style="background:rgba(255,159,10,0.04);"><td colspan="8" style="padding:2px 12px 8px 30px;font-size:0.68rem;color:#ff9500;line-height:1.3;"><b>External risks:</b> '+caveat+'</td></tr>' : '';
                 return '<tr style="border-bottom:'+(caveat?'none':'1px solid rgba(255,255,255,0.06)')+';transition:background 0.15s;" onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'transparent\'">' +
                   '<td style="padding:8px 12px 8px 20px;font-weight:500;font-size:0.82rem;"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:'+confDot+';margin-right:6px;vertical-align:middle;"></span>'+(p.countryName||p.iso3)+riskBadge+'</td>' +

@@ -4523,7 +4523,8 @@ const SidebarManager = {
         // Price + sparkline
         html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">`;
         html += `<div>`;
-        html += `<span style="font-size:0.78rem;color:var(--text-tertiary);">Price Index </span>`;
+        const priceLabel = (signal.commodity === 'Maize' || signal.commodity === 'Rice') ? 'FAO Cereals Index ' : 'Price Index ';
+        html += `<span style="font-size:0.78rem;color:var(--text-tertiary);">${priceLabel}</span>`;
         html += `<span style="font-size:1.1rem;font-weight:700;color:var(--text-primary);">${signal.currentPrice.toFixed(1)}</span>`;
         html += `<span style="font-size:0.78rem;font-weight:600;color:${dirColor};margin-left:6px;">${trend6m > 0 ? '▲' : trend6m < 0 ? '▼' : '—'} ${trend6m > 0 ? '+' : ''}${trend6m}%</span>`;
         html += `</div>`;
@@ -4536,8 +4537,8 @@ const SidebarManager = {
           html += `⚠ ${Utils.escapeHtml(signal.exporterRisk)}</div>`;
         }
 
-        // Contributors as visual bars
-        if (signal.topContributors && signal.topContributors.length > 0) {
+        // Contributors as visual bars (only show when signal is active)
+        if (signal.topContributors && signal.topContributors.length > 0 && signal.signalStrength !== 'NONE') {
           html += `<div style="margin-top:8px;">`;
           signal.topContributors.forEach(c => {
             const isExporter = c.type === 'EXPORTER_RISK';
@@ -4574,7 +4575,7 @@ const SidebarManager = {
         // Compact validation rows
         html += `<div style="font-size:0.75rem;">`;
         vh.forEach(v => {
-          const oc = { CONFIRMED: '#4ade80', CONTRADICTED: '#ff6b61', MISSED: '#f59e0b', NEUTRAL: '#888', MIXED: '#888' };
+          const oc = { CONFIRMED: '#4ade80', CONTRADICTED: '#ff6b61', 'SUPPLY-DRIVEN': '#f59e0b', MISSED: '#f59e0b', NEUTRAL: '#888', MIXED: '#888' };
           const outcomeColor = oc[v.outcome] || '#888';
           html += `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.04);">`;
           html += `<span style="flex:1;color:var(--text-secondary);">${v.commodity}</span>`;
