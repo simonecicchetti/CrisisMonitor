@@ -7095,10 +7095,28 @@ const NowcastManager = {
   async load() {
     console.log('[Nowcast] fetching /api/nowcast/food-insecurity...');
     try {
-      const resp = await fetch('/api/nowcast/food-insecurity');
+      const [resp, riskResp] = await Promise.all([
+        fetch('/api/nowcast/food-insecurity'),
+        fetch('/api/risk/scores')
+      ]);
       console.log('[Nowcast] response status:', resp.status);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       this.data = await resp.json();
+      // Merge caveat data from risk scores
+      if (riskResp.ok) {
+        const riskData = await riskResp.json();
+        const riskMap = {};
+        (riskData.data || []).forEach(r => { riskMap[r.iso3] = r; });
+        (this.data.predictions || []).forEach(p => {
+          const r = riskMap[p.iso3];
+          if (r) {
+            p._caveat = r.nowcastCaveat;
+            p._foodScore = r.foodSecurityScore;
+            p._climateScore = r.climateScore;
+            p._conflictScore = r.conflictScore;
+          }
+        });
+      }
       console.log('[Nowcast] loaded', this.data.predictions?.length, 'predictions');
       this.render();
     } catch (e) {
@@ -7184,21 +7202,28 @@ const NowcastManager = {
       const rcsiVal = p.rcsiPrevalence != null ? p.rcsiPrevalence.toFixed(1) + '%' : '-';
       const projVal = p.projectedProxy != null ? p.projectedProxy.toFixed(1) + '%' : '-';
 
-      return `<tr style="border-bottom:1px solid var(--border-color);transition:background 0.15s;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='transparent'">
+      const caveatRow = p._caveat ? `<tr style="background:rgba(255,159,10,0.04);">
+        <td colspan="8" style="padding:2px 12px 8px 30px;font-size:0.7rem;color:var(--accent-orange);line-height:1.3;">
+          <span style="font-weight:600;">External risks:</span> ${p._caveat}
+        </td>
+      </tr>` : '';
+
+      return `<tr style="border-bottom:${p._caveat ? 'none' : '1px solid var(--border-color)'};transition:background 0.15s;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='transparent'">
         <td style="padding:10px 12px;font-weight:500;">
           <div style="display:flex;align-items:center;gap:6px;">
-            <span style="width:6px;height:6px;border-radius:50%;background:${confDot};flex-shrink:0;" title="${p.confidence || 'LOW'} confidence"></span>
+            <span style="width:6px;height:6px;border-radius:50%;background:${p._caveat ? 'var(--accent-orange)' : confDot};flex-shrink:0;" title="${p._caveat ? 'External risks detected' : (p.confidence || 'LOW') + ' confidence'}"></span>
             ${p.countryName || p.iso3}
+            ${p._caveat ? '<span style="font-size:0.6rem;color:var(--accent-orange);margin-left:4px;">risks</span>' : ''}
           </div>
         </td>
         <td style="padding:10px 6px;color:var(--text-tertiary);font-size:0.78rem;">${p.region || '-'}</td>
         <td style="padding:10px 6px;text-align:right;font-variant-numeric:tabular-nums;">${fcsVal}</td>
         <td style="padding:10px 6px;text-align:right;font-variant-numeric:tabular-nums;">${rcsiVal}</td>
         <td style="padding:10px 6px;text-align:right;font-weight:500;font-variant-numeric:tabular-nums;">${proxyVal}</td>
-        <td style="padding:10px 6px;text-align:right;font-weight:600;color:${changeColor};font-variant-numeric:tabular-nums;">${changeStr}</td>
+        <td style="padding:10px 6px;text-align:right;font-weight:600;color:${p._caveat ? 'var(--accent-orange)' : changeColor};font-variant-numeric:tabular-nums;">${changeStr}</td>
         <td style="padding:10px 6px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-secondary);">${projVal}</td>
-        <td style="padding:10px 12px;text-align:center;color:${trendColor};font-size:0.9rem;">${trendIcon}</td>
-      </tr>`;
+        <td style="padding:10px 12px;text-align:center;color:${p._caveat ? 'var(--accent-orange)' : trendColor};font-size:0.9rem;">${p._caveat ? '&#9888;' : trendIcon}</td>
+      </tr>${caveatRow}`;
     }).join('');
   }
 };

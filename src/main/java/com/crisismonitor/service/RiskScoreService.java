@@ -826,8 +826,8 @@ public class RiskScoreService {
                 boolean climateRisk = rs.getClimateScore() >= 50;
                 boolean conflictRisk = rs.getConflictScore() >= 50;
 
-                if (predicted <= 0 && (foodGap > 20 || climateRisk || conflictRisk)) {
-                    // ML says stable/improving but signals say otherwise
+                if (predicted < 2.0 && (foodGap > 20 || climateRisk || conflictRisk)) {
+                    // ML says stable/slight change but external signals say otherwise
                     StringBuilder caveat = new StringBuilder("Survey trends stable but ");
                     List<String> risks = new ArrayList<>();
                     if (climateRisk) risks.add("severe climate stress detected");
