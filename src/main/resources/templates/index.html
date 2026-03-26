@@ -1077,27 +1077,130 @@
                 </div>
             </div>
 
-            <!-- Nowcast init trigger - ensures data loads when section becomes visible -->
+            <!-- Inline nowcast loader with caveat support -->
             <script>
-            document.addEventListener('DOMContentLoaded', function() {
-              // Trigger on sidebar click
-              document.querySelectorAll('.sidebar-item, .bottom-nav-item').forEach(function(btn) {
-                btn.addEventListener('click', function() {
-                  if (btn.dataset.section === 'nowcast' && typeof NowcastManager !== 'undefined') {
-                    setTimeout(function() { NowcastManager.init(); }, 200);
-                  }
+            (function(){
+              var loaded = false;
+              var nowcastData = null;
+              var riskMap = {};
+              var currentFilter = 'all';
+
+              function loadNowcast() {
+                if (loaded) return;
+                loaded = true;
+                Promise.all([
+                  fetch('/api/nowcast/food-insecurity').then(function(r){ return r.json(); }),
+                  fetch('/api/risk/scores').then(function(r){ return r.json(); }).catch(function(){ return {data:[]}; })
+                ]).then(function(results) {
+                  nowcastData = results[0];
+                  var riskData = results[1];
+                  (riskData.data || []).forEach(function(r){ riskMap[r.iso3] = r; });
+                  renderNowcast();
+                }).catch(function(e){
+                  var tbody = document.getElementById('nowcast-table-body');
+                  if(tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#ff6b61;">Error: '+e.message+'</td></tr>';
                 });
-              });
-              // Trigger if section is already visible
-              var observer = new MutationObserver(function() {
-                var section = document.querySelector('.content-section[data-section="nowcast"]');
-                if (section && section.classList.contains('active') && typeof NowcastManager !== 'undefined' && !NowcastManager.data) {
-                  NowcastManager.init();
+              }
+
+              function renderNowcast() {
+                var predictions = nowcastData.predictions || [];
+                var statusEl = document.getElementById('nowcast-status');
+                if (statusEl) {
+                  statusEl.textContent = nowcastData.status === 'READY' ? 'Model Active' : nowcastData.status;
+                  statusEl.style.cssText = 'font-size:0.75rem;padding:3px 8px;border-radius:6px;background:rgba(74,222,128,0.15);color:#4ade80;';
+                }
+                var noteEl = document.getElementById('nowcast-confidence-note');
+                if (noteEl) noteEl.textContent = (nowcastData.historyCountries || 0) + ' countries tracked';
+                var w=0, s=0, im=0;
+                predictions.forEach(function(p){ if(p.trend==='WORSENING')w++; else if(p.trend==='IMPROVING')im++; else s++; });
+                var wEl = document.getElementById('nowcast-worsening-count'); if(wEl) wEl.textContent = w;
+                var sEl = document.getElementById('nowcast-stable-count'); if(sEl) sEl.textContent = s;
+                var iEl = document.getElementById('nowcast-improving-count'); if(iEl) iEl.textContent = im;
+                // Brief
+                var briefLang = window._platformLang || 'en';
+                fetch('/api/nowcast/brief?lang=' + briefLang).then(function(r){ return r.json(); }).then(function(brief) {
+                  if (!brief || brief.status === 'none' || !brief.headline) return;
+                  var container = document.getElementById('nowcast-brief-container');
+                  if (!container) return;
+                  var h = document.getElementById('nowcast-brief-headline'); if(h) h.textContent = brief.headline;
+                  var p1 = document.getElementById('nowcast-brief-p1'); if(p1) p1.textContent = brief.paragraph1 || '';
+                  var p2 = document.getElementById('nowcast-brief-p2'); if(p2) p2.textContent = brief.paragraph2 || '';
+                  if (brief.worseningCount !== undefined && wEl) wEl.textContent = brief.worseningCount;
+                  if (brief.stableCount !== undefined && sEl) sEl.textContent = brief.stableCount;
+                  if (brief.improvingCount !== undefined && iEl) iEl.textContent = brief.improvingCount;
+                  container.style.display = 'block';
+                }).catch(function(){});
+                renderTable(predictions);
+              }
+
+              function renderTable(predictions) {
+                var filtered = predictions;
+                if (currentFilter === 'worsening') filtered = predictions.filter(function(p){ return p.predictedChange90d > 0; });
+                else if (currentFilter === 'improving') filtered = predictions.filter(function(p){ return p.predictedChange90d < 0; });
+                var tbody = document.getElementById('nowcast-table-body');
+                if (!tbody) return;
+                if (filtered.length === 0) { tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#8a8a8a;">No predictions</td></tr>'; return; }
+                var regionOrder = ['East Africa','West Africa','Central Africa','Southern Africa','MENA','South Asia','East & SE Asia','LAC','Europe','Pacific'];
+                var grouped = {};
+                filtered.forEach(function(p){ var r=p.region||'Other'; if(!grouped[r])grouped[r]=[]; grouped[r].push(p); });
+                Object.keys(grouped).forEach(function(r){ grouped[r].sort(function(a,b){ return (a.countryName||'').localeCompare(b.countryName||''); }); });
+                var html = '';
+                var allRegs = regionOrder.concat(Object.keys(grouped).filter(function(r){ return regionOrder.indexOf(r)===-1; }));
+                allRegs.forEach(function(reg){
+                  if(!grouped[reg]||!grouped[reg].length) return;
+                  html += '<tr><td colspan="8" style="padding:12px 12px 6px;font-size:0.72rem;font-weight:600;color:#3ea6ff;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid rgba(62,166,255,0.2);">'+reg+' ('+grouped[reg].length+')</td></tr>';
+                  grouped[reg].forEach(function(p){ html += renderRow(p); });
+                });
+                tbody.innerHTML = html;
+              }
+
+              function renderRow(p) {
+                var risk = riskMap[p.iso3];
+                var caveat = risk ? risk.nowcastCaveat : null;
+                var ch = p.predictedChange90d;
+                var chColor = caveat ? '#ff9500' : ch > 5 ? '#ff6b61' : ch > 0 ? '#ff9500' : ch < -5 ? '#4ade80' : ch < 0 ? '#86efac' : '#aaa';
+                var chStr = ch != null ? (ch > 0 ? '+' : '') + ch.toFixed(1) + '%' : '-';
+                var arrow = caveat ? '\u26A0' : ch > 5 ? '\u25B2' : ch > 0 ? '\u25B4' : ch < -5 ? '\u25BC' : ch < 0 ? '\u25BE' : '\u2014';
+                var arrowColor = caveat ? '#ff9500' : ch > 5 ? '#ff6b61' : ch > 0 ? '#ff9500' : ch < -5 ? '#4ade80' : ch < 0 ? '#86efac' : '#8a8a8a';
+                var confDot = caveat ? '#ff9500' : p.confidence === 'HIGH' ? '#4ade80' : p.confidence === 'MEDIUM' ? '#ff9500' : '#8a8a8a';
+                var proxy = p.currentProxy != null ? p.currentProxy.toFixed(1) + '%' : '-';
+                var fcs = p.fcsPrevalence != null ? p.fcsPrevalence.toFixed(1) + '%' : '-';
+                var rcsi = p.rcsiPrevalence != null ? p.rcsiPrevalence.toFixed(1) + '%' : '-';
+                var proj = p.projectedProxy != null ? p.projectedProxy.toFixed(1) + '%' : '-';
+                var riskBadge = caveat ? '<span style="font-size:0.58rem;color:#ff9500;margin-left:4px;">risks</span>' : '';
+                var caveatRow = caveat ? '<tr style="background:rgba(255,159,10,0.04);"><td colspan="8" style="padding:2px 12px 8px 30px;font-size:0.68rem;color:#ff9500;line-height:1.3;"><b>External risks:</b> '+caveat+'</td></tr>' : '';
+                return '<tr style="border-bottom:'+(caveat?'none':'1px solid rgba(255,255,255,0.06)')+';transition:background 0.15s;" onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'transparent\'">' +
+                  '<td style="padding:8px 12px 8px 20px;font-weight:500;font-size:0.82rem;"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:'+confDot+';margin-right:6px;vertical-align:middle;"></span>'+(p.countryName||p.iso3)+riskBadge+'</td>' +
+                  '<td style="padding:8px 6px;color:#8a8a8a;font-size:0.75rem;">'+(p.region||'-')+'</td>' +
+                  '<td style="padding:8px 6px;text-align:right;font-size:0.82rem;">'+fcs+'</td>' +
+                  '<td style="padding:8px 6px;text-align:right;font-size:0.82rem;">'+rcsi+'</td>' +
+                  '<td style="padding:8px 6px;text-align:right;font-weight:500;font-size:0.82rem;">'+proxy+'</td>' +
+                  '<td style="padding:8px 6px;text-align:right;font-weight:600;color:'+chColor+';font-size:0.82rem;">'+chStr+'</td>' +
+                  '<td style="padding:8px 6px;text-align:right;color:#aaa;font-size:0.82rem;">'+proj+'</td>' +
+                  '<td style="padding:8px 12px;text-align:center;color:'+arrowColor+';font-size:0.85rem;">'+arrow+'</td>' +
+                '</tr>' + caveatRow;
+              }
+
+              document.addEventListener('click', function(e) {
+                if (e.target.classList.contains('nowcast-filter-btn')) {
+                  document.querySelectorAll('.nowcast-filter-btn').forEach(function(b){ b.classList.remove('active'); });
+                  e.target.classList.add('active');
+                  currentFilter = e.target.dataset.filter;
+                  if (nowcastData) renderTable(nowcastData.predictions || []);
                 }
               });
-              var main = document.getElementById('main-content');
-              if (main) observer.observe(main, { attributes: true, subtree: true, attributeFilter: ['class'] });
-            });
+              var observer = new MutationObserver(function() {
+                var section = document.querySelector('.content-section[data-section="nowcast"]');
+                if (section && section.classList.contains('active')) loadNowcast();
+              });
+              document.addEventListener('DOMContentLoaded', function() {
+                var main = document.querySelector('.main-content');
+                if (main) observer.observe(main, { attributes: true, subtree: true, attributeFilter: ['class'] });
+                document.querySelectorAll('.sidebar-item,.bottom-nav-item').forEach(function(btn) {
+                  btn.addEventListener('click', function() { if (btn.dataset.section === 'nowcast') setTimeout(loadNowcast, 100); });
+                });
+              });
+            })();
             </script>
         </section>
 
