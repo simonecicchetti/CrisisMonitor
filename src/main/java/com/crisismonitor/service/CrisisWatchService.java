@@ -67,10 +67,11 @@ public class CrisisWatchService {
     private static final double TRIGGER_ZSCORE_JUMP = 1.5;  // Relative: sudden increase from last check
 
     /**
-     * Runs every 3 hours alongside GDELT refresh.
-     * Checks for media spikes that could indicate developing crises.
+     * Crisis Watch scan. Checks for media spikes that could indicate developing crises.
+     * Called manually via POST /api/crisis-watch/scan (admin only).
+     * TODO: enable @Scheduled after testing phase
+     * @Scheduled(fixedRate = 3 * 60 * 60 * 1000, initialDelay = 4 * 60 * 60 * 1000)
      */
-    @Scheduled(fixedRate = 3 * 60 * 60 * 1000, initialDelay = 4 * 60 * 60 * 1000)
     public void scan() {
         if (dashscopeApiKey == null || dashscopeApiKey.isBlank()) return;
         if (scanning) {
