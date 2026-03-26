@@ -1100,6 +1100,17 @@ public class ApiController {
         return Map.of("status", "STARTED", "countries", MonitoredCountries.CRISIS_COUNTRIES.size());
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private CrisisWatchService crisisWatchService;
+
+    @PostMapping("/crisis-watch/scan")
+    public Object triggerCrisisWatch(@RequestHeader(value = "Authorization", required = false) String auth) {
+        if (!isAdmin(auth)) return Map.of("error", "Unauthorized");
+        new Thread(() -> crisisWatchService.scan(), "crisis-watch").start();
+        return Map.of("status", "STARTED", "message", "Crisis Watch scan triggered");
+    }
+
     // ==========================================
     // USER & AUTH ENDPOINTS
     // ==========================================
