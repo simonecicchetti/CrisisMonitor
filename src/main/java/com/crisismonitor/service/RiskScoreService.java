@@ -649,11 +649,12 @@ public class RiskScoreService {
                 int conflictFloor = CONFLICT_BASELINE.getOrDefault(rs.getIso3(), 0);
                 int finalConflict = Math.max(Math.max(qwen.getConflictScore(), rs.getConflictScore()), conflictFloor);
                 String conflictReason = qwen.getConflictReason();
-                if (rs.getConflictScore() > qwen.getConflictScore()) {
-                    conflictReason = "Real-time data elevated; " + conflictReason;
-                }
-                if (finalConflict > qwen.getConflictScore() && conflictFloor >= 50) {
+                if (finalConflict == conflictFloor && conflictFloor > qwen.getConflictScore() && conflictFloor >= 50) {
+                    // Verified baseline is the highest — override both Qwen and formula
                     conflictReason = "Active armed conflict (verified baseline); " + conflictReason;
+                } else if (formulaConflict > qwen.getConflictScore() && finalConflict == formulaConflict) {
+                    // Formula real-time data is the highest
+                    conflictReason = "Real-time data elevated; " + conflictReason;
                 }
 
                 // Food, Climate, Economic: max(qwen, formula)
@@ -699,6 +700,21 @@ public class RiskScoreService {
                                 + wClimate * Math.pow(Math.max(1, climateScore), p)
                                 + wEcon * Math.pow(Math.max(1, econCapped), p);
                 int recalcOverall = (int) Math.pow(powerSum, 1.0 / p);
+
+                // War override (same as formula path)
+                if (conflictFloorVal >= 60) {
+                    int warFloor = (int)(conflictFloorVal * 0.75);
+                    if (recalcOverall < warFloor) {
+                        log.debug("Qwen path war override {}: {} → {}", rs.getIso3(), recalcOverall, warFloor);
+                        recalcOverall = warFloor;
+                    }
+                }
+
+                // Humanitarian gate (same as formula path)
+                if (conflictFloorVal == 0 && finalConflict < 50 && foodScore < 50 && recalcOverall > 30) {
+                    recalcOverall = (int)(recalcOverall * 0.85);
+                }
+
                 rs.setScore(recalcOverall);
 
                 // Risk level from recalculated overall
