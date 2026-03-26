@@ -1077,7 +1077,28 @@
                 </div>
             </div>
 
-            <!-- Nowcast rendering handled by NowcastManager in app.js (with caveat support) -->
+            <!-- Nowcast init trigger - ensures data loads when section becomes visible -->
+            <script>
+            document.addEventListener('DOMContentLoaded', function() {
+              // Trigger on sidebar click
+              document.querySelectorAll('.sidebar-item, .bottom-nav-item').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                  if (btn.dataset.section === 'nowcast' && typeof NowcastManager !== 'undefined') {
+                    setTimeout(function() { NowcastManager.init(); }, 200);
+                  }
+                });
+              });
+              // Trigger if section is already visible
+              var observer = new MutationObserver(function() {
+                var section = document.querySelector('.content-section[data-section="nowcast"]');
+                if (section && section.classList.contains('active') && typeof NowcastManager !== 'undefined' && !NowcastManager.data) {
+                  NowcastManager.init();
+                }
+              });
+              var main = document.getElementById('main-content');
+              if (main) observer.observe(main, { attributes: true, subtree: true, attributeFilter: ['class'] });
+            });
+            </script>
         </section>
 
 
