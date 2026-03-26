@@ -46,6 +46,7 @@ public class CountryProfileData {
     // Nowcast ML
     private Double nowcastPrediction;  // Predicted 90d % change
     private Integer nowcastAmplifier;  // How much it boosted food score
+    private String nowcastCaveat;      // Warning when ML contradicts other signals
 
     // Trend
     private String trend;              // rising, falling, stable, new

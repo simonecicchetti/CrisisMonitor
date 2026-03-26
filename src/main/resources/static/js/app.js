@@ -3991,12 +3991,16 @@ const CountryDetailManager = {
       }
       if (p.nowcastPrediction != null) {
         const pred = p.nowcastPrediction;
-        const predColor = pred > 5 ? 'var(--status-critical)' : pred > 2 ? 'var(--status-high)' : pred < -2 ? '#30d158' : 'var(--text-secondary)';
-        const predLabel = pred > 5 ? 'Significant worsening' : pred > 2 ? 'Moderate worsening' : pred > 0 ? 'Slight worsening' : pred < -2 ? 'Improving' : 'Stable';
+        const hasCaveat = p.nowcastCaveat;
+        const predColor = hasCaveat ? 'var(--status-high)' : pred > 5 ? 'var(--status-critical)' : pred > 2 ? 'var(--status-high)' : pred < -2 ? '#30d158' : 'var(--text-secondary)';
+        const predLabel = hasCaveat ? 'External risks detected' : pred > 5 ? 'Significant worsening' : pred > 2 ? 'Moderate worsening' : pred > 0 ? 'Slight worsening' : pred < -2 ? 'Improving' : 'Stable';
         html += `<div class="metric" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border-subtle);">
           <span class="metric-label">90-day ML Forecast</span>
           <span class="metric-value" style="color:${predColor}">${pred > 0 ? '+' : ''}${pred.toFixed(1)}pp <span style="font-size:0.75rem;opacity:0.7;">${predLabel}</span></span>
         </div>`;
+        if (hasCaveat) {
+          html += `<div style="font-size:0.7rem;color:var(--status-high);margin-top:2px;line-height:1.3;padding:4px 6px;background:rgba(255,159,10,0.08);border-radius:4px;">${Utils.escapeHtml(p.nowcastCaveat)}</div>`;
+        }
       }
       html += `</div></div>`;
     }

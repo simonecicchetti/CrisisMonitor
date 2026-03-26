@@ -70,6 +70,7 @@ public class RiskScore {
     // ===== NOWCAST ML =====
     private Double nowcastPrediction;     // Predicted 90d % change
     private Integer nowcastAmplifier;     // How much it boosted food score
+    private String nowcastCaveat;         // Warning when ML contradicts other signals
 
     // ===== AI SCORING (Qwen) =====
     private String foodReason;        // Why this food score

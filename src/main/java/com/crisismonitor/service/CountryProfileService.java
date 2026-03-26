@@ -180,7 +180,8 @@ public class CountryProfileService {
                        .summary(risk.getSummary())
                        .scoreSource(risk.getScoreSource())
                        .nowcastPrediction(risk.getNowcastPrediction())
-                       .nowcastAmplifier(risk.getNowcastAmplifier());
+                       .nowcastAmplifier(risk.getNowcastAmplifier())
+                       .nowcastCaveat(risk.getNowcastCaveat());
             }
         } catch (Exception e) {
             log.debug("No risk score for {}: {}", iso3, e.getMessage());

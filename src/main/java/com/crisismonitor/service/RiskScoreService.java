@@ -817,6 +817,28 @@ public class RiskScoreService {
                 double predicted = nowcast.getPredictedChange90d();
                 rs.setNowcastPrediction(predicted);
 
+                // Divergence detection: ML says "stable/improving" but other signals say otherwise.
+                // When food score (from AI/formula) is much higher than proxy-based reality,
+                // or climate/conflict are elevated, the ML forecast is blind to the risk.
+                double proxyLevel = nowcast.getCurrentProxy() != null ? nowcast.getCurrentProxy() : 0;
+                int proxyBasedScore = (int) Math.min(100, proxyLevel);
+                int foodGap = rs.getFoodSecurityScore() - proxyBasedScore; // AI sees more than proxy
+                boolean climateRisk = rs.getClimateScore() >= 50;
+                boolean conflictRisk = rs.getConflictScore() >= 50;
+
+                if (predicted <= 0 && (foodGap > 20 || climateRisk || conflictRisk)) {
+                    // ML says stable/improving but signals say otherwise
+                    StringBuilder caveat = new StringBuilder("Survey trends stable but ");
+                    List<String> risks = new ArrayList<>();
+                    if (climateRisk) risks.add("severe climate stress detected");
+                    if (conflictRisk) risks.add("elevated conflict");
+                    if (foodGap > 20) risks.add("AI assessment indicates higher food insecurity than surveys reflect");
+                    caveat.append(String.join("; ", risks));
+                    rs.setNowcastCaveat(caveat.toString());
+                    log.info("Nowcast divergence {}: ML={}pp but foodGap={}, climate={}, conflict={}",
+                            rs.getIso3(), String.format("%+.1f", predicted), foodGap, rs.getClimateScore(), rs.getConflictScore());
+                }
+
                 // Amplify when worsening predicted above noise floor (>1.5pp, ~1.5x MAE=1.05)
                 if (predicted > 1.5) {
                     int amp = (int) Math.min(15, predicted * 1.0);
