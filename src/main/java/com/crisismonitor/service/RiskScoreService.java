@@ -24,7 +24,9 @@ import java.util.stream.Collectors;
  *   Amplifies food score when worsening predicted (early warning).
  *
  * Layer 3 (AI Analyst): LLM + web search produces contextual scores with reasoning.
- *   Overlays formula scores weekly. Verified conflicts/crises set minimum floors.
+ *   Merged with formula using MAX logic: per-dimension max(Qwen, Formula).
+ *   Qwen can raise scores (context) but never lower real-time signals.
+ *   Verified conflicts/crises set minimum floors.
  *
  * Scoring: Weighted power mean (p=1.5). Humanitarian gate reduces pure climate/economic scores.
  */
@@ -631,28 +633,49 @@ public class RiskScoreService {
                     continue;
                 }
 
-                // Replace scores with Qwen AI assessment
-                // BUT: enforce CONFLICT_BASELINE floor — a verified war cannot
-                // be downgraded by Qwen if web search misses it.
+                // Save formula scores before merge (for logging and reason annotations)
+                int formulaFood = rs.getFoodSecurityScore();
+                int formulaConflict = rs.getConflictScore();
+                int formulaClimate = rs.getClimateScore();
+                int formulaEconomic = rs.getEconomicScore();
+
+                // Merge Qwen AI assessment with formula scores using MAX logic:
+                // For each dimension, take the HIGHER of (Qwen, Formula).
+                // - If Qwen is higher → Qwen sees context formula misses (e.g. forecasted drought)
+                // - If Formula is higher → something changed since Qwen last ran (e.g. overnight attack)
+                // This prevents stale Qwen scores from masking real-time deterioration.
+
+                // Conflict: max(qwen, formula, verified_baseline)
                 int conflictFloor = CONFLICT_BASELINE.getOrDefault(rs.getIso3(), 0);
-                int finalConflict = Math.max(qwen.getConflictScore(), conflictFloor);
+                int finalConflict = Math.max(Math.max(qwen.getConflictScore(), rs.getConflictScore()), conflictFloor);
                 String conflictReason = qwen.getConflictReason();
+                if (rs.getConflictScore() > qwen.getConflictScore()) {
+                    conflictReason = "Real-time data elevated; " + conflictReason;
+                }
                 if (finalConflict > qwen.getConflictScore() && conflictFloor >= 50) {
                     conflictReason = "Active armed conflict (verified baseline); " + conflictReason;
-                    log.info("  {} conflict floor enforced: Qwen={} → baseline={}", rs.getIso3(), qwen.getConflictScore(), conflictFloor);
                 }
 
-                int foodScore = qwen.getFoodScore();
-                int climateScore = qwen.getClimateScore();
-                int economicScore = qwen.getEconomicScore();
+                // Food, Climate, Economic: max(qwen, formula)
+                int foodScore = Math.max(qwen.getFoodScore(), rs.getFoodSecurityScore());
+                int climateScore = Math.max(qwen.getClimateScore(), rs.getClimateScore());
+                int economicScore = Math.max(qwen.getEconomicScore(), rs.getEconomicScore());
 
-                // Enforce verified crisis floors (non-conflict emergencies)
+                // Enforce verified crisis floors on top
                 Map<String, Integer> crisisFloors = QwenScoringService.getCrisisFloors(rs.getIso3());
                 if (crisisFloors != null) {
                     foodScore = Math.max(foodScore, crisisFloors.getOrDefault("food", 0));
                     climateScore = Math.max(climateScore, crisisFloors.getOrDefault("climate", 0));
                     economicScore = Math.max(economicScore, crisisFloors.getOrDefault("economic", 0));
                 }
+
+                // Log when formula overrides Qwen (something new happened)
+                if (formulaFood > qwen.getFoodScore())
+                    log.info("  {} food: formula {} > Qwen {} (real-time override)", rs.getIso3(), formulaFood, qwen.getFoodScore());
+                if (formulaConflict > qwen.getConflictScore())
+                    log.info("  {} conflict: formula {} > Qwen {} (real-time override)", rs.getIso3(), formulaConflict, qwen.getConflictScore());
+                if (formulaEconomic > qwen.getEconomicScore())
+                    log.info("  {} economic: formula {} > Qwen {} (real-time override)", rs.getIso3(), formulaEconomic, qwen.getEconomicScore());
 
                 rs.setFoodSecurityScore(foodScore);
                 rs.setConflictScore(finalConflict);
@@ -699,11 +722,21 @@ public class RiskScoreService {
                     .forEach(e -> drivers.add(e.getKey()));
                 rs.setDrivers(drivers);
 
-                // Set AI reasons (new fields)
-                rs.setFoodReason(qwen.getFoodReason());
+                // Set AI reasons — note when formula overrode Qwen
+                String foodReason = qwen.getFoodReason();
+                if (formulaFood > qwen.getFoodScore())
+                    foodReason = "Real-time data elevated; " + foodReason;
+                String econReason = qwen.getEconomicReason();
+                if (formulaEconomic > qwen.getEconomicScore())
+                    econReason = "Real-time data elevated; " + econReason;
+                String climReason = qwen.getClimateReason();
+                if (formulaClimate > qwen.getClimateScore())
+                    climReason = "Real-time data elevated; " + climReason;
+
+                rs.setFoodReason(foodReason);
                 rs.setConflictReason(conflictReason);
-                rs.setClimateReason(qwen.getClimateReason());
-                rs.setEconomicReason(qwen.getEconomicReason());
+                rs.setClimateReason(climReason);
+                rs.setEconomicReason(econReason);
                 rs.setSummary(qwen.getSummary());
                 rs.setScoreSource("qwen");
                 rs.setQwenGeneratedAt(qwen.getGeneratedAt());
