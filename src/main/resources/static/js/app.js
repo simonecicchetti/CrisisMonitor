@@ -3031,6 +3031,8 @@ const AIAnalysisManager = {
   },
 
   async loadCountryBrief(iso3) {
+    if (!await AuthManager.requireAuth('Country Intelligence Brief')) return;
+
     const scoresEl = document.getElementById('country-brief-scores');
     const contentEl = document.getElementById('country-brief-content');
     const loadingEl = document.getElementById('country-brief-loading');
@@ -4434,7 +4436,7 @@ const SidebarManager = {
       case 'countries':
         if (window.CrisisMap) setTimeout(() => window.CrisisMap.init(), 100);
         if (!this.sectionDataLoaded.has('countries')) {
-          StructuralIndicesManager.init();
+          if (typeof StructuralIndicesManager !== 'undefined' && StructuralIndicesManager) StructuralIndicesManager.init();
           OverviewManager.loadRegionalPulse();
         }
         this.loadAllCountriesList();
@@ -7107,38 +7109,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   safeInit('OfflineBanner', () => OfflineBanner.init());
 });
 
-// ============================================
-// EXPORT FOR GLOBAL ACCESS
-// ============================================
-window.CrisisMonitor = {
-  ThemeManager,
-  DataManager,
-  Animations,
-  Haptics,
-  TabManager,
-  RiskScoreMonitor,
-  ClimateMonitor,
-  CurrencyMonitor,
-  ConflictMonitor,
-  IPCMonitor,
-  ClusterAlertMonitor,
-  AIAnalysisManager,
-  DeepAnalysisManager,
-  SituationDetectionManager,
-  SidebarManager,
-  DriverTabManager,
-  IntelligenceManager,
-  DailyBriefingManager,
-  SituationManager,
-  TopicSearch,
-  StructuralIndicesManager
-};
-
 // ==============================================
 // STRUCTURAL INDICES MANAGER
 // Global watchlists + FSI + GPI integration
 // ==============================================
-const StructuralIndicesManager = {
+var StructuralIndicesManager = {
   loaded: false,
   data: null,
 
@@ -7417,4 +7392,30 @@ const NowcastManager = {
   });
 })();
 
+// ============================================
+// EXPORT FOR GLOBAL ACCESS
+// ============================================
+window.CrisisMonitor = {
+  ThemeManager,
+  DataManager,
+  Animations,
+  Haptics,
+  TabManager,
+  RiskScoreMonitor,
+  ClimateMonitor,
+  CurrencyMonitor,
+  ConflictMonitor,
+  IPCMonitor,
+  ClusterAlertMonitor,
+  AIAnalysisManager,
+  DeepAnalysisManager,
+  SituationDetectionManager,
+  SidebarManager,
+  DriverTabManager,
+  IntelligenceManager,
+  DailyBriefingManager,
+  SituationManager,
+  TopicSearch,
+  StructuralIndicesManager
+};
 // build 1774533762
