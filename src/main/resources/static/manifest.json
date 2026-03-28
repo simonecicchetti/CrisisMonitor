@@ -1,7 +1,7 @@
 {
   "name": "Notamy News",
   "short_name": "Notamy",
-  "description": "Global risk intelligence platform for humanitarian organizations",
+  "description": "See the world's crises before they unfold.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0f",
