@@ -968,7 +968,7 @@ public class DailyBriefService {
         private int promptVersion;
     }
 
-    private static final int NOWCAST_PROMPT_VERSION = 4; // v4: includes external risk divergence data
+    private static final int NOWCAST_PROMPT_VERSION = 5; // v5: remove survey language, use ground indicators
 
     /**
      * Generate or retrieve cached nowcast analytical brief with language support.
