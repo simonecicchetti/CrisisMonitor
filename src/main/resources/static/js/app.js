@@ -243,6 +243,149 @@ const Utils = {
   }
 };
 
+// ====================================
+// AUTHENTICATION MANAGER (Firebase Google Sign-In)
+// ====================================
+const AuthManager = {
+  user: null,
+  initialized: false,
+  _initResolve: null,
+  _initPromise: null,
+
+  init() {
+    this._initPromise = new Promise(resolve => { this._initResolve = resolve; });
+
+    firebase.auth().onAuthStateChanged((user) => {
+      this.user = user;
+      this.initialized = true;
+      if (this._initResolve) { this._initResolve(); this._initResolve = null; }
+      this.updateUI(user);
+      if (user) {
+        console.log('[Auth] Signed in:', user.email);
+        user.getIdToken().then(idToken => {
+          fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idToken: idToken })
+          })
+          .then(r => r.json())
+          .then(data => {
+            this.userTier = data.tier || 'free';
+            console.log('[Auth] Backend login:', data.tier);
+          })
+          .catch(e => console.error('[Auth] Backend login failed:', e));
+        });
+      } else {
+        console.log('[Auth] Signed out');
+      }
+    });
+  },
+
+  async signIn() {
+    try {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      await firebase.auth().signInWithPopup(provider);
+    } catch (e) {
+      console.error('[Auth] Sign in failed:', e);
+      if (e.code !== 'auth/popup-closed-by-user') {
+        alert('Sign in failed: ' + e.message);
+      }
+    }
+  },
+
+  async signOut() {
+    try {
+      await firebase.auth().signOut();
+    } catch (e) {
+      console.error('[Auth] Sign out failed:', e);
+    }
+  },
+
+  updateUI(user) {
+    const loginBtn = document.getElementById('auth-login-btn');
+    const userInfo = document.getElementById('auth-user-info');
+    const userName = document.getElementById('auth-user-name');
+    const userPhoto = document.getElementById('auth-user-photo');
+
+    if (user) {
+      if (loginBtn) loginBtn.style.display = 'none';
+      if (userInfo) userInfo.style.display = 'flex';
+      if (userName) userName.textContent = user.displayName || user.email;
+      if (userPhoto) userPhoto.src = user.photoURL || '';
+      if (userPhoto && !user.photoURL) userPhoto.style.display = 'none';
+    } else {
+      if (loginBtn) loginBtn.style.display = 'flex';
+      if (userInfo) userInfo.style.display = 'none';
+    }
+  },
+
+  async getToken() {
+    if (!this.user) return null;
+    return await this.user.getIdToken();
+  },
+
+  isLoggedIn() {
+    return this.user !== null;
+  },
+
+  async waitForInit() {
+    if (this.initialized) return;
+    if (this._initPromise) await this._initPromise;
+  },
+
+  async requireAuth(featureName) {
+    await this.waitForInit();
+    if (this.isLoggedIn()) return true;
+    this._showAuthPrompt(featureName);
+    return false;
+  },
+
+  _showAuthPrompt(featureName) {
+    document.getElementById('auth-gate-overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'auth-gate-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--surface-secondary,#1a1a1a);border:1px solid var(--border-color,#333);border-radius:16px;padding:32px;max-width:360px;width:90%;text-align:center;';
+
+    modal.innerHTML = `
+      <div style="font-size:2rem;margin-bottom:12px;">🔒</div>
+      <h3 style="color:var(--text-primary,#fff);font-size:1.1rem;margin-bottom:8px;">Sign in required</h3>
+      <p style="color:var(--text-secondary,#aaa);font-size:0.85rem;margin-bottom:24px;line-height:1.5;">Sign in with Google to access <strong>${Utils.escapeHtml(featureName)}</strong> and other AI-powered features.</p>
+      <button id="auth-gate-signin" style="width:100%;padding:12px;font-size:0.9rem;font-weight:600;border:none;border-radius:10px;background:var(--accent-blue,#3ea6ff);color:#000;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Sign in with Google
+      </button>
+      <button id="auth-gate-close" style="width:100%;padding:10px;font-size:0.8rem;border:1px solid var(--border-color,#333);border-radius:10px;background:transparent;color:var(--text-tertiary,#888);cursor:pointer;">Maybe later</button>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    document.getElementById('auth-gate-signin').addEventListener('click', async () => {
+      overlay.remove();
+      await this.signIn();
+    });
+
+    document.getElementById('auth-gate-close').addEventListener('click', () => {
+      overlay.remove();
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+};
+
+// Initialize auth on page load
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof firebase !== 'undefined' && firebase.auth) {
+    AuthManager.init();
+  }
+});
+
 // ============================================
 // TOAST NOTIFICATION SYSTEM
 // ============================================
@@ -7274,154 +7417,4 @@ const NowcastManager = {
   });
 })();
 
-// ====================================
-// AUTHENTICATION MANAGER (Firebase Google Sign-In)
-// ====================================
-const AuthManager = {
-  user: null,
-  initialized: false,
-  _initResolve: null,
-  _initPromise: null,
-
-  init() {
-    this._initPromise = new Promise(resolve => { this._initResolve = resolve; });
-
-    firebase.auth().onAuthStateChanged((user) => {
-      this.user = user;
-      this.initialized = true;
-      if (this._initResolve) { this._initResolve(); this._initResolve = null; }
-      this.updateUI(user);
-      if (user) {
-        console.log('[Auth] Signed in:', user.email);
-        user.getIdToken().then(idToken => {
-          fetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ idToken: idToken })
-          })
-          .then(r => r.json())
-          .then(data => {
-            this.userTier = data.tier || 'free';
-            console.log('[Auth] Backend login:', data.tier);
-          })
-          .catch(e => console.error('[Auth] Backend login failed:', e));
-        });
-      } else {
-        console.log('[Auth] Signed out');
-      }
-    });
-  },
-
-  async signIn() {
-    try {
-      const provider = new firebase.auth.GoogleAuthProvider();
-      await firebase.auth().signInWithPopup(provider);
-    } catch (e) {
-      console.error('[Auth] Sign in failed:', e);
-      if (e.code !== 'auth/popup-closed-by-user') {
-        alert('Sign in failed: ' + e.message);
-      }
-    }
-  },
-
-  async signOut() {
-    try {
-      await firebase.auth().signOut();
-    } catch (e) {
-      console.error('[Auth] Sign out failed:', e);
-    }
-  },
-
-  updateUI(user) {
-    const loginBtn = document.getElementById('auth-login-btn');
-    const userInfo = document.getElementById('auth-user-info');
-    const userName = document.getElementById('auth-user-name');
-    const userPhoto = document.getElementById('auth-user-photo');
-
-    if (user) {
-      if (loginBtn) loginBtn.style.display = 'none';
-      if (userInfo) userInfo.style.display = 'flex';
-      if (userName) userName.textContent = user.displayName || user.email;
-      if (userPhoto) userPhoto.src = user.photoURL || '';
-      if (userPhoto && !user.photoURL) userPhoto.style.display = 'none';
-    } else {
-      if (loginBtn) loginBtn.style.display = 'flex';
-      if (userInfo) userInfo.style.display = 'none';
-    }
-  },
-
-  async getToken() {
-    if (!this.user) return null;
-    return await this.user.getIdToken();
-  },
-
-  isLoggedIn() {
-    return this.user !== null;
-  },
-
-  async waitForInit() {
-    if (this.initialized) return;
-    if (this._initPromise) await this._initPromise;
-  },
-
-  /**
-   * Gate a feature behind sign-in.
-   * Shows a sign-in prompt if not logged in.
-   * Returns true if authenticated, false if not.
-   */
-  async requireAuth(featureName) {
-    await this.waitForInit();
-    if (this.isLoggedIn()) return true;
-
-    // Show sign-in prompt
-    this._showAuthPrompt(featureName);
-    return false;
-  },
-
-  _showAuthPrompt(featureName) {
-    // Remove existing prompt if any
-    document.getElementById('auth-gate-overlay')?.remove();
-
-    const overlay = document.createElement('div');
-    overlay.id = 'auth-gate-overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
-
-    const modal = document.createElement('div');
-    modal.style.cssText = 'background:var(--surface-secondary,#1a1a1a);border:1px solid var(--border-color,#333);border-radius:16px;padding:32px;max-width:360px;width:90%;text-align:center;';
-
-    modal.innerHTML = `
-      <div style="font-size:2rem;margin-bottom:12px;">🔒</div>
-      <h3 style="color:var(--text-primary,#fff);font-size:1.1rem;margin-bottom:8px;">Sign in required</h3>
-      <p style="color:var(--text-secondary,#aaa);font-size:0.85rem;margin-bottom:24px;line-height:1.5;">Sign in with Google to access <strong>${Utils.escapeHtml(featureName)}</strong> and other AI-powered features.</p>
-      <button id="auth-gate-signin" style="width:100%;padding:12px;font-size:0.9rem;font-weight:600;border:none;border-radius:10px;background:var(--accent-blue,#3ea6ff);color:#000;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-        Sign in with Google
-      </button>
-      <button id="auth-gate-close" style="width:100%;padding:10px;font-size:0.8rem;border:1px solid var(--border-color,#333);border-radius:10px;background:transparent;color:var(--text-tertiary,#888);cursor:pointer;">Maybe later</button>
-    `;
-
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
-    document.getElementById('auth-gate-signin').addEventListener('click', async () => {
-      overlay.remove();
-      await this.signIn();
-    });
-
-    document.getElementById('auth-gate-close').addEventListener('click', () => {
-      overlay.remove();
-    });
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.remove();
-    });
-  }
-};
-
-// Initialize auth on page load
-document.addEventListener('DOMContentLoaded', () => {
-  if (typeof firebase !== 'undefined' && firebase.auth) {
-    AuthManager.init();
-  }
-});
 // build 1774533762

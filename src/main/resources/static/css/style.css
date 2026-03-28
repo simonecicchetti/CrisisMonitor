@@ -1767,7 +1767,7 @@ h1, h2, h3, h4, h5, h6 {
   gap: 2px;
   box-shadow: var(--shadow-lg);
   transition: background var(--transition-fast), transform var(--transition-fast);
-  z-index: var(--z-sticky);
+  z-index: 500;
 }
 
 .ai-fab:hover {
