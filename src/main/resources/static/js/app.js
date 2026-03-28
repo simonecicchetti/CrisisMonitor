@@ -7335,9 +7335,11 @@ const AuthManager = {
     const userInfo = document.getElementById('auth-user-info');
     const userName = document.getElementById('auth-user-name');
     const userPhoto = document.getElementById('auth-user-photo');
+    const fab = document.getElementById('ai-fab');
 
     if (user) {
       if (loginBtn) loginBtn.style.display = 'none';
+      if (fab) fab.style.display = 'flex';
       if (userInfo) userInfo.style.display = 'flex';
       if (userName) userName.textContent = user.displayName || user.email;
       if (userPhoto) userPhoto.src = user.photoURL || '';
@@ -7345,6 +7347,7 @@ const AuthManager = {
     } else {
       if (loginBtn) loginBtn.style.display = 'flex';
       if (userInfo) userInfo.style.display = 'none';
+      if (fab) fab.style.display = 'none';
     }
   },
 
