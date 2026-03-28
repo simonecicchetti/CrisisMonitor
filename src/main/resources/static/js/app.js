@@ -2358,7 +2358,7 @@ const OverviewManager = {
 
     const items = (this._reliefwebItems || []).slice(0, 5);
     if (items.length === 0) {
-      container.innerHTML = '<div class="loading-placeholder">No humanitarian reports available</div>';
+      container.innerHTML = '<div class="loading-placeholder">No field reports available</div>';
       return;
     }
 
@@ -3262,7 +3262,7 @@ const AIAnalysisManager = {
     // Humanitarian reports (ReliefWeb - official UN/NGO)
     const humanitarianHtml = newsSignal.humanitarianReports && newsSignal.humanitarianReports.length > 0
       ? `<div class="humanitarian-reports-section">
-           <div class="humanitarian-label">Humanitarian Intel (ReliefWeb)</div>
+           <div class="humanitarian-label">Field Intel (ReliefWeb)</div>
            <ul class="humanitarian-reports-list">
              ${newsSignal.humanitarianReports.map(h => {
                const link = h.url

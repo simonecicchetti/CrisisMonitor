@@ -62,7 +62,7 @@
   },
   "newsFeedSection": {
     "title": "News Feed",
-    "multiSource": "Multi-source news from humanitarian agencies and global media",
+    "multiSource": "Multi-source intelligence from field agencies and global media",
     "media": "Media",
     "reliefWeb": "ReliefWeb",
     "allRegions": "All Regions",
@@ -102,7 +102,7 @@
   },
   "intelligence": {
     "topicReports": "Topic Reports",
-    "humanitarianUpdates": "Humanitarian Updates",
+    "humanitarianUpdates": "Field Reports",
     "migration": "Migration",
     "foodCrisis": "Food Crisis",
     "conflict": "Conflict",
