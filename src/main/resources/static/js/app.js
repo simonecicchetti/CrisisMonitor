@@ -367,8 +367,8 @@ const CommandPalette = {
       { id: 'action-ai-brief', label: 'Open AI Brief', category: 'AI', icon: '📋', action: () => document.getElementById('ai-brief-btn')?.click() },
 
       // Export
-      { id: 'export-csv', label: 'Export Risk Scores (CSV)', category: 'Export', icon: '📊', action: () => window.open('/api/export/csv', '_blank') },
-      { id: 'export-pdf', label: 'Export Risk Report (PDF)', category: 'Export', icon: '📄', action: () => window.open('/api/export/pdf', '_blank') },
+      { id: 'export-csv', label: 'Export Risk Scores (CSV)', category: 'Export', icon: '📊', action: async () => { if (await AuthManager.requireAuth('CSV Export')) window.open('/api/export/csv', '_blank'); } },
+      { id: 'export-pdf', label: 'Export Risk Report (PDF)', category: 'Export', icon: '📄', action: async () => { if (await AuthManager.requireAuth('PDF Export')) window.open('/api/export/pdf', '_blank'); } },
 
       // Quick filters
       { id: 'filter-critical', label: 'Show Critical Countries Only', category: 'Filters', icon: '🔴', action: () => this.filterCountries('critical') },
@@ -2307,6 +2307,9 @@ const OverviewManager = {
   },
 
   async _loadDeepDive(country, situation) {
+    // Require sign-in for deep-dive
+    if (!await AuthManager.requireAuth('Deep Dive Analysis')) return;
+
     const diveContainer = document.getElementById('daily-brief-deep-dive');
     if (!diveContainer) return;
 
@@ -2324,9 +2327,10 @@ const OverviewManager = {
     const lang = window._platformLang || localStorage.getItem('notamy-lang') || 'en';
 
     try {
+      const token = await AuthManager.getToken();
       const response = await fetch('/api/daily-brief/deep-dive?lang=' + lang, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': 'Bearer ' + token } : {}) },
         body: JSON.stringify({ country, situation })
       });
       const data = await response.json();
@@ -2837,14 +2841,16 @@ const AIAnalysisManager = {
 
     if (!modal) return;
 
-    // FAB opens Country Intelligence Brief modal
-    fab?.addEventListener('click', () => {
+    // FAB opens Country Intelligence Brief modal (requires sign-in)
+    fab?.addEventListener('click', async () => {
+      if (!await AuthManager.requireAuth('Country Intelligence Brief')) return;
       modal.classList.remove('hidden');
       Haptics.medium();
     });
 
-    // Open modal from AI Brief button in navbar
-    aiBriefBtn?.addEventListener('click', () => {
+    // Open modal from AI Brief button in navbar (requires sign-in)
+    aiBriefBtn?.addEventListener('click', async () => {
+      if (!await AuthManager.requireAuth('Country Intelligence Brief')) return;
       modal.classList.remove('hidden');
       Haptics.medium();
     });
@@ -2897,7 +2903,9 @@ const AIAnalysisManager = {
     const lang = window._platformLang || 'en';
 
     try {
-      const response = await fetch(`/api/country-brief/${iso3}?lang=${lang}`);
+      const token = await AuthManager.getToken();
+      const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+      const response = await fetch(`/api/country-brief/${iso3}?lang=${lang}`, { headers });
       if (!response.ok) throw new Error('HTTP ' + response.status);
       const brief = await response.json();
 
@@ -5842,6 +5850,9 @@ const QAManager = {
     const question = input.value.trim();
     if (question.length < 3 || this.isLoading) return;
 
+    // Require sign-in for Q&A
+    if (!await AuthManager.requireAuth('Q&A Intelligence')) return;
+
     // Rate limit
     const now = Date.now();
     if (now - this.lastAsked < this.cooldownMs) {
@@ -5868,8 +5879,11 @@ const QAManager = {
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
+      const token = await AuthManager.getToken();
+      const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
       const response = await fetch(`/api/intelligence/ask?q=${encodeURIComponent(question)}`, {
-        signal: controller.signal
+        signal: controller.signal,
+        headers
       });
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -6391,7 +6405,7 @@ const TopicReportGenerator = {
     }
   },
 
-  exportReport() {
+  async exportReport() {
     if (!this.reportData) return;
 
     const topicLabel = this.currentTopic.charAt(0).toUpperCase() + this.currentTopic.slice(1).replace('-', ' ');
@@ -6426,9 +6440,9 @@ const TopicReportGenerator = {
 
     text += `\n${'='.repeat(50)}\n`;
     text += `Notamy News\n`;
-    text += `https://crisis-monitor-637266247904.europe-west1.run.app\n`;
+    text += `https://crisis.notamy.app\n`;
 
-    // >>> CHANGE POINT: check subscription before allowing download
+    if (!await AuthManager.requireAuth('Report Export')) return;
     const blob = new Blob([text], { type: 'text/plain; charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -6438,8 +6452,9 @@ const TopicReportGenerator = {
     URL.revokeObjectURL(url);
   },
 
-  copyReport() {
+  async copyReport() {
     if (!this.reportData) return;
+    if (!await AuthManager.requireAuth('Report Copy')) return;
 
     const topicLabel = this.currentTopic.charAt(0).toUpperCase() + this.currentTopic.slice(1).replace('-', ' ');
     const regionLabel = this.currentRegion ? this.currentRegion.toUpperCase() : 'Global';
@@ -6458,7 +6473,6 @@ const TopicReportGenerator = {
       text += `\n${data.narrative}\n`;
     }
 
-    // >>> CHANGE POINT: check subscription before allowing copy
     navigator.clipboard.writeText(text).then(() => {
       // Brief visual feedback instead of alert
       const btn = document.querySelector('.btn-copy');
@@ -7261,18 +7275,22 @@ const NowcastManager = {
 // ====================================
 // AUTHENTICATION MANAGER (Firebase Google Sign-In)
 // ====================================
-// >>> CHANGE POINT: add credit check logic here when paywall implemented
-// >>> CHANGE POINT: send auth token to backend for protected API calls
 const AuthManager = {
   user: null,
+  initialized: false,
+  _initResolve: null,
+  _initPromise: null,
 
   init() {
+    this._initPromise = new Promise(resolve => { this._initResolve = resolve; });
+
     firebase.auth().onAuthStateChanged((user) => {
       this.user = user;
+      this.initialized = true;
+      if (this._initResolve) { this._initResolve(); this._initResolve = null; }
       this.updateUI(user);
       if (user) {
         console.log('[Auth] Signed in:', user.email);
-        // Register with backend and get subscription tier
         user.getIdToken().then(idToken => {
           fetch('/api/auth/login', {
             method: 'POST',
@@ -7283,7 +7301,6 @@ const AuthManager = {
           .then(data => {
             this.userTier = data.tier || 'free';
             console.log('[Auth] Backend login:', data.tier);
-            // >>> CHANGE POINT: update UI based on tier (show/hide premium content)
           })
           .catch(e => console.error('[Auth] Backend login failed:', e));
         });
@@ -7331,7 +7348,6 @@ const AuthManager = {
     }
   },
 
-  // >>> CHANGE POINT: use this to get auth token for protected API calls
   async getToken() {
     if (!this.user) return null;
     return await this.user.getIdToken();
@@ -7339,6 +7355,64 @@ const AuthManager = {
 
   isLoggedIn() {
     return this.user !== null;
+  },
+
+  async waitForInit() {
+    if (this.initialized) return;
+    if (this._initPromise) await this._initPromise;
+  },
+
+  /**
+   * Gate a feature behind sign-in.
+   * Shows a sign-in prompt if not logged in.
+   * Returns true if authenticated, false if not.
+   */
+  async requireAuth(featureName) {
+    await this.waitForInit();
+    if (this.isLoggedIn()) return true;
+
+    // Show sign-in prompt
+    this._showAuthPrompt(featureName);
+    return false;
+  },
+
+  _showAuthPrompt(featureName) {
+    // Remove existing prompt if any
+    document.getElementById('auth-gate-overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'auth-gate-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--surface-secondary,#1a1a1a);border:1px solid var(--border-color,#333);border-radius:16px;padding:32px;max-width:360px;width:90%;text-align:center;';
+
+    modal.innerHTML = `
+      <div style="font-size:2rem;margin-bottom:12px;">🔒</div>
+      <h3 style="color:var(--text-primary,#fff);font-size:1.1rem;margin-bottom:8px;">Sign in required</h3>
+      <p style="color:var(--text-secondary,#aaa);font-size:0.85rem;margin-bottom:24px;line-height:1.5;">Sign in with Google to access <strong>${Utils.escapeHtml(featureName)}</strong> and other AI-powered features.</p>
+      <button id="auth-gate-signin" style="width:100%;padding:12px;font-size:0.9rem;font-weight:600;border:none;border-radius:10px;background:var(--accent-blue,#3ea6ff);color:#000;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Sign in with Google
+      </button>
+      <button id="auth-gate-close" style="width:100%;padding:10px;font-size:0.8rem;border:1px solid var(--border-color,#333);border-radius:10px;background:transparent;color:var(--text-tertiary,#888);cursor:pointer;">Maybe later</button>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    document.getElementById('auth-gate-signin').addEventListener('click', async () => {
+      overlay.remove();
+      await this.signIn();
+    });
+
+    document.getElementById('auth-gate-close').addEventListener('click', () => {
+      overlay.remove();
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
   }
 };
 

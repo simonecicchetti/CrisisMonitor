@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -975,26 +976,34 @@ public class ApiController {
     }
 
     @GetMapping("/country-brief/{iso3}")
-    public Object getCountryBrief(@PathVariable String iso3,
-                                   @RequestParam(defaultValue = "en") String lang) {
+    public ResponseEntity<?> getCountryBrief(@PathVariable String iso3,
+                                   @RequestParam(defaultValue = "en") String lang,
+                                   @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        if (verifyAuth(authHeader) == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Sign in required"));
+        }
         var brief = dailyBriefService.getCountryBrief(iso3, lang);
-        if (brief != null) return brief;
-        return Map.of("error", "Failed to generate country brief");
+        if (brief != null) return ResponseEntity.ok(brief);
+        return ResponseEntity.ok(Map.of("error", "Failed to generate country brief"));
     }
 
     @PostMapping("/daily-brief/deep-dive")
-    public Object getDeepDive(@RequestBody Map<String, String> body,
-                              @RequestParam(defaultValue = "en") String lang) {
+    public ResponseEntity<?> getDeepDive(@RequestBody Map<String, String> body,
+                              @RequestParam(defaultValue = "en") String lang,
+                              @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        if (verifyAuth(authHeader) == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Sign in required"));
+        }
         String country = body.get("country");
         String situation = body.get("situation");
-        if (country == null || country.isBlank()) return Map.of("error", "Country required");
-        if (situation == null || situation.isBlank()) return Map.of("error", "Situation required");
+        if (country == null || country.isBlank()) return ResponseEntity.ok(Map.of("error", "Country required"));
+        if (situation == null || situation.isBlank()) return ResponseEntity.ok(Map.of("error", "Situation required"));
         // Limit input length to prevent abuse
         if (country.length() > 100) country = country.substring(0, 100);
         if (situation.length() > 200) situation = situation.substring(0, 200);
         var dive = dailyBriefService.getOrGenerateDeepDive(country, situation, lang);
-        if (dive != null) return dive;
-        return Map.of("error", "Failed to generate deep dive");
+        if (dive != null) return ResponseEntity.ok(dive);
+        return ResponseEntity.ok(Map.of("error", "Failed to generate deep dive"));
     }
 
     // ==========================================
@@ -1182,16 +1191,20 @@ public class ApiController {
      * Returns answer with inline [N] citations referencing source articles.
      */
     @GetMapping("/intelligence/ask")
-    public AnalysisService.QAResponse askQuestion(@RequestParam String q) {
+    public ResponseEntity<?> askQuestion(@RequestParam String q,
+                                         @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        if (verifyAuth(authHeader) == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Sign in required"));
+        }
         if (q == null || q.isBlank() || q.length() > 500) {
-            return AnalysisService.QAResponse.builder()
+            return ResponseEntity.ok(AnalysisService.QAResponse.builder()
                     .question(q)
                     .answer("Please provide a question (max 500 characters).")
                     .sources(java.util.List.of())
                     .generatedAt(java.time.LocalDateTime.now())
-                    .build();
+                    .build());
         }
-        return analysisService.answerQuestion(q.trim());
+        return ResponseEntity.ok(analysisService.answerQuestion(q.trim()));
     }
 
     // ========== NEWS FEED (TWO-COLUMN) ==========

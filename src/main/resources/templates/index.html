@@ -347,18 +347,18 @@
                 <h2 id="section-title-countries" data-i18n="countries.countryAnalysis">Country Analysis</h2>
                 <div class="section-header-actions">
                     <div class="export-buttons">
-                        <a href="/api/export/csv" class="export-btn" title="Export CSV">
+                        <button onclick="(async()=>{if(await AuthManager.requireAuth('CSV Export'))window.open('/api/export/csv','_blank')})()" class="export-btn" title="Export CSV">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
                             </svg>
                             CSV
-                        </a>
-                        <a href="/api/export/pdf" class="export-btn" title="Export PDF">
+                        </button>
+                        <button onclick="(async()=>{if(await AuthManager.requireAuth('PDF Export'))window.open('/api/export/pdf','_blank')})()" class="export-btn" title="Export PDF">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
                             </svg>
                             PDF
-                        </a>
+                        </button>
                     </div>
                 </div>
             </div>
