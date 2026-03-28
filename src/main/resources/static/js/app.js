@@ -3830,6 +3830,7 @@ const CountryDetailManager = {
   },
 
   async open(iso3, countryName) {
+    if (!await AuthManager.requireAuth('Country Profile')) return;
     this.currentIso3 = iso3;
     this.modal.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
@@ -5515,7 +5516,8 @@ const EWPanelManager = {
     });
   },
 
-  showCountryDetail(score) {
+  async showCountryDetail(score) {
+    if (!await AuthManager.requireAuth('Country Details')) return;
     const container = document.getElementById('ew-country-detail');
     if (!container) return;
     this.selectedIso3 = score.iso3;
